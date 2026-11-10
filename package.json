@@ -1,0 +1,35 @@
+{
+  "name": "tradestratix",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TradeStratix — Distribution, Wholesale, Retail & Business Management ERP",
+  "scripts": {
+    "start": "npm --prefix server run start",
+    "server": "npm --prefix server run dev",
+    "client": "npm --prefix client run dev",
+    "kill:ports": "kill-port 5008 5176 5009",
+    "dev": "npm run kill:ports && concurrently -k \"npm run server\" \"npm run client\"",
+    "build": "npm --prefix client run build",
+    "build:server": "npm --prefix server run build",
+    "seed": "npm --prefix server run seed",
+    "setup:db": "npm --prefix server run setup:db"
+  },
+  "keywords": [
+    "erp",
+    "distribution",
+    "wholesale",
+    "retail",
+    "inventory",
+    "accounting",
+    "react",
+    "express",
+    "prisma",
+    "mysql"
+  ],
+  "author": "TradeStratix Engineering",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "kill-port": "^2.0.1"
+  }
+}

@@ -1,0 +1,487 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── SaaS / Platform ─────────────────────────────────────────────────────────
+
+model SubscriptionPlan {
+  id              String                @id
+  code            String                @unique
+  name            String
+  description     String?               @db.Text
+  monthlyPrice    Decimal               @default(0) @map("monthly_price") @db.Decimal(18, 2)
+  yearlyPrice     Decimal               @default(0) @map("yearly_price") @db.Decimal(18, 2)
+  maxUsers        Int                   @default(5) @map("max_users")
+  maxBranches     Int                   @default(1) @map("max_branches")
+  maxWarehouses   Int                   @default(2) @map("max_warehouses")
+  modulesJson     String                @map("modules_json") @db.Text
+  isActive        Boolean               @default(true) @map("is_active")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+  subscriptions   BusinessSubscription[]
+
+  @@map("subscription_plans")
+}
+
+model BusinessSubscription {
+  id             String           @id
+  businessId     String           @map("business_id")
+  planId         String           @map("plan_id")
+  status         String           @default("trial")
+  startsAt       DateTime         @map("starts_at")
+  endsAt         DateTime?        @map("ends_at")
+  trialEndsAt    DateTime?        @map("trial_ends_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  business       Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  plan           SubscriptionPlan @relation(fields: [planId], references: [id])
+
+  @@index([businessId])
+  @@map("business_subscriptions")
+}
+
+// ─── Tenant / Organisation ───────────────────────────────────────────────────
+
+model Business {
+  id                   String                 @id
+  name                 String
+  legalName            String?                @map("legal_name")
+  registrationNumber   String?                @map("registration_number")
+  taxId                String?                @map("tax_id")
+  email                String?
+  phone                String?
+  addressLine1         String?                @map("address_line1")
+  addressLine2         String?                @map("address_line2")
+  city                 String?
+  state                String?
+  country              String?                @default("NG")
+  postalCode           String?                @map("postal_code")
+  logoUrl              String?                @map("logo_url") @db.Text
+  /// distributor | wholesaler | retailer | distributor_retailer | hybrid
+  businessType         String                 @default("hybrid") @map("business_type")
+  defaultCurrency      String                 @default("NGN") @map("default_currency")
+  /// fifo | weighted_average | specific_identification
+  inventoryValuation   String                 @default("weighted_average") @map("inventory_valuation")
+  timezone             String                 @default("Africa/Lagos")
+  fiscalYearStartMonth Int                    @default(1) @map("fiscal_year_start_month")
+  enabledModulesJson   String?                @map("enabled_modules_json") @db.Text
+  status               String                 @default("active")
+  createdAt            DateTime               @default(now()) @map("created_at")
+  updatedAt            DateTime               @updatedAt @map("updated_at")
+  createdById          String?                @map("created_by_id")
+  updatedById          String?                @map("updated_by_id")
+
+  settings             BusinessSetting[]
+  subscriptions        BusinessSubscription[]
+  branches             Branch[]
+  warehouses           Warehouse[]
+  users                User[]
+  roles                Role[]
+  accounts             Account[]
+  journalEntries       JournalEntry[]
+  defaultAccountSettings DefaultAccountSetting[]
+  financialYears       FinancialYear[]
+  accountingPeriods    AccountingPeriod[]
+  auditLogs            AuditLog[]
+  menus                Menu[]
+  currencies           BusinessCurrency[]
+
+  @@map("businesses")
+}
+
+model BusinessSetting {
+  id         String   @id
+  businessId String   @map("business_id")
+  settingKey String   @map("setting_key")
+  value      String   @db.Text
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  updatedBy  String?  @map("updated_by")
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, settingKey])
+  @@map("business_settings")
+}
+
+model BusinessCurrency {
+  id         String   @id
+  businessId String   @map("business_id")
+  code       String
+  name       String
+  symbol     String
+  isDefault  Boolean  @default(false) @map("is_default")
+  exchangeRate Decimal @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  isActive   Boolean  @default(true) @map("is_active")
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, code])
+  @@map("business_currencies")
+}
+
+model Branch {
+  id              String      @id
+  businessId      String      @map("business_id")
+  name            String
+  code            String
+  email           String?
+  phone           String?
+  addressLine1    String?     @map("address_line1")
+  city            String?
+  state           String?
+  country         String?
+  managerUserId   String?     @map("manager_user_id")
+  operatingHours  String?     @map("operating_hours") @db.Text
+  salesTarget     Decimal?    @map("sales_target") @db.Decimal(18, 2)
+  isActive        Boolean     @default(true) @map("is_active")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+  createdById     String?     @map("created_by_id")
+  updatedById     String?     @map("updated_by_id")
+  business        Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  warehouses      Warehouse[]
+  userBranches    UserBranch[]
+  usersDefault    User[]      @relation("UserDefaultBranch")
+  journalEntries  JournalEntry[]
+
+  @@unique([businessId, code])
+  @@index([businessId])
+  @@map("branches")
+}
+
+model Warehouse {
+  id            String   @id
+  businessId    String   @map("business_id")
+  branchId      String   @map("branch_id")
+  name          String
+  code          String
+  /// main | retail | damaged | quarantine | other
+  category      String   @default("main")
+  managerUserId String?  @map("manager_user_id")
+  capacity      Decimal? @db.Decimal(18, 2)
+  addressLine1  String?  @map("address_line1")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  createdById   String?  @map("created_by_id")
+  updatedById   String?  @map("updated_by_id")
+  business      Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch        Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, code])
+  @@index([branchId])
+  @@map("warehouses")
+}
+
+// ─── Identity & RBAC ─────────────────────────────────────────────────────────
+
+model User {
+  id              String        @id
+  businessId      String        @map("business_id")
+  username        String
+  passwordHash    String        @map("password_hash") @db.VarChar(255)
+  fullName        String        @map("full_name")
+  /// Primary role code for JWT convenience
+  role            String
+  email           String?
+  phone           String?
+  department      String?
+  avatarUrl       String?       @map("avatar_url") @db.Text
+  defaultBranchId String?       @map("default_branch_id")
+  status          String        @default("active")
+  lastLoginAt     DateTime?     @map("last_login_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  createdById     String?       @map("created_by_id")
+  updatedById     String?       @map("updated_by_id")
+
+  business        Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  defaultBranch   Branch?       @relation("UserDefaultBranch", fields: [defaultBranchId], references: [id], onDelete: SetNull)
+  userRoles       UserRole[]
+  permissionOverrides UserPermissionOverride[]
+  userBranches    UserBranch[]
+  loginHistory    LoginHistory[]
+  refreshTokens   RefreshToken[]
+
+  @@unique([businessId, username])
+  @@index([businessId])
+  @@map("users")
+}
+
+model Role {
+  id          String           @id
+  businessId  String?          @map("business_id")
+  code        String
+  name        String
+  description String?          @db.Text
+  isSystem    Boolean          @default(false) @map("is_system")
+  isActive    Boolean          @default(true) @map("is_active")
+  sortOrder   Int              @default(0) @map("sort_order")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  business    Business?        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userRoles   UserRole[]
+  rolePermissions RolePermission[]
+  roleMenus   RoleMenu[]
+
+  @@unique([businessId, code])
+  @@map("roles")
+}
+
+model Permission {
+  id          String   @id
+  code        String   @unique
+  name        String
+  description String?  @db.Text
+  module      String
+  action      String
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  rolePermissions RolePermission[]
+  userOverrides   UserPermissionOverride[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model Menu {
+  id         String     @id
+  businessId String?    @map("business_id")
+  code       String
+  name       String
+  route      String?
+  icon       String?
+  section    String?
+  parentId   String?    @map("parent_id")
+  sortOrder  Int        @default(0) @map("sort_order")
+  isActive   Boolean    @default(true) @map("is_active")
+  business   Business?  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  parent     Menu?      @relation("MenuTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children   Menu[]     @relation("MenuTree")
+  roleMenus  RoleMenu[]
+
+  @@unique([businessId, code])
+  @@map("menus")
+}
+
+model UserRole {
+  userId     String   @map("user_id")
+  roleId     String   @map("role_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  roleId       String @map("role_id")
+  permissionId String @map("permission_id")
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model RoleMenu {
+  roleId String @map("role_id")
+  menuId String @map("menu_id")
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  menu   Menu   @relation(fields: [menuId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, menuId])
+  @@map("role_menus")
+}
+
+model UserPermissionOverride {
+  id           String     @id
+  userId       String     @map("user_id")
+  permissionId String     @map("permission_id")
+  /// grant | deny
+  effect       String
+  createdById  String?    @map("created_by_id")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permissionId])
+  @@map("user_permission_overrides")
+}
+
+model UserBranch {
+  userId   String @map("user_id")
+  branchId String @map("branch_id")
+  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+
+  @@id([userId, branchId])
+  @@map("user_branches")
+}
+
+model LoginHistory {
+  id        String   @id
+  userId    String   @map("user_id")
+  ipAddress String?  @map("ip_address")
+  userAgent String?  @map("user_agent") @db.Text
+  success   Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("login_history")
+}
+
+model RefreshToken {
+  id        String   @id
+  userId    String   @map("user_id")
+  tokenHash String   @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ─── Accounting ──────────────────────────────────────────────────────────────
+
+model Account {
+  id              String                   @id
+  businessId      String                   @map("business_id")
+  code            String
+  name            String
+  /// asset | liability | equity | revenue | expense | cogs
+  accountType     String                   @map("account_type")
+  parentId        String?                  @map("parent_id")
+  isActive        Boolean                  @default(true) @map("is_active")
+  isSystem        Boolean                  @default(false) @map("is_system")
+  description     String?                  @db.Text
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+  business        Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  parent          Account?                 @relation("AccountTree", fields: [parentId], references: [id])
+  children        Account[]                @relation("AccountTree")
+  journalLines    JournalLine[]
+  defaultSettings DefaultAccountSetting[]
+
+  @@unique([businessId, code])
+  @@index([businessId])
+  @@map("accounts")
+}
+
+model JournalEntry {
+  id                String        @id
+  businessId        String        @map("business_id")
+  branchId          String?       @map("branch_id")
+  entryNumber       String        @map("entry_number")
+  entryDate         DateTime      @map("entry_date")
+  memo              String?       @db.Text
+  /// draft | posted | reversed
+  status            String        @default("draft")
+  sourceType        String?       @map("source_type")
+  sourceId          String?       @map("source_id")
+  idempotencyKey    String?       @map("idempotency_key")
+  currencyCode      String        @default("NGN") @map("currency_code")
+  postedAt          DateTime?     @map("posted_at")
+  postedById        String?       @map("posted_by_id")
+  reversedByEntryId String?       @map("reversed_by_entry_id")
+  createdById       String?       @map("created_by_id")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+  business          Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch            Branch?       @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  lines             JournalLine[]
+  reversedBy        JournalEntry? @relation("JournalReversal", fields: [reversedByEntryId], references: [id])
+  reverses          JournalEntry[] @relation("JournalReversal")
+
+  @@unique([businessId, entryNumber])
+  @@unique([businessId, idempotencyKey])
+  @@index([businessId, sourceType, sourceId])
+  @@index([entryDate])
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id             String       @id
+  journalEntryId String       @map("journal_entry_id")
+  accountId      String       @map("account_id")
+  description    String?      @db.Text
+  debit          Decimal      @default(0) @db.Decimal(18, 4)
+  credit         Decimal      @default(0) @db.Decimal(18, 4)
+  lineNo         Int          @map("line_no")
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account        Account      @relation(fields: [accountId], references: [id])
+
+  @@index([journalEntryId])
+  @@index([accountId])
+  @@map("journal_lines")
+}
+
+model DefaultAccountSetting {
+  id         String   @id
+  businessId String   @map("business_id")
+  settingKey String   @map("setting_key")
+  accountId  String   @map("account_id")
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  account    Account  @relation(fields: [accountId], references: [id])
+
+  @@unique([businessId, settingKey])
+  @@map("default_account_settings")
+}
+
+model FinancialYear {
+  id         String             @id
+  businessId String             @map("business_id")
+  name       String
+  startsOn   DateTime           @map("starts_on")
+  endsOn     DateTime           @map("ends_on")
+  isClosed   Boolean            @default(false) @map("is_closed")
+  business   Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  periods    AccountingPeriod[]
+
+  @@index([businessId])
+  @@map("financial_years")
+}
+
+model AccountingPeriod {
+  id              String        @id
+  businessId      String        @map("business_id")
+  financialYearId String        @map("financial_year_id")
+  name            String
+  periodNo        Int           @map("period_no")
+  startsOn        DateTime      @map("starts_on")
+  endsOn          DateTime      @map("ends_on")
+  isLocked        Boolean       @default(false) @map("is_locked")
+  business        Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  financialYear   FinancialYear @relation(fields: [financialYearId], references: [id], onDelete: Cascade)
+
+  @@unique([financialYearId, periodNo])
+  @@map("accounting_periods")
+}
+
+// ─── Audit ───────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id
+  businessId String?  @map("business_id")
+  userId     String?  @map("user_id")
+  action     String
+  module     String
+  entityType String?  @map("entity_type")
+  entityId   String?  @map("entity_id")
+  summary    String?  @db.Text
+  metadata   String?  @db.LongText
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+  business   Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, createdAt])
+  @@index([module])
+  @@map("audit_logs")
+}
