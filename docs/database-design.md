@@ -30,6 +30,11 @@ Provider: **MySQL** via Prisma. Identifiers: prefixed short UUIDs (`biz-…`, `u
 
 - `AuditLog` — append-only
 
-## Later phases (not fully modelled yet)
+## Later phases (modelled)
 
-Products, stock ledgers, procurement, sales, HR/payroll, assets, logistics will extend this schema while reusing `businessId`, branches, warehouses, and the journal posting engine.
+- Phase 2–5: products/inventory, procurement/AP, sales/AR, banking/expenses
+- Phase 6: `FixedAsset`, `DepreciationEntry`, `Budget`, `BudgetLine`
+- Phase 7: `Employee`, `AttendanceRecord`, `LeaveRequest`, `PayrollRun`, `PayrollItem`
+- Phase 8: `Vehicle`, `DeliveryOrder`, `DeliveryOrderItem`
+- Phase 9: `AppNotification` (+ existing `SubscriptionPlan` / `BusinessSubscription`)
+

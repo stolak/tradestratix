@@ -113,6 +113,16 @@ model Business {
   bankAccounts           BankAccount[]
   bankTransactions       BankTransaction[]
   expenseBills           ExpenseBill[]
+  fixedAssets            FixedAsset[]
+  depreciationEntries    DepreciationEntry[]
+  budgets                Budget[]
+  employees              Employee[]
+  attendanceRecords      AttendanceRecord[]
+  leaveRequests          LeaveRequest[]
+  payrollRuns            PayrollRun[]
+  vehicles               Vehicle[]
+  deliveryOrders         DeliveryOrder[]
+  notifications          AppNotification[]
 
   @@map("businesses")
 }
@@ -171,6 +181,9 @@ model Branch {
   journalEntries  JournalEntry[]
   salesReps       SalesRep[]
   salesInvoices   SalesInvoice[]
+  fixedAssets     FixedAsset[]
+  employees       Employee[]
+  deliveryOrders  DeliveryOrder[]
 
   @@unique([businessId, code])
   @@index([businessId])
@@ -202,6 +215,7 @@ model Warehouse {
   purchaseOrders PurchaseOrder[]
   goodsReceipts  GoodsReceiptNote[]
   salesInvoices  SalesInvoice[]
+  deliveryOrders DeliveryOrder[]
 
   @@unique([businessId, code])
   @@index([branchId])
@@ -238,6 +252,8 @@ model User {
   loginHistory    LoginHistory[]
   refreshTokens   RefreshToken[]
   salesReps       SalesRep[]
+  employees       Employee[]
+  notifications   AppNotification[]
 
   @@unique([businessId, username])
   @@index([businessId])
@@ -407,6 +423,7 @@ model Account {
   bankAccounts     BankAccount[]
   bankTxnOffsets   BankTransaction[] @relation("BankTxnOffsetAccount")
   expenseLines     ExpenseBillLine[]
+  budgetLines      BudgetLine[]
 
   @@unique([businessId, code])
   @@index([businessId])
@@ -643,6 +660,7 @@ model Product {
   purchaseOrderItems   PurchaseOrderItem[]
   goodsReceiptItems    GoodsReceiptItem[]
   salesInvoiceItems    SalesInvoiceItem[]
+  deliveryItems        DeliveryOrderItem[]
 
   @@unique([businessId, sku])
   @@index([businessId, name])
@@ -698,6 +716,7 @@ model ProductVariant {
   purchaseOrderItems PurchaseOrderItem[]
   goodsReceiptItems  GoodsReceiptItem[]
   salesInvoiceItems  SalesInvoiceItem[]
+  deliveryItems      DeliveryOrderItem[]
 
   @@unique([businessId, sku])
   @@index([productId])
@@ -1084,6 +1103,7 @@ model Customer {
   noteRows  CustomerNote[]
   invoices  SalesInvoice[]
   payments  CustomerPayment[]
+  deliveries DeliveryOrder[]
 
   @@unique([businessId, code])
   @@index([businessId, name])
@@ -1167,6 +1187,7 @@ model SalesInvoice {
   items       SalesInvoiceItem[]
   allocations CustomerPaymentAllocation[]
   commissions SalesCommission[]
+  deliveries  DeliveryOrder[]
 
   @@unique([businessId, invoiceNumber])
   @@index([businessId, status])
@@ -1363,4 +1384,318 @@ model ExpenseBillLine {
 
   @@index([expenseId])
   @@map("expense_bill_lines")
+}
+
+// --- Phase 6: Assets / Depreciation / Budgeting ------------------------------
+
+model FixedAsset {
+  id                       String   @id
+  businessId               String   @map("business_id")
+  branchId                 String?  @map("branch_id")
+  code                     String?
+  name                     String
+  category                 String   @default("equipment")
+  purchaseDate             DateTime @map("purchase_date")
+  purchaseCost             Decimal  @map("purchase_cost") @db.Decimal(18, 4)
+  salvageValue             Decimal  @default(0) @map("salvage_value") @db.Decimal(18, 4)
+  usefulLifeMonths         Int      @default(36) @map("useful_life_months")
+  /// straight_line
+  depreciationMethod       String   @default("straight_line") @map("depreciation_method")
+  accumulatedDepreciation  Decimal  @default(0) @map("accumulated_depreciation") @db.Decimal(18, 4)
+  /// active | fully_depreciated | disposed
+  status                   String   @default("active")
+  notes                    String?  @db.Text
+  acquisitionJournalEntryId String? @map("acquisition_journal_entry_id")
+  createdById              String?  @map("created_by_id")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  business             Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch               Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  depreciationEntries  DepreciationEntry[]
+
+  @@unique([businessId, code])
+  @@index([businessId, status])
+  @@map("fixed_assets")
+}
+
+model DepreciationEntry {
+  id             String   @id
+  businessId     String   @map("business_id")
+  assetId        String   @map("asset_id")
+  periodLabel    String   @map("period_label")
+  runDate        DateTime @default(now()) @map("run_date")
+  amount         Decimal  @db.Decimal(18, 4)
+  journalEntryId String?  @map("journal_entry_id")
+  createdById    String?  @map("created_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  asset    FixedAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, periodLabel])
+  @@index([businessId])
+  @@map("depreciation_entries")
+}
+
+model Budget {
+  id         String   @id
+  businessId String   @map("business_id")
+  name       String
+  fiscalYear Int      @map("fiscal_year")
+  /// draft | active | closed
+  status     String   @default("draft")
+  notes      String?  @db.Text
+  createdById String? @map("created_by_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  business Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  lines    BudgetLine[]
+
+  @@index([businessId, fiscalYear])
+  @@map("budgets")
+}
+
+model BudgetLine {
+  id        String  @id
+  budgetId  String  @map("budget_id")
+  accountId String  @map("account_id")
+  /// 0 = annual total; 1-12 = month
+  periodNo  Int     @default(0) @map("period_no")
+  amount    Decimal @db.Decimal(18, 4)
+
+  budget  Budget  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id])
+
+  @@unique([budgetId, accountId, periodNo])
+  @@index([budgetId])
+  @@map("budget_lines")
+}
+
+// --- Phase 7: HR / Attendance / Payroll --------------------------------------
+
+model Employee {
+  id            String    @id
+  businessId    String    @map("business_id")
+  branchId      String?   @map("branch_id")
+  userId        String?   @map("user_id")
+  code          String?
+  fullName      String    @map("full_name")
+  email         String?
+  phone         String?
+  department    String?
+  jobTitle      String?   @map("job_title")
+  hireDate      DateTime? @map("hire_date")
+  baseSalary    Decimal   @default(0) @map("base_salary") @db.Decimal(18, 4)
+  /// monthly | biweekly | weekly
+  payFrequency  String    @default("monthly") @map("pay_frequency")
+  bankName      String?   @map("bank_name")
+  bankAccount   String?   @map("bank_account")
+  taxId         String?   @map("tax_id")
+  pensionId     String?   @map("pension_id")
+  status        String    @default("active")
+  createdById   String?   @map("created_by_id")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch     Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  attendance AttendanceRecord[]
+  leaveRequests LeaveRequest[]
+  payrollItems PayrollItem[]
+  vehiclesDriven Vehicle[]
+
+  @@unique([businessId, code])
+  @@index([businessId, status])
+  @@map("employees")
+}
+
+model AttendanceRecord {
+  id         String   @id
+  businessId String   @map("business_id")
+  employeeId String   @map("employee_id")
+  workDate   DateTime @map("work_date")
+  checkInAt  DateTime? @map("check_in_at")
+  checkOutAt DateTime? @map("check_out_at")
+  /// present | absent | leave | half_day
+  status     String   @default("present")
+  notes      String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, workDate])
+  @@index([businessId, workDate])
+  @@map("attendance_records")
+}
+
+model LeaveRequest {
+  id          String   @id
+  businessId  String   @map("business_id")
+  employeeId  String   @map("employee_id")
+  leaveType   String   @default("annual") @map("leave_type")
+  startsOn    DateTime @map("starts_on")
+  endsOn      DateTime @map("ends_on")
+  days        Decimal  @default(1) @db.Decimal(8, 2)
+  reason      String?  @db.Text
+  /// pending | approved | rejected | cancelled
+  status      String   @default("pending")
+  approvedById String? @map("approved_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, status])
+  @@map("leave_requests")
+}
+
+model PayrollRun {
+  id               String   @id
+  businessId       String   @map("business_id")
+  runNumber        String   @map("run_number")
+  periodStart      DateTime @map("period_start")
+  periodEnd        DateTime @map("period_end")
+  payDate          DateTime @map("pay_date")
+  /// draft | posted | void
+  status           String   @default("draft")
+  totalGross       Decimal  @default(0) @map("total_gross") @db.Decimal(18, 4)
+  totalDeductions  Decimal  @default(0) @map("total_deductions") @db.Decimal(18, 4)
+  totalNet         Decimal  @default(0) @map("total_net") @db.Decimal(18, 4)
+  journalEntryId   String?  @map("journal_entry_id")
+  paymentJournalEntryId String? @map("payment_journal_entry_id")
+  notes            String?  @db.Text
+  createdById      String?  @map("created_by_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  items    PayrollItem[]
+
+  @@unique([businessId, runNumber])
+  @@index([businessId, status])
+  @@map("payroll_runs")
+}
+
+model PayrollItem {
+  id               String  @id
+  payrollRunId     String  @map("payroll_run_id")
+  employeeId       String  @map("employee_id")
+  basicSalary      Decimal @map("basic_salary") @db.Decimal(18, 4)
+  allowances       Decimal @default(0) @db.Decimal(18, 4)
+  deductions       Decimal @default(0) @db.Decimal(18, 4)
+  taxAmount        Decimal @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  pensionEmployee  Decimal @default(0) @map("pension_employee") @db.Decimal(18, 4)
+  pensionEmployer  Decimal @default(0) @map("pension_employer") @db.Decimal(18, 4)
+  netPay           Decimal @map("net_pay") @db.Decimal(18, 4)
+  notes            String? @db.Text
+
+  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employee   Employee   @relation(fields: [employeeId], references: [id])
+
+  @@unique([payrollRunId, employeeId])
+  @@index([employeeId])
+  @@map("payroll_items")
+}
+
+// --- Phase 8: Distribution / Logistics / Delivery ----------------------------
+
+model Vehicle {
+  id               String   @id
+  businessId       String   @map("business_id")
+  code             String?
+  name             String
+  plateNumber      String?  @map("plate_number")
+  capacity         Decimal? @db.Decimal(18, 2)
+  driverEmployeeId String?  @map("driver_employee_id")
+  status           String   @default("available")
+  notes            String?  @db.Text
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  driver   Employee? @relation(fields: [driverEmployeeId], references: [id], onDelete: SetNull)
+  deliveries DeliveryOrder[]
+
+  @@unique([businessId, code])
+  @@index([businessId])
+  @@map("vehicles")
+}
+
+model DeliveryOrder {
+  id              String    @id
+  businessId      String    @map("business_id")
+  deliveryNumber  String    @map("delivery_number")
+  salesInvoiceId  String?   @map("sales_invoice_id")
+  customerId      String    @map("customer_id")
+  warehouseId     String    @map("warehouse_id")
+  branchId        String?   @map("branch_id")
+  vehicleId       String?   @map("vehicle_id")
+  driverName      String?   @map("driver_name")
+  scheduledDate   DateTime? @map("scheduled_date")
+  dispatchedAt    DateTime? @map("dispatched_at")
+  deliveredAt     DateTime? @map("delivered_at")
+  /// draft | scheduled | dispatched | delivered | cancelled
+  status          String    @default("draft")
+  addressLine1    String?   @map("address_line1")
+  city            String?
+  notes           String?   @db.Text
+  createdById     String?   @map("created_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  salesInvoice SalesInvoice? @relation(fields: [salesInvoiceId], references: [id], onDelete: SetNull)
+  customer     Customer @relation(fields: [customerId], references: [id])
+  warehouse    Warehouse @relation(fields: [warehouseId], references: [id])
+  branch       Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  vehicle      Vehicle? @relation(fields: [vehicleId], references: [id], onDelete: SetNull)
+  items        DeliveryOrderItem[]
+
+  @@unique([businessId, deliveryNumber])
+  @@index([businessId, status])
+  @@map("delivery_orders")
+}
+
+model DeliveryOrderItem {
+  id              String  @id
+  deliveryOrderId String  @map("delivery_order_id")
+  productId       String  @map("product_id")
+  variantId       String? @map("variant_id")
+  quantity        Decimal @db.Decimal(18, 4)
+  notes           String? @db.Text
+
+  deliveryOrder DeliveryOrder @relation(fields: [deliveryOrderId], references: [id], onDelete: Cascade)
+  product       Product @relation(fields: [productId], references: [id])
+  variant       ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@index([deliveryOrderId])
+  @@map("delivery_order_items")
+}
+
+// --- Phase 9: Notifications (BI/SaaS reuse existing tables) -------------------
+
+model AppNotification {
+  id         String   @id
+  businessId String   @map("business_id")
+  userId     String?  @map("user_id")
+  title      String
+  body       String   @db.Text
+  module     String?
+  entityType String?  @map("entity_type")
+  entityId   String?  @map("entity_id")
+  isRead     Boolean  @default(false) @map("is_read")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, userId, isRead])
+  @@index([createdAt])
+  @@map("app_notifications")
 }

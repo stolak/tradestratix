@@ -249,5 +249,101 @@ export const api = {
       request<any>(`/inventory/transfers/${id}/dispatch`, { method: 'POST', body: '{}' }),
     receiveTransfer: (id: string) =>
       request<any>(`/inventory/transfers/${id}/receive`, { method: 'POST', body: '{}' })
+  },
+  assets: {
+    list: (status?: string) =>
+      request<any[]>(`/assets${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+    get: (id: string) => request<any>(`/assets/${id}`),
+    create: (body: Record<string, unknown>) =>
+      request<any>('/assets', { method: 'POST', body: JSON.stringify(body) }),
+    depreciationEntries: (assetId?: string) =>
+      request<any[]>(
+        `/assets/depreciation/entries${assetId ? `?asset_id=${encodeURIComponent(assetId)}` : ''}`
+      ),
+    runDepreciation: (body: Record<string, unknown> = {}) =>
+      request<any>('/assets/depreciation/run', { method: 'POST', body: JSON.stringify(body) })
+  },
+  budgets: {
+    list: () => request<any[]>('/budgets'),
+    create: (body: Record<string, unknown>) =>
+      request<any>('/budgets', { method: 'POST', body: JSON.stringify(body) }),
+    activate: (id: string) =>
+      request<any>(`/budgets/${id}/activate`, { method: 'POST', body: '{}' }),
+    vsActual: (id: string) => request<any>(`/budgets/${id}/vs-actual`)
+  },
+  hr: {
+    employees: (status?: string) =>
+      request<any[]>(`/hr/employees${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+    createEmployee: (body: Record<string, unknown>) =>
+      request<any>('/hr/employees', { method: 'POST', body: JSON.stringify(body) }),
+    updateEmployee: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/hr/employees/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    attendance: (employeeId?: string) =>
+      request<any[]>(
+        `/hr/attendance${employeeId ? `?employee_id=${encodeURIComponent(employeeId)}` : ''}`
+      ),
+    upsertAttendance: (body: Record<string, unknown>) =>
+      request<any>('/hr/attendance', { method: 'POST', body: JSON.stringify(body) }),
+    leave: (status?: string) =>
+      request<any[]>(`/hr/leave${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+    createLeave: (body: Record<string, unknown>) =>
+      request<any>('/hr/leave', { method: 'POST', body: JSON.stringify(body) }),
+    approveLeave: (id: string, approve = true) =>
+      request<any>(`/hr/leave/${id}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ approve })
+      })
+  },
+  payroll: {
+    runs: () => request<any[]>('/payroll/runs'),
+    getRun: (id: string) => request<any>(`/payroll/runs/${id}`),
+    createRun: (body: Record<string, unknown>) =>
+      request<any>('/payroll/runs', { method: 'POST', body: JSON.stringify(body) }),
+    postRun: (id: string) =>
+      request<any>(`/payroll/runs/${id}/post`, { method: 'POST', body: '{}' }),
+    payRun: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/payroll/runs/${id}/pay`, { method: 'POST', body: JSON.stringify(body) })
+  },
+  distribution: {
+    vehicles: () => request<any[]>('/distribution/vehicles'),
+    createVehicle: (body: Record<string, unknown>) =>
+      request<any>('/distribution/vehicles', { method: 'POST', body: JSON.stringify(body) }),
+    deliveries: (status?: string) =>
+      request<any[]>(
+        `/distribution/deliveries${status ? `?status=${encodeURIComponent(status)}` : ''}`
+      ),
+    createDelivery: (body: Record<string, unknown>) =>
+      request<any>('/distribution/deliveries', { method: 'POST', body: JSON.stringify(body) }),
+    schedule: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/distribution/deliveries/${id}/schedule`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    dispatch: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/distribution/deliveries/${id}/dispatch`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    deliver: (id: string) =>
+      request<any>(`/distribution/deliveries/${id}/deliver`, { method: 'POST', body: '{}' }),
+    cancel: (id: string) =>
+      request<any>(`/distribution/deliveries/${id}/cancel`, { method: 'POST', body: '{}' })
+  },
+  notifications: {
+    list: (unreadOnly?: boolean) =>
+      request<any[]>(`/notifications${unreadOnly ? '?unread_only=true' : ''}`),
+    markRead: (id: string) =>
+      request<any>(`/notifications/${id}/read`, { method: 'POST', body: '{}' }),
+    markAllRead: () => request<any>('/notifications/read-all', { method: 'POST', body: '{}' })
+  },
+  bi: {
+    insights: () => request<any>('/bi/insights')
+  },
+  subscriptions: {
+    plans: () => request<any[]>('/subscriptions/plans'),
+    current: () => request<any>('/subscriptions/current')
+  },
+  mobile: {
+    home: () => request<any>('/mobile/home')
   }
 };

@@ -30,6 +30,7 @@ const MODULES = [
   'hr',
   'payroll',
   'reports',
+  'notifications',
   'settings',
   'users',
   'roles',
@@ -890,6 +891,133 @@ async function main() {
     });
   }
   console.log(`Phase 5 samples: Bank ${mainBank?.name || 'n/a'}`);
+
+  // Phase 6 — sample fixed asset + budget
+  let forklift = await prisma.fixedAsset.findFirst({
+    where: { businessId: business.id, code: 'FA-FORK-01' }
+  });
+  if (!forklift) {
+    forklift = await prisma.fixedAsset.create({
+      data: {
+        id: id('fa'),
+        businessId: business.id,
+        branchId: branch.id,
+        code: 'FA-FORK-01',
+        name: 'Warehouse Forklift',
+        category: 'equipment',
+        purchaseDate: new Date(`${year}-01-15`),
+        purchaseCost: 4500000,
+        salvageValue: 500000,
+        usefulLifeMonths: 60,
+        status: 'active',
+        createdById: owner.id
+      }
+    });
+  }
+
+  let opexBudget = await prisma.budget.findFirst({
+    where: { businessId: business.id, name: `FY ${year} OpEx` }
+  });
+  if (!opexBudget) {
+    const rentAcc = await prisma.account.findFirst({
+      where: { businessId: business.id, code: '6200' }
+    });
+    opexBudget = await prisma.budget.create({
+      data: {
+        id: id('bud'),
+        businessId: business.id,
+        name: `FY ${year} OpEx`,
+        fiscalYear: year,
+        status: 'active',
+        createdById: owner.id,
+        lines: rentAcc
+          ? {
+              create: [
+                {
+                  id: id('bln'),
+                  accountId: rentAcc.id,
+                  periodNo: 0,
+                  amount: 1200000
+                }
+              ]
+            }
+          : undefined
+      }
+    });
+  }
+
+  // Phase 7 — sample employee
+  let employee = await prisma.employee.findFirst({
+    where: { businessId: business.id, code: 'EMP-01' }
+  });
+  if (!employee) {
+    employee = await prisma.employee.create({
+      data: {
+        id: id('emp'),
+        businessId: business.id,
+        branchId: branch.id,
+        code: 'EMP-01',
+        fullName: 'Tunde Warehouse',
+        department: 'Operations',
+        jobTitle: 'Store Keeper',
+        hireDate: new Date(`${year}-02-01`),
+        baseSalary: 180000,
+        status: 'active',
+        createdById: owner.id
+      }
+    });
+  }
+
+  // Phase 8 — sample vehicle
+  let van = await prisma.vehicle.findFirst({
+    where: { businessId: business.id, code: 'VAN-01' }
+  });
+  if (!van) {
+    van = await prisma.vehicle.create({
+      data: {
+        id: id('veh'),
+        businessId: business.id,
+        code: 'VAN-01',
+        name: 'Delivery Van 1',
+        plateNumber: 'ABC-123-XY',
+        status: 'available'
+      }
+    });
+  }
+
+  // Phase 9 — starter + growth plans, welcome notification
+  let starter = await prisma.subscriptionPlan.findUnique({ where: { code: 'starter' } });
+  if (!starter) {
+    starter = await prisma.subscriptionPlan.create({
+      data: {
+        id: id('plan'),
+        code: 'starter',
+        name: 'Starter',
+        description: 'Single-branch retail starter',
+        monthlyPrice: 25000,
+        yearlyPrice: 250000,
+        maxUsers: 5,
+        maxBranches: 1,
+        maxWarehouses: 2,
+        modulesJson: JSON.stringify(MODULES.filter((m) => m !== 'distribution' && m !== 'payroll'))
+      }
+    });
+  }
+
+  await prisma.appNotification.create({
+    data: {
+      id: id('ntf'),
+      businessId: business.id,
+      userId: owner.id,
+      title: 'Welcome to TradeStratix',
+      body: 'Phases 1–9 are ready: try Assets, HR, Payroll, Distribution, and Insights.',
+      module: 'dashboard'
+    }
+  }).catch(() => undefined);
+
+  console.log(
+    `Phase 6–9 samples: asset ${forklift.code}, budget ${opexBudget.name}, emp ${employee.code}, van ${van.code}, plan ${starter.code}`
+  );
 }
 
 main()

@@ -19,6 +19,15 @@ import salesRepRoutes from './sales-rep.routes.js';
 import bankingRoutes from './banking.routes.js';
 import expenseRoutes from './expense.routes.js';
 import reportsRoutes from './reports.routes.js';
+import assetRoutes from './asset.routes.js';
+import budgetRoutes from './budget.routes.js';
+import hrRoutes from './hr.routes.js';
+import payrollRoutes from './payroll.routes.js';
+import distributionRoutes from './distribution.routes.js';
+import notificationRoutes from './notification.routes.js';
+import biRoutes from './bi.routes.js';
+import subscriptionRoutes from './subscription.routes.js';
+import mobileRoutes from './mobile.routes.js';
 
 const router = Router();
 
@@ -42,5 +51,14 @@ router.use('/sales-reps', salesRepRoutes);
 router.use('/banking', bankingRoutes);
 router.use('/expenses', expenseRoutes);
 router.use('/reports', reportsRoutes);
+router.use('/assets', assetRoutes);
+router.use('/budgets', budgetRoutes);
+router.use('/hr', hrRoutes);
+router.use('/payroll', payrollRoutes);
+router.use('/distribution', distributionRoutes);
+router.use('/notifications', notificationRoutes);
+router.use('/bi', biRoutes);
+router.use('/subscriptions', subscriptionRoutes);
+router.use('/mobile', mobileRoutes);
 
 export default router;

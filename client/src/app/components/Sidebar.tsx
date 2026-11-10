@@ -22,7 +22,10 @@ import {
   UserCog,
   Shield,
   Settings,
-  ScrollText
+  ScrollText,
+  Bell,
+  CreditCard,
+  LineChart
 } from 'lucide-react';
 import { APP_NAME } from '../utils/env';
 import { ROUTES } from '../routes';
@@ -50,7 +53,10 @@ const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
   UserCog,
   Shield,
   Settings,
-  ScrollText
+  ScrollText,
+  Bell,
+  CreditCard,
+  LineChart
 };
 
 const NAV = [
@@ -81,13 +87,31 @@ const NAV = [
     ]
   },
   {
+    section: 'Logistics',
+    items: [{ route: ROUTES.DISTRIBUTION, label: 'Distribution', icon: 'Route', perm: 'distribution.view' }]
+  },
+  {
     section: 'Finance',
     items: [
       { route: ROUTES.ACCOUNTING, label: 'Accounting', icon: 'BookOpen', perm: 'accounting.view' },
       { route: ROUTES.BANKING, label: 'Banking', icon: 'Landmark', perm: 'banking.view' },
       { route: ROUTES.EXPENSES, label: 'Expenses', icon: 'Receipt', perm: 'expenses.view' },
-      { route: ROUTES.REPORTS, label: 'Statements', icon: 'BarChart3', perm: 'reports.view' },
-      { route: ROUTES.ASSETS, label: 'Assets', icon: 'Building2', perm: 'assets.view', soon: true }
+      { route: ROUTES.ASSETS, label: 'Assets', icon: 'Building2', perm: 'assets.view' },
+      { route: ROUTES.REPORTS, label: 'Statements', icon: 'BarChart3', perm: 'reports.view' }
+    ]
+  },
+  {
+    section: 'People',
+    items: [
+      { route: ROUTES.HR, label: 'HR', icon: 'BadgeCheck', perm: 'hr.view' },
+      { route: ROUTES.PAYROLL, label: 'Payroll', icon: 'Wallet', perm: 'payroll.view' }
+    ]
+  },
+  {
+    section: 'Insights',
+    items: [
+      { route: ROUTES.INSIGHTS, label: 'Insights', icon: 'BarChart3', perm: 'reports.view' },
+      { route: ROUTES.NOTIFICATIONS, label: 'Notifications', icon: 'Bell', perm: 'dashboard.view' }
     ]
   },
   {
@@ -96,6 +120,7 @@ const NAV = [
       { route: ROUTES.BRANCHES, label: 'Branches', icon: 'MapPin', perm: 'branches.view' },
       { route: ROUTES.USERS, label: 'Users', icon: 'UserCog', perm: 'users.view' },
       { route: ROUTES.ROLES, label: 'Roles', icon: 'Shield', perm: 'roles.view' },
+      { route: ROUTES.SUBSCRIPTIONS, label: 'Subscription', icon: 'CreditCard', perm: 'settings.view' },
       { route: ROUTES.SETTINGS, label: 'Settings', icon: 'Settings', perm: 'settings.view' },
       { route: ROUTES.AUDIT, label: 'Audit', icon: 'ScrollText', perm: 'audit.view' }
     ]
@@ -174,9 +199,6 @@ export const Sidebar: React.FC<Props> = ({ current, onNavigate, can, businessNam
                     >
                       <Icon size={16} />
                       <span style={{ flex: 1 }}>{item.label}</span>
-                      {item.soon ? (
-                        <span style={{ fontSize: 10, opacity: 0.6 }}>soon</span>
-                      ) : null}
                     </button>
                   );
                 })}

@@ -10,7 +10,6 @@ import { RolesPage } from './pages/RolesPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AccountingPage } from './pages/AccountingPage';
 import { AuditPage } from './pages/AuditPage';
-import { PlaceholderPage } from './pages/PlaceholderPage';
 import { ProductsPage } from './pages/ProductsPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { UnitsOfMeasurePage } from './pages/UnitsOfMeasurePage';
@@ -23,6 +22,13 @@ import { SalesRepsPage } from './pages/SalesRepsPage';
 import { BankingPage } from './pages/BankingPage';
 import { ExpensesPage } from './pages/ExpensesPage';
 import { ReportsPage } from './pages/ReportsPage';
+import { AssetsPage } from './pages/AssetsPage';
+import { HrPage } from './pages/HrPage';
+import { PayrollPage } from './pages/PayrollPage';
+import { DistributionPage } from './pages/DistributionPage';
+import { InsightsPage } from './pages/InsightsPage';
+import { NotificationsPage } from './pages/NotificationsPage';
+import { SubscriptionsPage } from './pages/SubscriptionsPage';
 import { getRouteFromLocation, ROUTES, setRouteInLocation } from './routes';
 
 export const App: React.FC = () => {
@@ -113,7 +119,25 @@ export const App: React.FC = () => {
       content = <ReportsPage />;
       break;
     case ROUTES.ASSETS:
-      content = <PlaceholderPage title="Assets" phase="Phase 6" />;
+      content = <AssetsPage />;
+      break;
+    case ROUTES.HR:
+      content = <HrPage />;
+      break;
+    case ROUTES.PAYROLL:
+      content = <PayrollPage />;
+      break;
+    case ROUTES.DISTRIBUTION:
+      content = <DistributionPage />;
+      break;
+    case ROUTES.INSIGHTS:
+      content = <InsightsPage />;
+      break;
+    case ROUTES.NOTIFICATIONS:
+      content = <NotificationsPage />;
+      break;
+    case ROUTES.SUBSCRIPTIONS:
+      content = <SubscriptionsPage />;
       break;
     default:
       content = <DashboardPage />;

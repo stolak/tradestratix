@@ -38,6 +38,7 @@ export const MODULES = [
   'hr',
   'payroll',
   'reports',
+  'notifications',
   'settings',
   'users',
   'roles',
