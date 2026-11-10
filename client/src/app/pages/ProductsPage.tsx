@@ -511,7 +511,7 @@ export const ProductsPage: React.FC = () => {
         {/* Identity */}
         <div style={{ display: 'grid', gap: 12 }}>
           {sectionTitle(1, 'Product details', 'Basic identity and stock policy for this item.')}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
             <div className="field">
               <label>Name</label>
               <input

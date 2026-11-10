@@ -11,6 +11,14 @@ import auditRoutes from './audit.routes.js';
 import productRoutes from './product.routes.js';
 import uomRoutes from './uom.routes.js';
 import inventoryRoutes from './inventory.routes.js';
+import supplierRoutes from './supplier.routes.js';
+import procurementRoutes from './procurement.routes.js';
+import customerRoutes from './customer.routes.js';
+import salesRoutes from './sales.routes.js';
+import salesRepRoutes from './sales-rep.routes.js';
+import bankingRoutes from './banking.routes.js';
+import expenseRoutes from './expense.routes.js';
+import reportsRoutes from './reports.routes.js';
 
 const router = Router();
 
@@ -26,5 +34,13 @@ router.use('/audit', auditRoutes);
 router.use('/products', productRoutes);
 router.use('/uoms', uomRoutes);
 router.use('/inventory', inventoryRoutes);
+router.use('/suppliers', supplierRoutes);
+router.use('/purchases', procurementRoutes);
+router.use('/customers', customerRoutes);
+router.use('/sales', salesRoutes);
+router.use('/sales-reps', salesRepRoutes);
+router.use('/banking', bankingRoutes);
+router.use('/expenses', expenseRoutes);
+router.use('/reports', reportsRoutes);
 
 export default router;

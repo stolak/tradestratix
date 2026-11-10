@@ -87,6 +87,28 @@ async function nextEntryNumber(businessId: string, tx: Prisma.TransactionClient)
   return `JE-${String(count + 1).padStart(6, '0')}`;
 }
 
+/** Reject posts into locked accounting periods or closed financial years. */
+export async function assertPeriodOpen(businessId: string, entryDate: Date | string) {
+  const date = entryDate instanceof Date ? entryDate : new Date(entryDate);
+  if (Number.isNaN(date.getTime())) throw httpError(400, 'Invalid entry date');
+
+  const period = await prisma.accountingPeriod.findFirst({
+    where: {
+      businessId,
+      startsOn: { lte: date },
+      endsOn: { gte: date }
+    },
+    include: { financialYear: true }
+  });
+
+  if (period?.isLocked) {
+    throw httpError(400, `Accounting period "${period.name}" is locked`);
+  }
+  if (period?.financialYear?.isClosed) {
+    throw httpError(400, `Financial year "${period.financialYear.name}" is closed`);
+  }
+}
+
 /**
  * Central posting engine: creates a balanced journal, optionally posts immediately.
  * Idempotent when idempotency_key or sourceType+sourceId is provided for posted entries.
@@ -108,10 +130,16 @@ export async function createJournal(
     currencyCode?: string;
     post?: boolean;
     lines: JournalLineInput[];
-  }
+  },
+  outerTx?: Prisma.TransactionClient
 ) {
   const lines = body.lines || [];
   if (lines.length < 2) throw httpError(400, 'Journal requires at least two lines');
+
+  const entryDateEarly = body.entry_date ? new Date(body.entry_date) : new Date();
+  if (body.post !== false) {
+    await assertPeriodOpen(user.businessId, entryDateEarly);
+  }
 
   const normalized = lines.map((l, idx) => {
     const accountId = l.account_id || l.accountId;
@@ -144,8 +172,10 @@ export async function createJournal(
     body.idempotencyKey ||
     (sourceType && sourceId ? `${sourceType}:${sourceId}` : null);
 
+  const client = outerTx || prisma;
+
   if (idempotencyKey) {
-    const existing = await prisma.journalEntry.findFirst({
+    const existing = await client.journalEntry.findFirst({
       where: { businessId: user.businessId, idempotencyKey },
       include: { lines: true }
     });
@@ -153,7 +183,7 @@ export async function createJournal(
   }
 
   const accountIds = [...new Set(normalized.map((l) => l.accountId))];
-  const accounts = await prisma.account.findMany({
+  const accounts = await client.account.findMany({
     where: { businessId: user.businessId, id: { in: accountIds } }
   });
   if (accounts.length !== accountIds.length) {
@@ -163,9 +193,9 @@ export async function createJournal(
   const shouldPost = body.post !== false;
   const entryDate = body.entry_date ? new Date(body.entry_date) : new Date();
 
-  const created = await prisma.$transaction(async (tx) => {
+  const run = async (tx: Prisma.TransactionClient) => {
     const entryNumber = await nextEntryNumber(user.businessId, tx);
-    const entry = await tx.journalEntry.create({
+    return tx.journalEntry.create({
       data: {
         id: shortId('je'),
         businessId: user.businessId,
@@ -194,8 +224,9 @@ export async function createJournal(
       },
       include: { lines: true }
     });
-    return entry;
-  });
+  };
+
+  const created = outerTx ? await run(outerTx) : await prisma.$transaction(run);
 
   await writeAudit({
     user,
@@ -299,4 +330,198 @@ export async function trialBalance(businessId: string) {
   const totalCredit = roundMoney(rows.reduce((s, r) => s + r.balance_credit, 0));
 
   return { rows, total_debit: totalDebit, total_credit: totalCredit, balanced: totalDebit === totalCredit };
+}
+
+export async function listPeriods(businessId: string) {
+  const rows = await prisma.accountingPeriod.findMany({
+    where: { businessId },
+    include: { financialYear: true },
+    orderBy: { startsOn: 'asc' }
+  });
+  return serialize(rows);
+}
+
+export async function setPeriodLocked(user: AuthUser, id: string, locked: boolean) {
+  const period = await prisma.accountingPeriod.findFirst({
+    where: { id, businessId: user.businessId }
+  });
+  if (!period) throw httpError(404, 'Period not found');
+  const updated = await prisma.accountingPeriod.update({
+    where: { id },
+    data: { isLocked: locked },
+    include: { financialYear: true }
+  });
+  await writeAudit({
+    user,
+    action: 'edit',
+    module: 'accounting',
+    entityType: 'AccountingPeriod',
+    entityId: id,
+    summary: `${locked ? 'Locked' : 'Unlocked'} period ${updated.name}`
+  });
+  return serialize(updated);
+}
+
+function accountNet(debit: number, credit: number, accountType: string) {
+  // Assets/expenses/cogs: debit-normal; liabilities/equity/revenue: credit-normal
+  const debitNormal = ['asset', 'expense', 'cogs'].includes(accountType);
+  return debitNormal ? roundMoney(debit - credit) : roundMoney(credit - debit);
+}
+
+async function postedLinesInRange(
+  businessId: string,
+  from?: Date | null,
+  to?: Date | null
+) {
+  return prisma.journalLine.findMany({
+    where: {
+      journalEntry: {
+        businessId,
+        status: 'posted',
+        ...(from || to
+          ? {
+              entryDate: {
+                ...(from ? { gte: from } : {}),
+                ...(to ? { lte: to } : {})
+              }
+            }
+          : {})
+      }
+    },
+    include: { account: true }
+  });
+}
+
+export async function profitAndLoss(
+  businessId: string,
+  from?: string | Date,
+  to?: string | Date
+) {
+  const fromDate = from ? new Date(from) : null;
+  const toDate = to ? new Date(to) : null;
+  const lines = await postedLinesInRange(businessId, fromDate, toDate);
+
+  const buckets: Record<string, { code: string; name: string; amount: number }[]> = {
+    revenue: [],
+    cogs: [],
+    expense: []
+  };
+  const totals = { revenue: 0, cogs: 0, expense: 0 };
+
+  const map = new Map<string, { code: string; name: string; type: string; debit: number; credit: number }>();
+  for (const line of lines) {
+    const t = line.account.accountType;
+    if (!['revenue', 'cogs', 'expense'].includes(t)) continue;
+    const cur = map.get(line.accountId) || {
+      code: line.account.code,
+      name: line.account.name,
+      type: t,
+      debit: 0,
+      credit: 0
+    };
+    cur.debit += Number(line.debit);
+    cur.credit += Number(line.credit);
+    map.set(line.accountId, cur);
+  }
+
+  for (const row of map.values()) {
+    const amount = accountNet(row.debit, row.credit, row.type);
+    buckets[row.type].push({ code: row.code, name: row.name, amount });
+    totals[row.type as keyof typeof totals] = roundMoney(
+      totals[row.type as keyof typeof totals] + amount
+    );
+  }
+
+  for (const key of Object.keys(buckets)) {
+    buckets[key].sort((a, b) => a.code.localeCompare(b.code));
+  }
+
+  const grossProfit = roundMoney(totals.revenue - totals.cogs);
+  const netProfit = roundMoney(grossProfit - totals.expense);
+
+  return {
+    from: fromDate?.toISOString() || null,
+    to: toDate?.toISOString() || null,
+    revenue: buckets.revenue,
+    cogs: buckets.cogs,
+    expenses: buckets.expense,
+    totals: {
+      revenue: totals.revenue,
+      cogs: totals.cogs,
+      expenses: totals.expense,
+      gross_profit: grossProfit,
+      net_profit: netProfit
+    }
+  };
+}
+
+export async function balanceSheet(businessId: string, asOf?: string | Date) {
+  const asOfDate = asOf ? new Date(asOf) : new Date();
+  const lines = await postedLinesInRange(businessId, null, asOfDate);
+
+  const map = new Map<
+    string,
+    { code: string; name: string; type: string; debit: number; credit: number }
+  >();
+  for (const line of lines) {
+    const t = line.account.accountType;
+    if (!['asset', 'liability', 'equity'].includes(t)) continue;
+    const cur = map.get(line.accountId) || {
+      code: line.account.code,
+      name: line.account.name,
+      type: t,
+      debit: 0,
+      credit: 0
+    };
+    cur.debit += Number(line.debit);
+    cur.credit += Number(line.credit);
+    map.set(line.accountId, cur);
+  }
+
+  const sections: Record<string, { code: string; name: string; amount: number }[]> = {
+    asset: [],
+    liability: [],
+    equity: []
+  };
+  const totals = { asset: 0, liability: 0, equity: 0 };
+
+  for (const row of map.values()) {
+    const amount = accountNet(row.debit, row.credit, row.type);
+    sections[row.type].push({ code: row.code, name: row.name, amount });
+    totals[row.type as keyof typeof totals] = roundMoney(
+      totals[row.type as keyof typeof totals] + amount
+    );
+  }
+
+  // Fold P&L into equity as current-year earnings
+  const pl = await profitAndLoss(businessId, undefined, asOfDate);
+  const netProfit = pl.totals.net_profit;
+  if (netProfit !== 0) {
+    sections.equity.push({
+      code: 'NI',
+      name: 'Net income (current period)',
+      amount: netProfit
+    });
+    totals.equity = roundMoney(totals.equity + netProfit);
+  }
+
+  for (const key of Object.keys(sections)) {
+    sections[key].sort((a, b) => a.code.localeCompare(b.code));
+  }
+
+  const liabilitiesAndEquity = roundMoney(totals.liability + totals.equity);
+
+  return {
+    as_of: asOfDate.toISOString(),
+    assets: sections.asset,
+    liabilities: sections.liability,
+    equity: sections.equity,
+    totals: {
+      assets: totals.asset,
+      liabilities: totals.liability,
+      equity: totals.equity,
+      liabilities_and_equity: liabilitiesAndEquity,
+      balanced: totals.asset === liabilitiesAndEquity
+    }
+  };
 }

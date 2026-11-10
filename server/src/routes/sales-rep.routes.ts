@@ -1,0 +1,18 @@
+import { Router } from 'express';
+import * as salesRepController from '../controllers/sales-rep.controller.js';
+import { authenticate, requirePermission } from '../middlewares/auth.js';
+
+const router = Router();
+
+router.use(authenticate);
+
+router.get('/', requirePermission('sales_reps.view'), salesRepController.list);
+router.post('/', requirePermission('sales_reps.create'), salesRepController.create);
+router.patch('/:id', requirePermission('sales_reps.edit'), salesRepController.update);
+router.get(
+  '/commissions/list',
+  requirePermission('sales_reps.view', 'sales.view'),
+  salesRepController.listCommissions
+);
+
+export default router;

@@ -731,11 +731,165 @@ async function main() {
     });
   }
 
+  // Phase 3 — sample supplier + draft PO for Sparkle Cola
+  let supplier = await prisma.supplier.findFirst({
+    where: { businessId: business.id, code: 'SUP-BEV-01' }
+  });
+  if (!supplier) {
+    supplier = await prisma.supplier.create({
+      data: {
+        id: id('sup'),
+        businessId: business.id,
+        code: 'SUP-BEV-01',
+        name: 'Lagos Beverage Distributors',
+        contactPerson: 'Ada Okonkwo',
+        phone: '+2348012345678',
+        email: 'orders@lagosbev.example',
+        city: 'Lagos',
+        paymentTermsDays: 14,
+        createdById: owner.id
+      }
+    });
+  }
+
+  soda =
+    (await prisma.product.findFirst({
+      where: { businessId: business.id, sku: 'BEV-SODA-500' },
+      include: { variants: true }
+    })) || soda;
+
+  let samplePo = await prisma.purchaseOrder.findFirst({
+    where: { businessId: business.id, poNumber: 'PO-00001' }
+  });
+  if (!samplePo && soda) {
+    const sodaVariant =
+      (await prisma.productVariant.findFirst({
+        where: { productId: soda.id, isDefault: true }
+      })) ||
+      (await prisma.productVariant.findFirst({ where: { productId: soda.id } }));
+    samplePo = await prisma.purchaseOrder.create({
+      data: {
+        id: id('po'),
+        businessId: business.id,
+        supplierId: supplier.id,
+        warehouseId: warehouse.id,
+        poNumber: 'PO-00001',
+        status: 'approved',
+        orderDate: new Date(),
+        expectedDate: new Date(Date.now() + 7 * 86400000),
+        notes: 'Seed sample PO — ready to receive',
+        subtotal: 3600,
+        totalAmount: 3600,
+        approvedById: owner.id,
+        approvedAt: new Date(),
+        createdById: owner.id,
+        items: {
+          create: [
+            {
+              id: id('poi'),
+              productId: soda.id,
+              variantId: sodaVariant?.id || null,
+              uomId: soda.baseUomId,
+              quantityOrdered: 24,
+              unitCost: 150,
+              lineTotal: 3600
+            }
+          ]
+        }
+      }
+    });
+  }
+
+  // Phase 4 — walk-in customer, credit customer, sales rep
+  let walkIn = await prisma.customer.findFirst({
+    where: { businessId: business.id, code: 'WALK-IN' }
+  });
+  if (!walkIn) {
+    walkIn = await prisma.customer.create({
+      data: {
+        id: id('cus'),
+        businessId: business.id,
+        code: 'WALK-IN',
+        name: 'Walk-in Customer',
+        customerType: 'walk_in',
+        paymentTermsDays: 0,
+        createdById: owner.id
+      }
+    });
+  }
+
+  let retailCustomer = await prisma.customer.findFirst({
+    where: { businessId: business.id, code: 'CUS-RETAIL-01' }
+  });
+  if (!retailCustomer) {
+    retailCustomer = await prisma.customer.create({
+      data: {
+        id: id('cus'),
+        businessId: business.id,
+        code: 'CUS-RETAIL-01',
+        name: 'City Mart Retail',
+        contactPerson: 'Chinedu Eze',
+        phone: '+2348098765432',
+        city: 'Abuja',
+        customerType: 'retail',
+        paymentTermsDays: 14,
+        createdById: owner.id
+      }
+    });
+  }
+
+  let salesRep = await prisma.salesRep.findFirst({
+    where: { businessId: business.id, code: 'REP-01' }
+  });
+  if (!salesRep) {
+    salesRep = await prisma.salesRep.create({
+      data: {
+        id: id('rep'),
+        businessId: business.id,
+        branchId: branch.id,
+        code: 'REP-01',
+        name: 'Amaka Sales',
+        phone: '+2348011122233',
+        commissionPercent: 5,
+        createdById: owner.id
+      }
+    });
+  }
+
   console.log('Seed complete.');
   console.log('Login: owner / password123');
   console.log(`Business: ${business.name} (${business.id})`);
   console.log(`Branch: ${branch.code} | Warehouse: ${warehouse.code}`);
   console.log('Phase 2 samples: Sparkle Cola (expiry batches), Nike T-Shirt (size/colour variants)');
+  console.log(
+    `Phase 3 samples: Supplier ${supplier.code}, approved PO ${samplePo?.poNumber || 'n/a'}`
+  );
+  console.log(
+    `Phase 4 samples: ${walkIn.code}, ${retailCustomer.code}, rep ${salesRep.code}`
+  );
+
+  // Phase 5 — primary bank account linked to GL bank (1120)
+  const bankGl = await prisma.account.findFirst({
+    where: { businessId: business.id, code: '1120' }
+  });
+  let mainBank = await prisma.bankAccount.findFirst({
+    where: { businessId: business.id, name: 'Main Operating Account' }
+  });
+  if (!mainBank && bankGl) {
+    mainBank = await prisma.bankAccount.create({
+      data: {
+        id: id('bnk'),
+        businessId: business.id,
+        name: 'Main Operating Account',
+        bankName: 'Demo Bank',
+        accountNumber: '0123456789',
+        glAccountId: bankGl.id,
+        openingBalance: 0,
+        createdById: owner.id
+      }
+    });
+  }
+  console.log(`Phase 5 samples: Bank ${mainBank?.name || 'n/a'}`);
 }
 
 main()

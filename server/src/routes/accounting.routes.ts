@@ -25,5 +25,21 @@ router.get(
   requirePermission('accounting.view', 'reports.view'),
   accountingController.trialBalance
 );
+router.get(
+  '/profit-loss',
+  requirePermission('accounting.view', 'reports.view'),
+  accountingController.profitAndLoss
+);
+router.get(
+  '/balance-sheet',
+  requirePermission('accounting.view', 'reports.view'),
+  accountingController.balanceSheet
+);
+router.get('/periods', requirePermission('accounting.view'), accountingController.listPeriods);
+router.post(
+  '/periods/:id/lock',
+  requirePermission('accounting.edit'),
+  accountingController.lockPeriod
+);
 
 export default router;

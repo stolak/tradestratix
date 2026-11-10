@@ -58,9 +58,9 @@ const NAV = [
   {
     section: 'Commerce',
     items: [
-      { route: ROUTES.SALES, label: 'Sales', icon: 'ShoppingCart', perm: 'sales.view', soon: true },
-      { route: ROUTES.POS, label: 'POS', icon: 'Monitor', perm: 'pos.view', soon: true },
-      { route: ROUTES.PURCHASES, label: 'Purchases', icon: 'Truck', perm: 'purchases.view', soon: true }
+      { route: ROUTES.SALES, label: 'Sales', icon: 'ShoppingCart', perm: 'sales.view' },
+      { route: ROUTES.POS, label: 'POS', icon: 'Monitor', perm: 'pos.view' },
+      { route: ROUTES.PURCHASES, label: 'Purchases', icon: 'Truck', perm: 'purchases.view' }
     ]
   },
   {
@@ -73,11 +73,20 @@ const NAV = [
     ]
   },
   {
+    section: 'Partners',
+    items: [
+      { route: ROUTES.CUSTOMERS, label: 'Customers', icon: 'Users', perm: 'customers.view' },
+      { route: ROUTES.SUPPLIERS, label: 'Suppliers', icon: 'Factory', perm: 'suppliers.view' },
+      { route: ROUTES.SALES_REPS, label: 'Sales reps', icon: 'UserCheck', perm: 'sales_reps.view' }
+    ]
+  },
+  {
     section: 'Finance',
     items: [
       { route: ROUTES.ACCOUNTING, label: 'Accounting', icon: 'BookOpen', perm: 'accounting.view' },
-      { route: ROUTES.BANKING, label: 'Banking', icon: 'Landmark', perm: 'banking.view', soon: true },
-      { route: ROUTES.EXPENSES, label: 'Expenses', icon: 'Receipt', perm: 'expenses.view', soon: true },
+      { route: ROUTES.BANKING, label: 'Banking', icon: 'Landmark', perm: 'banking.view' },
+      { route: ROUTES.EXPENSES, label: 'Expenses', icon: 'Receipt', perm: 'expenses.view' },
+      { route: ROUTES.REPORTS, label: 'Statements', icon: 'BarChart3', perm: 'reports.view' },
       { route: ROUTES.ASSETS, label: 'Assets', icon: 'Building2', perm: 'assets.view', soon: true }
     ]
   },
@@ -103,6 +112,7 @@ type Props = {
 export const Sidebar: React.FC<Props> = ({ current, onNavigate, can, businessName }) => {
   return (
     <aside
+      className="app-shell__sidebar"
       style={{
         background: 'linear-gradient(180deg, #0a3f35 0%, #0f5c4c 55%, #134e4a 100%)',
         color: '#e8f5f1',

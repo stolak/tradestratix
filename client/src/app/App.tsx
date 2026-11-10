@@ -14,6 +14,15 @@ import { PlaceholderPage } from './pages/PlaceholderPage';
 import { ProductsPage } from './pages/ProductsPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { UnitsOfMeasurePage } from './pages/UnitsOfMeasurePage';
+import { SuppliersPage } from './pages/SuppliersPage';
+import { PurchasesPage } from './pages/PurchasesPage';
+import { CustomersPage } from './pages/CustomersPage';
+import { SalesPage } from './pages/SalesPage';
+import { PosPage } from './pages/PosPage';
+import { SalesRepsPage } from './pages/SalesRepsPage';
+import { BankingPage } from './pages/BankingPage';
+import { ExpensesPage } from './pages/ExpensesPage';
+import { ReportsPage } from './pages/ReportsPage';
 import { getRouteFromLocation, ROUTES, setRouteInLocation } from './routes';
 
 export const App: React.FC = () => {
@@ -68,13 +77,22 @@ export const App: React.FC = () => {
       content = <AuditPage />;
       break;
     case ROUTES.SALES:
-      content = <PlaceholderPage title="Sales" phase="Phase 4" />;
+      content = <SalesPage />;
       break;
     case ROUTES.POS:
-      content = <PlaceholderPage title="Point of Sale" phase="Phase 4" />;
+      content = <PosPage />;
       break;
     case ROUTES.PURCHASES:
-      content = <PlaceholderPage title="Purchases" phase="Phase 3" />;
+      content = <PurchasesPage />;
+      break;
+    case ROUTES.SUPPLIERS:
+      content = <SuppliersPage />;
+      break;
+    case ROUTES.CUSTOMERS:
+      content = <CustomersPage />;
+      break;
+    case ROUTES.SALES_REPS:
+      content = <SalesRepsPage />;
       break;
     case ROUTES.PRODUCTS:
       content = <ProductsPage />;
@@ -86,10 +104,13 @@ export const App: React.FC = () => {
       content = <UnitsOfMeasurePage />;
       break;
     case ROUTES.BANKING:
-      content = <PlaceholderPage title="Banking" phase="Phase 5" />;
+      content = <BankingPage />;
       break;
     case ROUTES.EXPENSES:
-      content = <PlaceholderPage title="Expenses" phase="Phase 5" />;
+      content = <ExpensesPage />;
+      break;
+    case ROUTES.REPORTS:
+      content = <ReportsPage />;
       break;
     case ROUTES.ASSETS:
       content = <PlaceholderPage title="Assets" phase="Phase 6" />;
@@ -106,22 +127,9 @@ export const App: React.FC = () => {
         can={can}
         businessName={user?.business?.name}
       />
-      <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-        <header
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '1rem 1.5rem',
-            borderBottom: '1px solid var(--line)',
-            background: 'rgba(255,252,247,0.85)',
-            backdropFilter: 'blur(8px)',
-            position: 'sticky',
-            top: 0,
-            zIndex: 10
-          }}
-        >
-          <div style={{ color: 'var(--ink-muted)', fontSize: '0.9rem' }}>
+      <div className="app-shell__main">
+        <header className="app-shell__header">
+          <div style={{ color: 'var(--ink-muted)', fontSize: '0.9rem', minWidth: 0 }}>
             Signed in as <strong style={{ color: 'var(--ink)' }}>{user?.full_name}</strong> ·{' '}
             {user?.role}
           </div>
@@ -129,7 +137,7 @@ export const App: React.FC = () => {
             Sign out
           </button>
         </header>
-        <main style={{ padding: '1.5rem', flex: 1 }}>{content}</main>
+        <main className="app-shell__content">{content}</main>
       </div>
     </div>
   );

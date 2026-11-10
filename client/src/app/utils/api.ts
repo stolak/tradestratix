@@ -61,8 +61,59 @@ export const api = {
     accounts: () => request<any[]>('/accounting/accounts'),
     journals: () => request<any[]>('/accounting/journals'),
     trialBalance: () => request<any>('/accounting/trial-balance'),
+    profitLoss: (from?: string, to?: string) => {
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      const q = params.toString();
+      return request<any>(`/accounting/profit-loss${q ? `?${q}` : ''}`);
+    },
+    balanceSheet: (asOf?: string) =>
+      request<any>(`/accounting/balance-sheet${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ''}`),
+    periods: () => request<any[]>('/accounting/periods'),
+    lockPeriod: (id: string, locked: boolean) =>
+      request<any>(`/accounting/periods/${id}/lock`, {
+        method: 'POST',
+        body: JSON.stringify({ locked })
+      }),
     createJournal: (body: Record<string, unknown>) =>
       request<any>('/accounting/journals', { method: 'POST', body: JSON.stringify(body) })
+  },
+  banking: {
+    accounts: () => request<any[]>('/banking/accounts'),
+    createAccount: (body: Record<string, unknown>) =>
+      request<any>('/banking/accounts', { method: 'POST', body: JSON.stringify(body) }),
+    transactions: (bankAccountId?: string) =>
+      request<any[]>(
+        `/banking/transactions${bankAccountId ? `?bank_account_id=${encodeURIComponent(bankAccountId)}` : ''}`
+      ),
+    deposit: (body: Record<string, unknown>) =>
+      request<any>('/banking/deposits', { method: 'POST', body: JSON.stringify(body) }),
+    withdraw: (body: Record<string, unknown>) =>
+      request<any>('/banking/withdrawals', { method: 'POST', body: JSON.stringify(body) }),
+    transfer: (body: Record<string, unknown>) =>
+      request<any>('/banking/transfers', { method: 'POST', body: JSON.stringify(body) })
+  },
+  expenses: {
+    list: (status?: string) =>
+      request<any[]>(`/expenses${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+    get: (id: string) => request<any>(`/expenses/${id}`),
+    create: (body: Record<string, unknown>) =>
+      request<any>('/expenses', { method: 'POST', body: JSON.stringify(body) }),
+    post: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/expenses/${id}/post`, { method: 'POST', body: JSON.stringify(body) }),
+    pay: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/expenses/${id}/pay`, { method: 'POST', body: JSON.stringify(body) })
+  },
+  reports: {
+    arAging: (asOf?: string) =>
+      request<any>(`/reports/ar-aging${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ''}`),
+    apAging: (asOf?: string) =>
+      request<any>(`/reports/ap-aging${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ''}`),
+    customerStatement: (customerId: string) =>
+      request<any>(`/reports/customers/${customerId}/statement`),
+    supplierStatement: (supplierId: string) =>
+      request<any>(`/reports/suppliers/${supplierId}/statement`)
   },
   audit: {
     list: () => request<any[]>('/audit')
@@ -91,6 +142,88 @@ export const api = {
     list: () => request<any[]>('/uoms'),
     create: (body: Record<string, unknown>) =>
       request<any>('/uoms', { method: 'POST', body: JSON.stringify(body) })
+  },
+  suppliers: {
+    list: (q?: string) =>
+      request<any[]>(`/suppliers${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+    get: (id: string) => request<any>(`/suppliers/${id}`),
+    create: (body: Record<string, unknown>) =>
+      request<any>('/suppliers', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/suppliers/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
+  },
+  purchases: {
+    orders: (status?: string) =>
+      request<any[]>(`/purchases/orders${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+    getOrder: (id: string) => request<any>(`/purchases/orders/${id}`),
+    createOrder: (body: Record<string, unknown>) =>
+      request<any>('/purchases/orders', { method: 'POST', body: JSON.stringify(body) }),
+    submitOrder: (id: string) =>
+      request<any>(`/purchases/orders/${id}/submit`, { method: 'POST', body: '{}' }),
+    approveOrder: (id: string) =>
+      request<any>(`/purchases/orders/${id}/approve`, { method: 'POST', body: '{}' }),
+    cancelOrder: (id: string) =>
+      request<any>(`/purchases/orders/${id}/cancel`, { method: 'POST', body: '{}' }),
+    receipts: () => request<any[]>('/purchases/receipts'),
+    receive: (body: Record<string, unknown>) =>
+      request<any>('/purchases/receipts', { method: 'POST', body: JSON.stringify(body) }),
+    bills: (supplierId?: string) =>
+      request<any[]>(
+        `/purchases/bills${supplierId ? `?supplier_id=${encodeURIComponent(supplierId)}` : ''}`
+      ),
+    payments: (supplierId?: string) =>
+      request<any[]>(
+        `/purchases/payments${supplierId ? `?supplier_id=${encodeURIComponent(supplierId)}` : ''}`
+      ),
+    recordPayment: (body: Record<string, unknown>) =>
+      request<any>('/purchases/payments', { method: 'POST', body: JSON.stringify(body) })
+  },
+  customers: {
+    list: (q?: string) =>
+      request<any[]>(`/customers${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+    get: (id: string) => request<any>(`/customers/${id}`),
+    create: (body: Record<string, unknown>) =>
+      request<any>('/customers', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/customers/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    addNote: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/customers/${id}/notes`, { method: 'POST', body: JSON.stringify(body) })
+  },
+  salesReps: {
+    list: () => request<any[]>('/sales-reps'),
+    create: (body: Record<string, unknown>) =>
+      request<any>('/sales-reps', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/sales-reps/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    commissions: (salesRepId?: string) =>
+      request<any[]>(
+        `/sales-reps/commissions/list${salesRepId ? `?sales_rep_id=${encodeURIComponent(salesRepId)}` : ''}`
+      )
+  },
+  sales: {
+    invoices: (status?: string, channel?: string) => {
+      const params = new URLSearchParams();
+      if (status) params.set('status', status);
+      if (channel) params.set('channel', channel);
+      const q = params.toString();
+      return request<any[]>(`/sales/invoices${q ? `?${q}` : ''}`);
+    },
+    getInvoice: (id: string) => request<any>(`/sales/invoices/${id}`),
+    createInvoice: (body: Record<string, unknown>) =>
+      request<any>('/sales/invoices', { method: 'POST', body: JSON.stringify(body) }),
+    postInvoice: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/sales/invoices/${id}/post`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    posSale: (body: Record<string, unknown>) =>
+      request<any>('/sales/pos', { method: 'POST', body: JSON.stringify(body) }),
+    payments: (customerId?: string) =>
+      request<any[]>(
+        `/sales/payments${customerId ? `?customer_id=${encodeURIComponent(customerId)}` : ''}`
+      ),
+    recordPayment: (body: Record<string, unknown>) =>
+      request<any>('/sales/payments', { method: 'POST', body: JSON.stringify(body) })
   },
   inventory: {
     board: (warehouseId?: string) =>

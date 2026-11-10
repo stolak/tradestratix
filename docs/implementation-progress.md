@@ -4,24 +4,26 @@ Updated: 2026-11-10
 
 ## Completed
 
-- Phase 1 foundation (auth, multi-tenancy, branches, warehouses, RBAC, GL core, client shell)
-- **Phase 2 — Products & Inventory**
-  - Schema: categories, brands, UoM, products, variants, conversions, stock lots, movements, transfers
-  - Inventory posting engine (sole path for qty changes): receive / issue / adjust with FEFO, batch/expiry rules, UoM conversion, idempotency
-  - Stock transfer workflow: request → approve → dispatch (in transit) → receive
-  - APIs under `/api/v1/products`, `/api/v1/uoms`, `/api/v1/inventory`
-  - Client: Products, Inventory, Units pages; seed samples (Sparkle Cola expiry batches, Nike T-Shirt variants)
+- Phase 1–4 (foundation, products/inventory, procurement/AP, sales/POS/AR)
+- **Phase 5 — Full GL, AR/AP statements, banking, expenses**
+  - Schema: BankAccount, BankTransaction, ExpenseBill (+ lines)
+  - Banking: accounts linked to GL; deposit / withdrawal / transfer with journals
+  - Expenses: draft → post (cash/bank settle or AP); pay open AP expenses
+  - Accounting: P&L, Balance Sheet, period lock/unlock; `createJournal` rejects locked periods
+  - Reports: AR aging, AP aging, customer/supplier statements APIs
+  - Client: Banking, Expenses, Statements (aging); Accounting extended with P&L / BS / Periods
+  - Seed: Main Operating Account → GL 1120
 
 ## Partially completed
 
-- Transfer create UI (list/approve/dispatch/receive wired; create form still API-first)
-- Role permission matrices beyond owner/auditor for inventory-heavy roles
-- Weighted-average / FIFO valuation reports (lots store unit cost; valuation reports Phase 5+)
+- Bank reconciliation / statement import
+- Multi-line expense builders (API supports many lines; UI starts with one)
+- Customer/supplier statement detail UI (API ready; aging UI shipped)
+- Inventory valuation reports; sales returns; advances
 
 ## Pending
 
-- Phase 3: suppliers, procurement, GRN, AP
-- Phase 4+: sales/POS, full AR, assets, HR/payroll, logistics, BI, SaaS
+- Phase 6+: assets, HR/payroll, logistics, BI, SaaS
 
 ## Known issues
 

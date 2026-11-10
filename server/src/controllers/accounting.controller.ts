@@ -64,3 +64,39 @@ export async function trialBalance(req: Request, res: Response, next: NextFuncti
     return next(err);
   }
 }
+
+export async function profitAndLoss(req: Request, res: Response, next: NextFunction) {
+  try {
+    const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+    return res.json(await accountingService.profitAndLoss(req.user!.businessId, from, to));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function balanceSheet(req: Request, res: Response, next: NextFunction) {
+  try {
+    const asOf = typeof req.query.as_of === 'string' ? req.query.as_of : undefined;
+    return res.json(await accountingService.balanceSheet(req.user!.businessId, asOf));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listPeriods(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await accountingService.listPeriods(req.user!.businessId));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function lockPeriod(req: Request, res: Response, next: NextFunction) {
+  try {
+    const locked = req.body?.locked !== false && req.body?.is_locked !== false;
+    return res.json(await accountingService.setPeriodLocked(req.user!, req.params.id, Boolean(locked)));
+  } catch (err) {
+    return next(err);
+  }
+}
