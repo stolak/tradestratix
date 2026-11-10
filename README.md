@@ -25,9 +25,9 @@ npm run seed
 npm run dev
 ```
 
-- API: http://localhost:5008/api/v1  
-- Swagger: http://localhost:5008/api-docs  
-- Client: http://localhost:5176  
+- API: http://localhost:5009/api/v1  
+- Swagger: http://localhost:5009/api-docs  
+- Client: http://localhost:5177  
 
 Default seed login: `owner` / `password123`
 

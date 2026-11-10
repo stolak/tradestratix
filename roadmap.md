@@ -2,8 +2,8 @@
 
 | Phase | Scope | Status |
 |-------|--------|--------|
-| 1 | Foundation: project, multi-tenancy, auth, RBAC, branches, warehouses, audit, accounting core | In progress |
-| 2 | Products, variants, UoM, batches/expiry, inventory movements, valuation | Pending |
+| 1 | Foundation: project, multi-tenancy, auth, RBAC, branches, warehouses, audit, accounting core | Done |
+| 2 | Products, variants, UoM, batches/expiry, inventory movements, valuation | Done (valuation reports deferred) |
 | 3 | Suppliers, procurement, GRN, AP integration | Pending |
 | 4 | Customers, CRM, sales, POS, reps, commissions | Pending |
 | 5 | Full GL, AR/AP, banking, expenses, statements | Pending |

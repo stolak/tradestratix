@@ -66,5 +66,55 @@ export const api = {
   },
   audit: {
     list: () => request<any[]>('/audit')
+  },
+  products: {
+    list: (q?: string) => request<any[]>(`/products${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+    get: (id: string) => request<any>(`/products/${id}`),
+    create: (body: Record<string, unknown>) =>
+      request<any>('/products', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    remove: (id: string) => request<{ ok: boolean; id: string }>(`/products/${id}`, { method: 'DELETE' }),
+    categories: () => request<any[]>('/products/categories'),
+    createCategory: (body: Record<string, unknown>) =>
+      request<any>('/products/categories', { method: 'POST', body: JSON.stringify(body) }),
+    brands: () => request<any[]>('/products/brands'),
+    createBrand: (body: Record<string, unknown>) =>
+      request<any>('/products/brands', { method: 'POST', body: JSON.stringify(body) }),
+    addConversion: (productId: string, body: Record<string, unknown>) =>
+      request<any>(`/products/${productId}/conversions`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      })
+  },
+  uoms: {
+    list: () => request<any[]>('/uoms'),
+    create: (body: Record<string, unknown>) =>
+      request<any>('/uoms', { method: 'POST', body: JSON.stringify(body) })
+  },
+  inventory: {
+    board: (warehouseId?: string) =>
+      request<any[]>(
+        `/inventory/board${warehouseId ? `?warehouse_id=${warehouseId}` : ''}`
+      ),
+    lots: () => request<any[]>('/inventory/lots'),
+    movements: () => request<any[]>('/inventory/movements'),
+    expiry: (withinDays = 90) =>
+      request<any[]>(`/inventory/expiry?within_days=${withinDays}`),
+    receive: (body: Record<string, unknown>) =>
+      request<any>('/inventory/receive', { method: 'POST', body: JSON.stringify(body) }),
+    issue: (body: Record<string, unknown>) =>
+      request<any>('/inventory/issue', { method: 'POST', body: JSON.stringify(body) }),
+    adjust: (body: Record<string, unknown>) =>
+      request<any>('/inventory/adjust', { method: 'POST', body: JSON.stringify(body) }),
+    transfers: () => request<any[]>('/inventory/transfers'),
+    createTransfer: (body: Record<string, unknown>) =>
+      request<any>('/inventory/transfers', { method: 'POST', body: JSON.stringify(body) }),
+    approveTransfer: (id: string) =>
+      request<any>(`/inventory/transfers/${id}/approve`, { method: 'POST', body: '{}' }),
+    dispatchTransfer: (id: string) =>
+      request<any>(`/inventory/transfers/${id}/dispatch`, { method: 'POST', body: '{}' }),
+    receiveTransfer: (id: string) =>
+      request<any>(`/inventory/transfers/${id}/receive`, { method: 'POST', body: '{}' })
   }
 };

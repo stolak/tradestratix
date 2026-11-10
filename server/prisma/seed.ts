@@ -451,10 +451,291 @@ async function main() {
     }
   }
 
+  // ─── Phase 2: UoM, categories, products, opening stock ───────────────────
+  const uomDefs = [
+    { code: 'PCS', name: 'Piece', unitCategory: 'Count', allowsDecimal: false },
+    { code: 'CTN', name: 'Carton', unitCategory: 'Packaging', allowsDecimal: false },
+    { code: 'PK', name: 'Pack', unitCategory: 'Packaging', allowsDecimal: false },
+    { code: 'BTL', name: 'Bottle', unitCategory: 'Count', allowsDecimal: false },
+    { code: 'KG', name: 'Kilogram', unitCategory: 'Weight', allowsDecimal: true },
+    { code: 'G', name: 'Gram', unitCategory: 'Weight', allowsDecimal: true },
+    { code: 'L', name: 'Litre', unitCategory: 'Volume', allowsDecimal: true },
+    { code: 'ML', name: 'Millilitre', unitCategory: 'Volume', allowsDecimal: true },
+    { code: 'M', name: 'Metre', unitCategory: 'Length', allowsDecimal: true },
+    { code: 'DZ', name: 'Dozen', unitCategory: 'Packaging', allowsDecimal: false }
+  ];
+  const uomIds: Record<string, string> = {};
+  for (const u of uomDefs) {
+    let row = await prisma.unitOfMeasure.findFirst({
+      where: { businessId: business.id, code: u.code }
+    });
+    if (!row) {
+      row = await prisma.unitOfMeasure.create({
+        data: { id: id('uom'), businessId: business.id, ...u }
+      });
+    }
+    uomIds[u.code] = row.id;
+  }
+
+  let beverages = await prisma.productCategory.findFirst({
+    where: { businessId: business.id, name: 'Beverages' }
+  });
+  if (!beverages) {
+    beverages = await prisma.productCategory.create({
+      data: { id: id('cat'), businessId: business.id, name: 'Beverages', code: 'BEV' }
+    });
+  }
+  let fashion = await prisma.productCategory.findFirst({
+    where: { businessId: business.id, name: 'Fashion' }
+  });
+  if (!fashion) {
+    fashion = await prisma.productCategory.create({
+      data: { id: id('cat'), businessId: business.id, name: 'Fashion', code: 'FSH' }
+    });
+  }
+  let brandNike = await prisma.brand.findFirst({
+    where: { businessId: business.id, name: 'Nike' }
+  });
+  if (!brandNike) {
+    brandNike = await prisma.brand.create({
+      data: { id: id('brd'), businessId: business.id, name: 'Nike', code: 'NIKE' }
+    });
+  }
+
+  let soda = await prisma.product.findFirst({
+    where: { businessId: business.id, sku: 'BEV-SODA-500' }
+  });
+  if (!soda) {
+    soda = await prisma.product.create({
+      data: {
+        id: id('prd'),
+        businessId: business.id,
+        name: 'Sparkle Cola 500ml',
+        sku: 'BEV-SODA-500',
+        barcode: '6001234567890',
+        categoryId: beverages.id,
+        trackingMode: 'expiry',
+        trackBatch: true,
+        trackExpiry: true,
+        baseUomId: uomIds.BTL,
+        purchaseUomId: uomIds.CTN,
+        sellingUomId: uomIds.BTL,
+        reorderLevel: 48,
+        minStock: 24,
+        defaultPurchaseCost: 150,
+        defaultSellingPrice: 250,
+        wholesalePrice: 220,
+        retailPrice: 250,
+        expiryAlertDaysJson: JSON.stringify([180, 90, 60, 30, 7]),
+        variants: {
+          create: [
+            {
+              id: id('var'),
+              businessId: business.id,
+              name: 'Default',
+              sku: 'BEV-SODA-500-DEF',
+              isDefault: true,
+              purchaseCost: 150,
+              sellingPrice: 250
+            }
+          ]
+        },
+        conversions: {
+          create: [
+            {
+              id: id('puc'),
+              businessId: business.id,
+              fromUomId: uomIds.CTN,
+              toUomId: uomIds.BTL,
+              factor: 24
+            },
+            {
+              id: id('puc'),
+              businessId: business.id,
+              fromUomId: uomIds.PK,
+              toUomId: uomIds.BTL,
+              factor: 6
+            }
+          ]
+        }
+      },
+      include: { variants: true }
+    });
+  }
+
+  let tee = await prisma.product.findFirst({
+    where: { businessId: business.id, sku: 'NIK-TEE' }
+  });
+  if (!tee) {
+    tee = await prisma.product.create({
+      data: {
+        id: id('prd'),
+        businessId: business.id,
+        name: 'Nike T-Shirt',
+        sku: 'NIK-TEE',
+        categoryId: fashion.id,
+        brandId: brandNike.id,
+        trackingMode: 'size_colour',
+        hasVariants: true,
+        baseUomId: uomIds.PCS,
+        purchaseUomId: uomIds.PCS,
+        sellingUomId: uomIds.PCS,
+        reorderLevel: 10,
+        defaultPurchaseCost: 4500,
+        defaultSellingPrice: 7500,
+        retailPrice: 7500,
+        variants: {
+          create: [
+            {
+              id: id('var'),
+              businessId: business.id,
+              name: 'Black / M',
+              sku: 'NIK-BLK-M',
+              colour: 'Black',
+              size: 'M',
+              isDefault: true,
+              purchaseCost: 4500,
+              sellingPrice: 7500
+            },
+            {
+              id: id('var'),
+              businessId: business.id,
+              name: 'Black / L',
+              sku: 'NIK-BLK-L',
+              colour: 'Black',
+              size: 'L',
+              purchaseCost: 4500,
+              sellingPrice: 7500
+            },
+            {
+              id: id('var'),
+              businessId: business.id,
+              name: 'White / M',
+              sku: 'NIK-WHT-M',
+              colour: 'White',
+              size: 'M',
+              purchaseCost: 4500,
+              sellingPrice: 7500
+            },
+            {
+              id: id('var'),
+              businessId: business.id,
+              name: 'White / L',
+              sku: 'NIK-WHT-L',
+              colour: 'White',
+              size: 'L',
+              purchaseCost: 4500,
+              sellingPrice: 7500
+            }
+          ]
+        }
+      },
+      include: { variants: true }
+    });
+  }
+
+  // Opening stock via inventory engine rules (direct lot+movement for seed speed)
+  const sodaVar = await prisma.productVariant.findFirst({
+    where: { productId: soda.id, isDefault: true }
+  });
+  if (sodaVar) {
+    const existingLot = await prisma.stockLot.findFirst({
+      where: { businessId: business.id, variantId: sodaVar.id, batchNumber: 'BATCH-A1' }
+    });
+    if (!existingLot) {
+      const exp1 = new Date();
+      exp1.setMonth(exp1.getMonth() + 8);
+      const exp2 = new Date();
+      exp2.setMonth(exp2.getMonth() + 3);
+      for (const [batch, exp, qty, cost] of [
+        ['BATCH-A1', exp1.toISOString().slice(0, 10), 120, 150],
+        ['BATCH-B2', exp2.toISOString().slice(0, 10), 60, 155]
+      ] as const) {
+        const lotKey = `${sodaVar.id}|${warehouse.id}|${batch}|${exp}`;
+        const lot = await prisma.stockLot.create({
+          data: {
+            id: id('lot'),
+            businessId: business.id,
+            productId: soda.id,
+            variantId: sodaVar.id,
+            warehouseId: warehouse.id,
+            lotKey,
+            batchNumber: batch,
+            expiryDate: exp,
+            quantityOnHand: qty,
+            unitCost: cost
+          }
+        });
+        await prisma.stockMovement.create({
+          data: {
+            id: id('sm'),
+            businessId: business.id,
+            productId: soda.id,
+            variantId: sodaVar.id,
+            warehouseId: warehouse.id,
+            lotId: lot.id,
+            movementType: 'opening',
+            quantityIn: qty,
+            unitCost: cost,
+            totalCost: cost * qty,
+            batchNumber: batch,
+            expiryDate: exp,
+            reason: 'Opening balance',
+            performedById: owner.id,
+            performedByName: owner.fullName,
+            idempotencyKey: `opening:${lot.id}`
+          }
+        });
+      }
+    }
+  }
+
+  const teeVars = await prisma.productVariant.findMany({ where: { productId: tee.id } });
+  for (const v of teeVars) {
+    const exists = await prisma.stockLot.findFirst({
+      where: { businessId: business.id, variantId: v.id }
+    });
+    if (exists) continue;
+    const lotKey = `${v.id}|${warehouse.id}|BULK|NONE`;
+    const lot = await prisma.stockLot.create({
+      data: {
+        id: id('lot'),
+        businessId: business.id,
+        productId: tee.id,
+        variantId: v.id,
+        warehouseId: warehouse.id,
+        lotKey,
+        batchNumber: 'BULK',
+        quantityOnHand: 25,
+        unitCost: 4500
+      }
+    });
+    await prisma.stockMovement.create({
+      data: {
+        id: id('sm'),
+        businessId: business.id,
+        productId: tee.id,
+        variantId: v.id,
+        warehouseId: warehouse.id,
+        lotId: lot.id,
+        movementType: 'opening',
+        quantityIn: 25,
+        unitCost: 4500,
+        totalCost: 112500,
+        batchNumber: 'BULK',
+        reason: 'Opening balance',
+        performedById: owner.id,
+        performedByName: owner.fullName,
+        idempotencyKey: `opening:${lot.id}`
+      }
+    });
+  }
+
   console.log('Seed complete.');
   console.log('Login: owner / password123');
   console.log(`Business: ${business.name} (${business.id})`);
   console.log(`Branch: ${branch.code} | Warehouse: ${warehouse.code}`);
+  console.log('Phase 2 samples: Sparkle Cola (expiry batches), Nike T-Shirt (size/colour variants)');
 }
 
 main()

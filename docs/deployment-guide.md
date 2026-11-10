@@ -4,7 +4,7 @@
 
 Copy `server/.env` with:
 
-- `PORT=5008`
+- `PORT=5009`
 - `DATABASE_URL=mysql://...`
 - `JWT_SECRET=...`
 - `CORS_ORIGIN=...`

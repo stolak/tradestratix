@@ -6,7 +6,7 @@ import { swaggerSpec } from './utils/swagger.js';
 
 const app = express();
 
-const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5176,http://localhost:5009')
+const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5177,http://localhost:5009')
   .split(',')
   .map((o) => o.trim())
   .filter(Boolean);

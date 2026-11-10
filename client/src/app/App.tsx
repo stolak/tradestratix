@@ -11,6 +11,9 @@ import { SettingsPage } from './pages/SettingsPage';
 import { AccountingPage } from './pages/AccountingPage';
 import { AuditPage } from './pages/AuditPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
+import { ProductsPage } from './pages/ProductsPage';
+import { InventoryPage } from './pages/InventoryPage';
+import { UnitsOfMeasurePage } from './pages/UnitsOfMeasurePage';
 import { getRouteFromLocation, ROUTES, setRouteInLocation } from './routes';
 
 export const App: React.FC = () => {
@@ -74,10 +77,13 @@ export const App: React.FC = () => {
       content = <PlaceholderPage title="Purchases" phase="Phase 3" />;
       break;
     case ROUTES.PRODUCTS:
-      content = <PlaceholderPage title="Products" phase="Phase 2" />;
+      content = <ProductsPage />;
       break;
     case ROUTES.INVENTORY:
-      content = <PlaceholderPage title="Inventory" phase="Phase 2" />;
+      content = <InventoryPage />;
+      break;
+    case 'uoms':
+      content = <UnitsOfMeasurePage />;
       break;
     case ROUTES.BANKING:
       content = <PlaceholderPage title="Banking" phase="Phase 5" />;

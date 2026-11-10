@@ -8,6 +8,9 @@ import rbacRoutes from './rbac.routes.js';
 import accountingRoutes from './accounting.routes.js';
 import dashboardRoutes from './dashboard.routes.js';
 import auditRoutes from './audit.routes.js';
+import productRoutes from './product.routes.js';
+import uomRoutes from './uom.routes.js';
+import inventoryRoutes from './inventory.routes.js';
 
 const router = Router();
 
@@ -20,5 +23,8 @@ router.use('/rbac', rbacRoutes);
 router.use('/accounting', accountingRoutes);
 router.use('/dashboard', dashboardRoutes);
 router.use('/audit', auditRoutes);
+router.use('/products', productRoutes);
+router.use('/uoms', uomRoutes);
+router.use('/inventory', inventoryRoutes);
 
 export default router;

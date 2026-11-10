@@ -1,7 +1,7 @@
 import swaggerJsdoc from 'swagger-jsdoc';
 import { apiPaths } from './openapi-paths.js';
 
-const port = process.env.PORT || 5008;
+const port = process.env.PORT || 5009;
 
 const options: swaggerJsdoc.Options = {
   definition: {
@@ -31,6 +31,8 @@ const options: swaggerJsdoc.Options = {
       { name: 'Users' },
       { name: 'RBAC' },
       { name: 'Accounting' },
+      { name: 'Products' },
+      { name: 'Inventory' },
       { name: 'Dashboard' },
       { name: 'Audit' }
     ],

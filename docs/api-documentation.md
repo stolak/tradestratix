@@ -1,7 +1,7 @@
 # API Documentation
 
-Interactive docs: `http://localhost:5008/api-docs`  
-OpenAPI JSON: `http://localhost:5008/api-docs.json`
+Interactive docs: `http://localhost:5009/api-docs`  
+OpenAPI JSON: `http://localhost:5009/api-docs.json`
 
 Versioned base: `/api/v1`
 

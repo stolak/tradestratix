@@ -66,8 +66,9 @@ const NAV = [
   {
     section: 'Inventory',
     items: [
-      { route: ROUTES.PRODUCTS, label: 'Products', icon: 'Package', perm: 'products.view', soon: true },
-      { route: ROUTES.INVENTORY, label: 'Inventory', icon: 'Boxes', perm: 'inventory.view', soon: true },
+      { route: ROUTES.PRODUCTS, label: 'Products', icon: 'Package', perm: 'products.view' },
+      { route: ROUTES.INVENTORY, label: 'Inventory', icon: 'Boxes', perm: 'inventory.view' },
+      { route: 'uoms', label: 'Units', icon: 'Package', perm: 'products.view' },
       { route: ROUTES.WAREHOUSES, label: 'Warehouses', icon: 'Warehouse', perm: 'warehouses.view' }
     ]
   },

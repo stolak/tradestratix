@@ -4,33 +4,29 @@ Updated: 2026-11-10
 
 ## Completed
 
-- Workspace inspection; empty repo initialised from medi-plus patterns
-- Root monorepo scripts, roadmap, `/docs` architecture pack
-- Server scaffold: Express + TS + Prisma MySQL + Swagger (`/api/v1`, PORT 5008)
-- Phase 1 schema: businesses, branches, warehouses, users/RBAC, audit, GL core
-- Phase 1 APIs: auth, business, branches, warehouses, users, RBAC, accounting posting engine, dashboard, audit
-- Seed: demo tenant, COA (27 accounts), default account maps, FY/periods, owner user
-- Client scaffold: Vite React TS, AuthContext, ERP shell, working Phase 1 screens
-- Verified: DB push, seed, login (`owner` / `password123`), dashboard counts, 27 accounts
+- Phase 1 foundation (auth, multi-tenancy, branches, warehouses, RBAC, GL core, client shell)
+- **Phase 2 — Products & Inventory**
+  - Schema: categories, brands, UoM, products, variants, conversions, stock lots, movements, transfers
+  - Inventory posting engine (sole path for qty changes): receive / issue / adjust with FEFO, batch/expiry rules, UoM conversion, idempotency
+  - Stock transfer workflow: request → approve → dispatch (in transit) → receive
+  - APIs under `/api/v1/products`, `/api/v1/uoms`, `/api/v1/inventory`
+  - Client: Products, Inventory, Units pages; seed samples (Sparkle Cola expiry batches, Nike T-Shirt variants)
 
 ## Partially completed
 
-- Phase 1 UX polish / remaining role permission matrices beyond owner + auditor
-- Navigation placeholders for Phases 2–8 modules
+- Transfer create UI (list/approve/dispatch/receive wired; create form still API-first)
+- Role permission matrices beyond owner/auditor for inventory-heavy roles
+- Weighted-average / FIFO valuation reports (lots store unit cost; valuation reports Phase 5+)
 
 ## Pending
 
-- Phase 2+: products, inventory engine, procurement, sales/POS, full AR/AP/banking, assets, HR/payroll, logistics, BI, SaaS billing
-- Automated critical-flow tests
-- Offline POS, mobile rep app
+- Phase 3: suppliers, procurement, GRN, AP
+- Phase 4+: sales/POS, full AR, assets, HR/payroll, logistics, BI, SaaS
 
 ## Known issues
 
-- If another app already binds 5008, stop it before starting TradeStratix
+- Confirm `server/.env` `PORT` matches the client `VITE_API_URL` (project may use 5008 or 5009)
 
 ## Outstanding integrations
 
-- SMS / WhatsApp providers
-- Payment gateways / bank feeds
-- Biometric attendance devices
-- S3 document uploads (credentials present in `.env`, not wired yet)
+- SMS / WhatsApp, payment gateways, biometrics, S3 uploads

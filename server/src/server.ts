@@ -3,7 +3,7 @@ dotenv.config();
 
 import app from './app.js';
 
-const PORT = Number(process.env.PORT) || 5008;
+const PORT = Number(process.env.PORT) || 5009;
 
 app.listen(PORT, () => {
   console.log(`TradeStratix ERP API running on http://localhost:${PORT}`);

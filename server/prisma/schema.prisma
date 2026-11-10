@@ -90,6 +90,16 @@ model Business {
   auditLogs            AuditLog[]
   menus                Menu[]
   currencies           BusinessCurrency[]
+  productCategories    ProductCategory[]
+  brands               Brand[]
+  unitsOfMeasure       UnitOfMeasure[]
+  products             Product[]
+  productVariants      ProductVariant[]
+  stockLots            StockLot[]
+  stockMovements       StockMovement[]
+  stockTransfers       StockTransfer[]
+  productUnitConversions ProductUnitConversion[]
+  productSellingPrices   ProductSellingPrice[]
 
   @@map("businesses")
 }
@@ -170,6 +180,10 @@ model Warehouse {
   updatedById   String?  @map("updated_by_id")
   business      Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   branch        Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  stockLots     StockLot[]
+  stockMovements StockMovement[]
+  transfersFrom StockTransfer[] @relation("TransferFrom")
+  transfersTo   StockTransfer[] @relation("TransferTo")
 
   @@unique([businessId, code])
   @@index([branchId])
@@ -484,4 +498,307 @@ model AuditLog {
   @@index([businessId, createdAt])
   @@index([module])
   @@map("audit_logs")
+}
+
+// ─── Phase 2: Products & Inventory ───────────────────────────────────────────
+
+model ProductCategory {
+  id          String    @id
+  businessId  String    @map("business_id")
+  parentId    String?   @map("parent_id")
+  name        String
+  code        String?
+  description String?   @db.Text
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  parent      ProductCategory?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: SetNull)
+  children    ProductCategory[] @relation("CategoryTree")
+  products    Product[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+  @@map("product_categories")
+}
+
+model Brand {
+  id         String    @id
+  businessId String    @map("business_id")
+  name       String
+  code       String?
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products   Product[]
+
+  @@unique([businessId, name])
+  @@map("brands")
+}
+
+model UnitOfMeasure {
+  id            String   @id
+  businessId    String   @map("business_id")
+  code          String
+  name          String
+  /// Count | Volume | Weight | Length | Packaging
+  unitCategory  String   @default("Count") @map("unit_category")
+  allowsDecimal Boolean  @default(false) @map("allows_decimal")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  business      Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  productsBase  Product[] @relation("ProductBaseUom")
+  productsPurchase Product[] @relation("ProductPurchaseUom")
+  productsSelling  Product[] @relation("ProductSellingUom")
+  conversionsFrom  ProductUnitConversion[] @relation("ConversionFrom")
+  conversionsTo    ProductUnitConversion[] @relation("ConversionTo")
+  stockMovements   StockMovement[]
+  sellingPrices    ProductSellingPrice[]
+
+  @@unique([businessId, code])
+  @@index([businessId])
+  @@map("units_of_measure")
+}
+
+model Product {
+  id                   String   @id
+  businessId           String   @map("business_id")
+  name                 String
+  productCode          String?  @map("product_code")
+  sku                  String?
+  barcode              String?
+  description          String?  @db.Text
+  categoryId           String?  @map("category_id")
+  brandId              String?  @map("brand_id")
+  manufacturer         String?
+  imageUrl             String?  @map("image_url") @db.Text
+  status               String   @default("active")
+  /// Derived summary of enabled tracking flags (e.g. expiry+batch+weight)
+  trackingMode         String   @default("standard") @map("tracking_mode")
+  trackBatch           Boolean  @default(false) @map("track_batch")
+  trackExpiry          Boolean  @default(false) @map("track_expiry")
+  trackSerial          Boolean  @default(false) @map("track_serial")
+  trackWeight          Boolean  @default(false) @map("track_weight")
+  trackLength          Boolean  @default(false) @map("track_length")
+  hasVariants          Boolean  @default(false) @map("has_variants")
+  baseUomId            String   @map("base_uom_id")
+  purchaseUomId        String?  @map("purchase_uom_id")
+  sellingUomId         String?  @map("selling_uom_id")
+  reorderLevel         Decimal  @default(0) @map("reorder_level") @db.Decimal(18, 4)
+  minStock             Decimal  @default(0) @map("min_stock") @db.Decimal(18, 4)
+  maxStock             Decimal? @map("max_stock") @db.Decimal(18, 4)
+  defaultPurchaseCost  Decimal  @default(0) @map("default_purchase_cost") @db.Decimal(18, 4)
+  defaultSellingPrice  Decimal  @default(0) @map("default_selling_price") @db.Decimal(18, 4)
+  distributorPrice     Decimal? @map("distributor_price") @db.Decimal(18, 4)
+  wholesalePrice       Decimal? @map("wholesale_price") @db.Decimal(18, 4)
+  retailPrice          Decimal? @map("retail_price") @db.Decimal(18, 4)
+  taxCategory          String?  @map("tax_category")
+  expiryAlertDaysJson  String?  @map("expiry_alert_days_json") @db.Text
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  createdById          String?  @map("created_by_id")
+  updatedById          String?  @map("updated_by_id")
+
+  business             Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  category             ProductCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  brand                Brand?   @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  baseUom              UnitOfMeasure @relation("ProductBaseUom", fields: [baseUomId], references: [id])
+  purchaseUom          UnitOfMeasure? @relation("ProductPurchaseUom", fields: [purchaseUomId], references: [id])
+  sellingUom           UnitOfMeasure? @relation("ProductSellingUom", fields: [sellingUomId], references: [id])
+  variants             ProductVariant[]
+  conversions          ProductUnitConversion[]
+  sellingPrices        ProductSellingPrice[]
+  stockLots            StockLot[]
+  stockMovements       StockMovement[]
+  transferItems        StockTransferItem[]
+
+  @@unique([businessId, sku])
+  @@index([businessId, name])
+  @@index([status])
+  @@map("products")
+}
+
+/// Selling price per configured product UoM (base or packaging conversion unit).
+model ProductSellingPrice {
+  id         String   @id
+  businessId String   @map("business_id")
+  productId  String   @map("product_id")
+  uomId      String   @map("uom_id")
+  /// retail | wholesale | distributor | special | custom
+  priceLevel String   @default("retail") @map("price_level")
+  label      String?
+  unitPrice  Decimal  @map("unit_price") @db.Decimal(18, 4)
+  minQty     Decimal  @default(1) @map("min_qty") @db.Decimal(18, 4)
+  isDefault  Boolean  @default(false) @map("is_default")
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  business   Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  uom        UnitOfMeasure @relation(fields: [uomId], references: [id])
+
+  @@unique([productId, uomId, priceLevel])
+  @@index([productId])
+  @@map("product_selling_prices")
+}
+
+model ProductVariant {
+  id            String   @id
+  businessId    String   @map("business_id")
+  productId     String   @map("product_id")
+  name          String
+  sku           String?
+  barcode       String?
+  size          String?
+  colour        String?
+  attributesJson String? @map("attributes_json") @db.Text
+  purchaseCost  Decimal? @map("purchase_cost") @db.Decimal(18, 4)
+  sellingPrice  Decimal? @map("selling_price") @db.Decimal(18, 4)
+  isDefault     Boolean  @default(false) @map("is_default")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  business      Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stockLots     StockLot[]
+  stockMovements StockMovement[]
+  transferItems StockTransferItem[]
+
+  @@unique([businessId, sku])
+  @@index([productId])
+  @@map("product_variants")
+}
+
+/// Conversion into base UoM: 1 fromUom = factor base units (via chain if needed).
+model ProductUnitConversion {
+  id         String        @id
+  businessId String        @map("business_id")
+  productId  String        @map("product_id")
+  fromUomId  String        @map("from_uom_id")
+  toUomId    String        @map("to_uom_id")
+  factor     Decimal       @db.Decimal(18, 6)
+  business   Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product    Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  fromUom    UnitOfMeasure @relation("ConversionFrom", fields: [fromUomId], references: [id])
+  toUom      UnitOfMeasure @relation("ConversionTo", fields: [toUomId], references: [id])
+
+  @@unique([productId, fromUomId, toUomId])
+  @@map("product_unit_conversions")
+}
+
+model StockLot {
+  id              String   @id
+  businessId      String   @map("business_id")
+  productId       String   @map("product_id")
+  variantId       String   @map("variant_id")
+  warehouseId     String   @map("warehouse_id")
+  lotKey          String   @map("lot_key")
+  batchNumber     String   @default("BULK") @map("batch_number")
+  manufacturingDate String? @map("manufacturing_date")
+  expiryDate      String?  @map("expiry_date")
+  quantityOnHand  Decimal  @default(0) @map("quantity_on_hand") @db.Decimal(18, 4)
+  quantityReserved Decimal @default(0) @map("quantity_reserved") @db.Decimal(18, 4)
+  quantityInTransit Decimal @default(0) @map("quantity_in_transit") @db.Decimal(18, 4)
+  unitCost        Decimal? @map("unit_cost") @db.Decimal(18, 4)
+  /// available | quarantine | recalled | expired
+  status          String   @default("available")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product         Product  @relation(fields: [productId], references: [id])
+  variant         ProductVariant @relation(fields: [variantId], references: [id])
+  warehouse       Warehouse @relation(fields: [warehouseId], references: [id])
+  movements       StockMovement[]
+  transferItems   StockTransferItem[]
+
+  @@unique([businessId, lotKey])
+  @@index([variantId, warehouseId])
+  @@index([expiryDate])
+  @@map("stock_lots")
+}
+
+model StockMovement {
+  id                   String   @id
+  businessId           String   @map("business_id")
+  productId            String   @map("product_id")
+  variantId            String   @map("variant_id")
+  warehouseId          String   @map("warehouse_id")
+  lotId                String?  @map("lot_id")
+  /// receive | issue | adjust_in | adjust_out | transfer_out | transfer_in | opening | write_off | return_in | return_out
+  movementType         String   @map("movement_type")
+  quantityIn           Decimal  @default(0) @map("quantity_in") @db.Decimal(18, 4)
+  quantityOut          Decimal  @default(0) @map("quantity_out") @db.Decimal(18, 4)
+  transactionQuantity  Decimal? @map("transaction_quantity") @db.Decimal(18, 4)
+  transactionUomId     String?  @map("transaction_uom_id")
+  unitCost             Decimal? @map("unit_cost") @db.Decimal(18, 4)
+  totalCost            Decimal? @map("total_cost") @db.Decimal(18, 4)
+  referenceType        String?  @map("reference_type")
+  referenceId          String?  @map("reference_id")
+  batchNumber          String?  @map("batch_number")
+  expiryDate           String?  @map("expiry_date")
+  reason               String?  @db.Text
+  performedById        String?  @map("performed_by_id")
+  performedByName      String?  @map("performed_by_name")
+  idempotencyKey       String?  @map("idempotency_key")
+  status               String   @default("completed")
+  createdAt            DateTime @default(now()) @map("created_at")
+  business             Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product              Product  @relation(fields: [productId], references: [id])
+  variant              ProductVariant @relation(fields: [variantId], references: [id])
+  warehouse            Warehouse @relation(fields: [warehouseId], references: [id])
+  lot                  StockLot? @relation(fields: [lotId], references: [id])
+  transactionUom       UnitOfMeasure? @relation(fields: [transactionUomId], references: [id])
+
+  @@unique([businessId, idempotencyKey])
+  @@index([productId, createdAt])
+  @@index([warehouseId])
+  @@index([lotId])
+  @@map("stock_movements")
+}
+
+model StockTransfer {
+  id              String   @id
+  businessId      String   @map("business_id")
+  transferNumber  String   @map("transfer_number")
+  fromWarehouseId String   @map("from_warehouse_id")
+  toWarehouseId   String   @map("to_warehouse_id")
+  /// draft | pending_approval | approved | in_transit | received | rejected | cancelled
+  status          String   @default("draft")
+  notes           String?  @db.Text
+  requestedById   String?  @map("requested_by_id")
+  approvedById    String?  @map("approved_by_id")
+  dispatchedAt    DateTime? @map("dispatched_at")
+  receivedAt      DateTime? @map("received_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  fromWarehouse   Warehouse @relation("TransferFrom", fields: [fromWarehouseId], references: [id])
+  toWarehouse     Warehouse @relation("TransferTo", fields: [toWarehouseId], references: [id])
+  items           StockTransferItem[]
+
+  @@unique([businessId, transferNumber])
+  @@index([status])
+  @@map("stock_transfers")
+}
+
+model StockTransferItem {
+  id            String   @id
+  transferId    String   @map("transfer_id")
+  productId     String   @map("product_id")
+  variantId     String   @map("variant_id")
+  fromLotId     String?  @map("from_lot_id")
+  quantity      Decimal  @db.Decimal(18, 4)
+  batchNumber   String?  @map("batch_number")
+  expiryDate    String?  @map("expiry_date")
+  outMovementId String?  @map("out_movement_id")
+  inMovementId  String?  @map("in_movement_id")
+  transfer      StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product       Product  @relation(fields: [productId], references: [id])
+  variant       ProductVariant @relation(fields: [variantId], references: [id])
+  fromLot       StockLot? @relation(fields: [fromLotId], references: [id])
+
+  @@index([transferId])
+  @@map("stock_transfer_items")
 }

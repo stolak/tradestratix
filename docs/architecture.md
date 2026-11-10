@@ -43,5 +43,5 @@ Modular monolith with layered boundaries:
 
 ## Ports
 
-- API default: **5008**
-- Client Vite: **5176**
+- API default: **5009**
+- Client Vite: **5177**

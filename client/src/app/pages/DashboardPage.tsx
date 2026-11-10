@@ -36,6 +36,7 @@ export const DashboardPage: React.FC = () => {
           ['Branches', counts.branches],
           ['Warehouses', counts.warehouses],
           ['Users', counts.users],
+          ['Products', counts.products],
           ['GL Accounts', counts.accounts]
         ].map(([label, value]) => (
           <div key={String(label)} className="card-surface" style={{ padding: '1.1rem 1.2rem' }}>
