@@ -384,6 +384,8 @@ export async function postInvoice(
         source_id: invoice.id,
         idempotency_key: `sales_invoice:${invoice.id}`,
         branch_id: invoice.branchId || undefined,
+        customer_id: invoice.customerId,
+        sales_representative_id: invoice.salesRepId || undefined,
         post: true,
         lines: [
           {
@@ -413,6 +415,8 @@ export async function postInvoice(
           source_id: invoice.id,
           idempotency_key: `sales_cogs:${invoice.id}`,
           branch_id: invoice.branchId || undefined,
+          customer_id: invoice.customerId,
+          sales_representative_id: invoice.salesRepId || undefined,
           post: true,
           lines: [
             {
@@ -657,6 +661,7 @@ export async function recordCustomerPayment(user: AuthUser, body: Record<string,
         source_id: paymentId,
         idempotency_key: `customer_payment:${paymentId}`,
         branch_id: branchId,
+        customer_id: customerId,
         post: true,
         lines: [
           {

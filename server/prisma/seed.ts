@@ -100,14 +100,26 @@ const COA: { code: string; name: string; accountType: string; key?: string }[] =
   { code: '1000', name: 'Assets', accountType: 'asset' },
   { code: '1100', name: 'Current Assets', accountType: 'asset' },
   { code: '1110', name: 'Cash on Hand', accountType: 'asset', key: 'cash' },
+  { code: '1115', name: 'Petty Cash', accountType: 'asset', key: 'petty_cash' },
   { code: '1120', name: 'Bank Account', accountType: 'asset', key: 'bank' },
+  { code: '1125', name: 'Cash in Transit', accountType: 'asset', key: 'cash_in_transit' },
+  { code: '1128', name: 'Payment Clearing', accountType: 'asset', key: 'payment_clearing' },
   { code: '1130', name: 'Accounts Receivable', accountType: 'asset', key: 'accounts_receivable' },
+  { code: '1132', name: 'Sales Rep Cash Custody', accountType: 'asset', key: 'cash_in_custody_sales_rep' },
+  { code: '1134', name: 'Sales Rep Recoveries', accountType: 'asset', key: 'sales_rep_receivable' },
+  { code: '1135', name: 'Supplier Advances', accountType: 'asset', key: 'supplier_advances' },
+  { code: '1136', name: 'Supplier Deposits', accountType: 'asset', key: 'supplier_deposits' },
   { code: '1140', name: 'Inventory Asset', accountType: 'asset', key: 'inventory' },
   { code: '1200', name: 'Fixed Assets', accountType: 'asset' },
   { code: '1210', name: 'Property, Plant & Equipment', accountType: 'asset', key: 'fixed_assets' },
   { code: '1220', name: 'Accumulated Depreciation', accountType: 'asset', key: 'accumulated_depreciation' },
   { code: '2000', name: 'Liabilities', accountType: 'liability' },
   { code: '2100', name: 'Accounts Payable', accountType: 'liability', key: 'accounts_payable' },
+  { code: '2110', name: 'Goods Received Not Invoiced', accountType: 'liability', key: 'grni' },
+  { code: '2120', name: 'Customer Advances', accountType: 'liability', key: 'customer_advances' },
+  { code: '2125', name: 'Customer Deposits', accountType: 'liability', key: 'customer_deposits' },
+  { code: '2130', name: 'Unapplied Customer Receipts', accountType: 'liability', key: 'unapplied_customer_receipts' },
+  { code: '2140', name: 'Sales Rep Commission Payable', accountType: 'liability', key: 'sales_rep_commission_payable' },
   { code: '2200', name: 'VAT Payable', accountType: 'liability', key: 'tax_payable' },
   { code: '2300', name: 'Salary Payable', accountType: 'liability', key: 'salary_payable' },
   { code: '2400', name: 'PAYE Payable', accountType: 'liability', key: 'paye_payable' },
@@ -118,12 +130,17 @@ const COA: { code: string; name: string; accountType: string; key?: string }[] =
   { code: '4000', name: 'Revenue', accountType: 'revenue' },
   { code: '4100', name: 'Sales Revenue', accountType: 'revenue', key: 'sales_revenue' },
   { code: '4200', name: 'Sales Returns', accountType: 'revenue', key: 'sales_returns' },
+  { code: '4300', name: 'Sales Discounts', accountType: 'revenue', key: 'sales_discounts' },
   { code: '5000', name: 'Cost of Goods Sold', accountType: 'cogs', key: 'cogs' },
   { code: '6000', name: 'Operating Expenses', accountType: 'expense' },
   { code: '6100', name: 'Salaries Expense', accountType: 'expense', key: 'salary_expense' },
+  { code: '6150', name: 'Sales Rep Commission Expense', accountType: 'expense', key: 'sales_rep_commission_expense' },
   { code: '6200', name: 'Rent Expense', accountType: 'expense', key: 'rent_expense' },
   { code: '6300', name: 'Depreciation Expense', accountType: 'expense', key: 'depreciation_expense' },
-  { code: '6400', name: 'General Expenses', accountType: 'expense', key: 'expense' }
+  { code: '6400', name: 'General Expenses', accountType: 'expense', key: 'expense' },
+  { code: '6500', name: 'Inventory Adjustment', accountType: 'expense', key: 'inventory_adjustment' },
+  { code: '6510', name: 'Inventory Write-off', accountType: 'expense', key: 'inventory_write_off' },
+  { code: '6520', name: 'Purchase Returns', accountType: 'expense', key: 'purchase_returns' }
 ];
 
 async function main() {
@@ -941,6 +958,29 @@ async function main() {
     });
   }
 
+  // Sales rep is always an employee (commercial profile + HR record)
+  let salesRepEmployee = await prisma.employee.findFirst({
+    where: { businessId: business.id, code: 'EMP-REP-01' }
+  });
+  if (!salesRepEmployee) {
+    salesRepEmployee = await prisma.employee.create({
+      data: {
+        id: id('emp'),
+        businessId: business.id,
+        branchId: branch.id,
+        code: 'EMP-REP-01',
+        fullName: 'Amaka Sales',
+        phone: '+2348011122233',
+        department: 'Sales',
+        jobTitle: 'Sales Representative',
+        hireDate: new Date(`${year}-01-15`),
+        baseSalary: 150000,
+        status: 'active',
+        createdById: owner.id
+      }
+    });
+  }
+
   let salesRep = await prisma.salesRep.findFirst({
     where: { businessId: business.id, code: 'REP-01' }
   });
@@ -949,13 +989,19 @@ async function main() {
       data: {
         id: id('rep'),
         businessId: business.id,
+        employeeId: salesRepEmployee.id,
         branchId: branch.id,
         code: 'REP-01',
-        name: 'Amaka Sales',
-        phone: '+2348011122233',
+        name: salesRepEmployee.fullName,
+        phone: salesRepEmployee.phone,
         commissionPercent: 5,
         createdById: owner.id
       }
+    });
+  } else if (!salesRep.employeeId) {
+    salesRep = await prisma.salesRep.update({
+      where: { id: salesRep.id },
+      data: { employeeId: salesRepEmployee.id }
     });
   }
 

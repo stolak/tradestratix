@@ -22,7 +22,10 @@ export async function listEmployees(user: AuthUser, status?: string, opts?: Bran
   });
   const rows = await prisma.employee.findMany({
     where: { businessId: user.businessId, ...scope, ...(status ? { status } : {}) },
-    include: { branch: true },
+    include: {
+      branch: true,
+      salesRep: { select: { id: true, code: true, name: true, status: true, commissionPercent: true } }
+    },
     orderBy: { fullName: 'asc' }
   });
   return serialize(rows);
@@ -117,10 +120,34 @@ export async function updateEmployee(user: AuthUser, id: string, body: Record<st
   }
 
   try {
-    const updated = await prisma.employee.update({
-      where: { id },
-      data: data as any,
-      include: { branch: true }
+    const updated = await prisma.$transaction(async (tx) => {
+      const emp = await tx.employee.update({
+        where: { id },
+        data: data as any,
+        include: {
+          branch: true,
+          salesRep: { select: { id: true, code: true, name: true, status: true, commissionPercent: true } }
+        }
+      });
+
+      // Keep linked sales-rep commercial profile aligned with HR identity fields
+      if (emp.salesRep) {
+        const repPatch: Record<string, unknown> = {};
+        if (data.fullName !== undefined) repPatch.name = data.fullName;
+        if (data.phone !== undefined) repPatch.phone = data.phone;
+        if (data.email !== undefined) repPatch.email = data.email;
+        if (data.userId !== undefined) repPatch.userId = data.userId;
+        if (data.branchId !== undefined) repPatch.branchId = data.branchId;
+        if (data.code !== undefined) repPatch.code = data.code;
+        if (data.status !== undefined) {
+          repPatch.status = data.status === 'inactive' ? 'inactive' : 'active';
+        }
+        if (Object.keys(repPatch).length) {
+          await tx.salesRep.update({ where: { id: emp.salesRep.id }, data: repPatch as any });
+        }
+      }
+
+      return emp;
     });
     await writeAudit({
       user,

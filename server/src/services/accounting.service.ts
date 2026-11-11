@@ -4,6 +4,22 @@ import { httpError, requireString, roundMoney, serialize, shortId, toDec } from 
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
+import {
+  getDefaultAccountMap as loadDefaultAccountMap,
+  listDefaultAccountSettingsStatus,
+  requireDefaultAccountIds,
+  resolveDefaultAccounts,
+  upsertDefaultAccountSetting,
+  listDefaultAccountCatalog
+} from './default-account.service.js';
+
+export {
+  requireDefaultAccountIds,
+  resolveDefaultAccounts,
+  listDefaultAccountSettingsStatus,
+  upsertDefaultAccountSetting,
+  listDefaultAccountCatalog
+};
 
 type BranchListOpts = {
   branchId?: string | null;
@@ -66,10 +82,7 @@ export async function createAccount(user: AuthUser, body: Record<string, any>) {
 }
 
 export async function getDefaultAccountMap(businessId: string): Promise<Record<string, string>> {
-  const settings = await prisma.defaultAccountSetting.findMany({ where: { businessId } });
-  const map: Record<string, string> = {};
-  for (const s of settings) map[s.settingKey] = s.accountId;
-  return map;
+  return loadDefaultAccountMap(businessId);
 }
 
 export async function listDefaultAccountSettings(businessId: string) {
@@ -78,6 +91,37 @@ export async function listDefaultAccountSettings(businessId: string) {
     include: { account: true }
   });
   return serialize(rows);
+}
+
+async function assertEntityInBusiness(
+  businessId: string,
+  opts: {
+    customerId?: string | null;
+    supplierId?: string | null;
+    salesRepresentativeId?: string | null;
+  }
+) {
+  if (opts.customerId) {
+    const row = await prisma.customer.findFirst({
+      where: { id: opts.customerId, businessId },
+      select: { id: true }
+    });
+    if (!row) throw httpError(400, 'customer_id is invalid for this business');
+  }
+  if (opts.supplierId) {
+    const row = await prisma.supplier.findFirst({
+      where: { id: opts.supplierId, businessId },
+      select: { id: true }
+    });
+    if (!row) throw httpError(400, 'supplier_id is invalid for this business');
+  }
+  if (opts.salesRepresentativeId) {
+    const row = await prisma.salesRep.findFirst({
+      where: { id: opts.salesRepresentativeId, businessId },
+      select: { id: true }
+    });
+    if (!row) throw httpError(400, 'sales_representative_id is invalid for this business');
+  }
 }
 
 type JournalLineInput = {
@@ -126,6 +170,12 @@ export async function createJournal(
     memo?: string;
     branch_id?: string;
     branchId?: string;
+    customer_id?: string | null;
+    customerId?: string | null;
+    supplier_id?: string | null;
+    supplierId?: string | null;
+    sales_representative_id?: string | null;
+    salesRepresentativeId?: string | null;
     source_type?: string;
     source_id?: string;
     sourceType?: string;
@@ -146,6 +196,17 @@ export async function createJournal(
   if (body.post !== false) {
     await assertPeriodOpen(user.businessId, entryDateEarly);
   }
+
+  const customerId = body.customer_id ?? body.customerId ?? null;
+  const supplierId = body.supplier_id ?? body.supplierId ?? null;
+  const salesRepresentativeId =
+    body.sales_representative_id ?? body.salesRepresentativeId ?? null;
+
+  await assertEntityInBusiness(user.businessId, {
+    customerId,
+    supplierId,
+    salesRepresentativeId
+  });
 
   const normalized = lines.map((l, idx) => {
     const accountId = l.account_id || l.accountId;
@@ -183,7 +244,12 @@ export async function createJournal(
   if (idempotencyKey) {
     const existing = await client.journalEntry.findFirst({
       where: { businessId: user.businessId, idempotencyKey },
-      include: { lines: true }
+      include: {
+        lines: true,
+        customer: true,
+        supplier: true,
+        salesRepresentative: true
+      }
     });
     if (existing) return serialize(existing);
   }
@@ -194,6 +260,13 @@ export async function createJournal(
   });
   if (accounts.length !== accountIds.length) {
     throw httpError(400, 'One or more accounts are invalid for this business');
+  }
+  const inactive = accounts.filter((a) => !a.isActive);
+  if (inactive.length) {
+    throw httpError(
+      400,
+      `Cannot post to inactive account(s): ${inactive.map((a) => a.code).join(', ')}`
+    );
   }
 
   const shouldPost = body.post !== false;
@@ -210,6 +283,9 @@ export async function createJournal(
         id: shortId('je'),
         businessId: user.businessId,
         branchId,
+        customerId,
+        supplierId,
+        salesRepresentativeId,
         entryNumber,
         entryDate,
         memo: body.memo || null,
@@ -232,7 +308,12 @@ export async function createJournal(
           }))
         }
       },
-      include: { lines: true }
+      include: {
+        lines: true,
+        customer: true,
+        supplier: true,
+        salesRepresentative: true
+      }
     });
   };
 
@@ -263,6 +344,9 @@ export async function reverseJournal(user: AuthUser, id: string, memo?: string) 
     entry_date: new Date(),
     memo: memo || `Reversal of ${original.entryNumber}`,
     branch_id: original.branchId || undefined,
+    customer_id: original.customerId,
+    supplier_id: original.supplierId,
+    sales_representative_id: original.salesRepresentativeId,
     source_type: 'reversal',
     source_id: original.id,
     idempotency_key: `reversal:${original.id}`,
@@ -286,23 +370,112 @@ export async function reverseJournal(user: AuthUser, id: string, memo?: string) 
 
 export async function listJournals(
   user: AuthUser,
-  opts?: { limit?: number; status?: string } & BranchListOpts
+  opts?: {
+    limit?: number;
+    status?: string;
+    customerId?: string;
+    supplierId?: string;
+    salesRepresentativeId?: string;
+    sourceType?: string;
+    from?: string | Date;
+    to?: string | Date;
+  } & BranchListOpts
 ) {
   const scope = await branchAccess.branchScopeWhere(user, {
     branchId: opts?.branchId,
     allowConsolidated: opts?.allowConsolidated
   });
+  const from = opts?.from ? new Date(opts.from) : null;
+  const to = opts?.to ? new Date(opts.to) : null;
   const rows = await prisma.journalEntry.findMany({
     where: {
       businessId: user.businessId,
       ...scope,
-      ...(opts?.status ? { status: opts.status } : {})
+      ...(opts?.status ? { status: opts.status } : {}),
+      ...(opts?.customerId ? { customerId: opts.customerId } : {}),
+      ...(opts?.supplierId ? { supplierId: opts.supplierId } : {}),
+      ...(opts?.salesRepresentativeId
+        ? { salesRepresentativeId: opts.salesRepresentativeId }
+        : {}),
+      ...(opts?.sourceType ? { sourceType: opts.sourceType } : {}),
+      ...(from || to
+        ? {
+            entryDate: {
+              ...(from ? { gte: from } : {}),
+              ...(to ? { lte: to } : {})
+            }
+          }
+        : {})
     },
-    include: { lines: { include: { account: true } } },
+    include: {
+      lines: { include: { account: true } },
+      customer: { select: { id: true, code: true, name: true } },
+      supplier: { select: { id: true, code: true, name: true } },
+      salesRepresentative: { select: { id: true, code: true, name: true } },
+      branch: { select: { id: true, code: true, name: true } }
+    },
     orderBy: { entryDate: 'desc' },
     take: opts?.limit ?? 50
   });
   return serialize(rows);
+}
+
+/** Entity ledger: posted journals for a customer, supplier, or sales rep. */
+export async function entityLedger(
+  user: AuthUser,
+  opts: {
+    entityType: 'customer' | 'supplier' | 'sales_representative';
+    entityId: string;
+    from?: string | Date;
+    to?: string | Date;
+  } & BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts.branchId,
+    allowConsolidated: opts.allowConsolidated
+  });
+  await assertEntityInBusiness(user.businessId, {
+    customerId: opts.entityType === 'customer' ? opts.entityId : null,
+    supplierId: opts.entityType === 'supplier' ? opts.entityId : null,
+    salesRepresentativeId: opts.entityType === 'sales_representative' ? opts.entityId : null
+  });
+
+  const from = opts.from ? new Date(opts.from) : null;
+  const to = opts.to ? new Date(opts.to) : null;
+  const entityWhere =
+    opts.entityType === 'customer'
+      ? { customerId: opts.entityId }
+      : opts.entityType === 'supplier'
+        ? { supplierId: opts.entityId }
+        : { salesRepresentativeId: opts.entityId };
+
+  const rows = await prisma.journalEntry.findMany({
+    where: {
+      businessId: user.businessId,
+      status: { in: ['posted', 'reversed'] },
+      ...scope,
+      ...entityWhere,
+      ...(from || to
+        ? {
+            entryDate: {
+              ...(from ? { gte: from } : {}),
+              ...(to ? { lte: to } : {})
+            }
+          }
+        : {})
+    },
+    include: {
+      lines: { include: { account: true } },
+      branch: { select: { id: true, code: true, name: true } }
+    },
+    orderBy: { entryDate: 'asc' }
+  });
+
+  return serialize({
+    entity_type: opts.entityType,
+    entity_id: opts.entityId,
+    entries: rows
+  });
 }
 
 export async function trialBalance(user: AuthUser, opts?: BranchListOpts) {

@@ -252,6 +252,7 @@ export const HrPage: React.FC = () => {
                   <th>Code</th>
                   <th>Department</th>
                   <th>Title</th>
+                  <th>Sales rep</th>
                   <th>Salary</th>
                   <th>Status</th>
                 </tr>
@@ -263,6 +264,7 @@ export const HrPage: React.FC = () => {
                     <td>{r.code || '—'}</td>
                     <td>{r.department || '—'}</td>
                     <td>{r.job_title || '—'}</td>
+                    <td>{r.sales_rep ? r.sales_rep.code || r.sales_rep.name : '—'}</td>
                     <td>{Number(r.base_salary).toLocaleString()}</td>
                     <td>{r.status}</td>
                   </tr>

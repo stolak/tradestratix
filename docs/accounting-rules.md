@@ -4,6 +4,51 @@
 2. Posted journals are **immutable**; corrections use reversals or adjustment journals.
 3. Posting is **idempotent** keyed by `sourceType` + `sourceId` (+ optional event).
 4. Monetary amounts use `Decimal(18, 4)` storage and decimal-safe rounding to 2 for presentation where required.
-5. Default account mappings are per-business (`DefaultAccountSetting`).
-6. Period locking blocks posts into closed periods (enforced when periods are configured).
+5. Default account mappings are per-business (`DefaultAccountSetting`), resolved via the central default-account resolver (never hardcode account IDs).
+6. Period locking blocks posts into locked periods / closed financial years (when configured).
 7. Inventory valuation methods (FIFO / WAC / specific ID) are business-configured and feed COGS consistently.
+
+## Entity attribution on JournalEntry
+
+Journal headers may optionally reference:
+
+- `customerId` — customer-facing AR / sales / payments / advances
+- `supplierId` — supplier-facing AP / receipts / payments
+- `salesRepresentativeId` — commercial sales representative responsible (distinct from `createdById` / `postedById`). Every sales rep is also an `Employee` via `SalesRep.employeeId`; journals keep using the sales-rep id, not the employee id.
+
+Rules:
+
+- Fields are nullable; rent, depreciation, and bank charges typically leave them null.
+- Populate only entities that legitimately belong to the transaction.
+- Walk-in / anonymous cash sales should use the business Walk-in customer account when configured, and still set `salesRepresentativeId` when a rep generated the sale.
+- Reversal journals copy entity references from the original entry.
+- Branch attribution (`branchId`) is independent of partner/rep attribution.
+- Referenced partners must belong to the same business; deletion of partners with journal history is restricted (`onDelete: Restrict`).
+
+### Journal-level vs line-level
+
+Current workflows create **one journal per independently attributable partner document** (invoice, customer payment, GRN, supplier payment). Header-level attribution is therefore accurate.
+
+If a future payment batch settles multiple customers in one journal, either:
+
+1. Split into one journal per customer (preferred, matches current payment APIs), or
+2. Add line-level `customerId` / `supplierId` dimensions.
+
+Do not put a single customer id on a multi-customer batch header.
+
+## Default account catalog
+
+Canonical keys live in `default-account.service.ts` (`DEFAULT_ACCOUNT_CATALOG`).  
+APIs:
+
+- `GET /accounting/default-accounts` — stored mappings
+- `GET /accounting/default-accounts/catalog` — known keys
+- `GET /accounting/default-accounts/status` — missing / valid / invalid
+- `PUT /accounting/default-accounts` — upsert mapping
+
+Missing or wrong-type mappings throw a clear configuration error and block posting when resolved as required.
+
+## Entity ledgers
+
+- `GET /accounting/journals?customer_id=&supplier_id=&sales_representative_id=&source_type=&from=&to=`
+- `GET /accounting/ledgers/:entityType/:entityId` where `entityType` is `customer` | `supplier` | `sales_representative`

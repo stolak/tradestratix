@@ -105,7 +105,26 @@ export const api = {
   },
   accounting: {
     accounts: () => request<any[]>('/accounting/accounts'),
-    journals: () => request<any[]>('/accounting/journals'),
+    journals: (params?: Record<string, string | undefined>) => {
+      const q = new URLSearchParams();
+      if (params) {
+        for (const [k, v] of Object.entries(params)) {
+          if (v) q.set(k, v);
+        }
+      }
+      const qs = q.toString();
+      return request<any[]>(`/accounting/journals${qs ? `?${qs}` : ''}`);
+    },
+    entityLedger: (entityType: string, entityId: string) =>
+      request<any>(`/accounting/ledgers/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`),
+    defaultAccounts: () => request<any[]>('/accounting/default-accounts'),
+    defaultAccountStatus: () => request<any[]>('/accounting/default-accounts/status'),
+    defaultAccountCatalog: () => request<any[]>('/accounting/default-accounts/catalog'),
+    upsertDefaultAccount: (body: Record<string, unknown>) =>
+      request<any>('/accounting/default-accounts', {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      }),
     trialBalance: () => request<any>('/accounting/trial-balance'),
     profitLoss: (from?: string, to?: string) => {
       const params = new URLSearchParams();

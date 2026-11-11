@@ -13,7 +13,27 @@ router.get(
   requirePermission('accounting.view'),
   accountingController.listDefaults
 );
+router.get(
+  '/default-accounts/catalog',
+  requirePermission('accounting.view'),
+  accountingController.listDefaultCatalog
+);
+router.get(
+  '/default-accounts/status',
+  requirePermission('accounting.view', 'settings.view'),
+  accountingController.listDefaultStatus
+);
+router.put(
+  '/default-accounts',
+  requirePermission('accounting.edit', 'settings.edit'),
+  accountingController.upsertDefault
+);
 router.get('/journals', requirePermission('accounting.view'), accountingController.listJournals);
+router.get(
+  '/ledgers/:entityType/:entityId',
+  requirePermission('accounting.view', 'reports.view'),
+  accountingController.entityLedger
+);
 router.post('/journals', requirePermission('accounting.post'), accountingController.createJournal);
 router.post(
   '/journals/:id/reverse',

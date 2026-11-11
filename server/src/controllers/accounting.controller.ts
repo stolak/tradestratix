@@ -33,10 +33,83 @@ export async function listDefaults(req: Request, res: Response, next: NextFuncti
   }
 }
 
+export async function listDefaultCatalog(_req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(accountingService.listDefaultAccountCatalog());
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listDefaultStatus(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await accountingService.listDefaultAccountSettingsStatus(req.user!.businessId)
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function upsertDefault(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await accountingService.upsertDefaultAccountSetting(req.user!, req.body || {})
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function listJournals(req: Request, res: Response, next: NextFunction) {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    return res.json(await accountingService.listJournals(req.user!, { status, ...branchListOpts(req) }));
+    const customerId =
+      typeof req.query.customer_id === 'string' ? req.query.customer_id : undefined;
+    const supplierId =
+      typeof req.query.supplier_id === 'string' ? req.query.supplier_id : undefined;
+    const salesRepresentativeId =
+      typeof req.query.sales_representative_id === 'string'
+        ? req.query.sales_representative_id
+        : undefined;
+    const sourceType =
+      typeof req.query.source_type === 'string' ? req.query.source_type : undefined;
+    const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+    return res.json(
+      await accountingService.listJournals(req.user!, {
+        status,
+        customerId,
+        supplierId,
+        salesRepresentativeId,
+        sourceType,
+        from,
+        to,
+        ...branchListOpts(req)
+      })
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function entityLedger(req: Request, res: Response, next: NextFunction) {
+  try {
+    const entityType = String(req.params.entityType || '');
+    if (!['customer', 'supplier', 'sales_representative'].includes(entityType)) {
+      return res.status(400).json({ error: 'entityType must be customer|supplier|sales_representative' });
+    }
+    const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+    return res.json(
+      await accountingService.entityLedger(req.user!, {
+        entityType: entityType as 'customer' | 'supplier' | 'sales_representative',
+        entityId: req.params.entityId,
+        from,
+        to,
+        ...branchListOpts(req)
+      })
+    );
   } catch (err) {
     return next(err);
   }

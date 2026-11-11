@@ -14,7 +14,11 @@
     "prisma:push": "prisma db push",
     "setup:db": "tsx scripts/setup-db.ts",
     "backfill:branches": "tsx scripts/backfill-branches.ts",
+    "backfill:journal-entities": "tsx scripts/backfill-journal-entities.ts",
+    "backfill:sales-rep-employees": "tsx scripts/backfill-sales-rep-employees.ts",
     "test:branches": "tsx scripts/test-multi-branch.ts",
+    "test:journal-entities": "tsx scripts/test-journal-entities.ts",
+    "test:sales-rep-employees": "tsx scripts/test-sales-rep-employees.ts",
     "db:reset": "npx prisma migrate reset"
   },
   "dependencies": {

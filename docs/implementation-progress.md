@@ -1,9 +1,25 @@
 # Implementation Progress
 
-Updated: 2026-11-10
+Updated: 2026-11-11
 
 ## Completed
 
+- **SalesRep ↔ Employee linkage**
+  - Every `SalesRep` references an `Employee` (`employeeId`, 1:1, Restrict)
+  - Creating a sales rep links an existing employee or auto-creates HR employee
+  - Identity fields sync both ways (HR ↔ sales-rep profile)
+  - Sales/journal attribution still uses `SalesRep.id`; payroll/attendance use `Employee.id`
+  - Backfill: `npm run backfill:sales-rep-employees`
+  - Tests: `npm run test:sales-rep-employees`
+- **Journal entity attribution + default account resolver**
+  - `JournalEntry`: nullable `customerId`, `supplierId`, `salesRepresentativeId` (+ indexes)
+  - Central default-account catalog/resolver with ownership, active, and type validation
+  - Posting engine validates entities, rejects inactive accounts, copies attribution on reverse
+  - Sales/procurement journals stamp customer/supplier/rep where applicable
+  - APIs: default-accounts catalog/status/upsert; journal filters; entity ledgers
+  - Client: Accounting → Default accounts (status + assign); Journals show customer/supplier/rep
+  - Backfill: `npm run backfill:journal-entities`
+  - Tests: `npm run test:journal-entities` (13 passed)
 - **Multi-branch architecture (cross-cutting)**
   - Enhanced `UserBranch` membership (businessId, roleCode, status, assignedAt/By)
   - `branchId` on operational docs; stock transfers keep `fromBranchId`/`toBranchId`

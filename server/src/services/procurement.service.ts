@@ -537,6 +537,7 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
         source_id: grn.id,
         idempotency_key: `grn:${grn.id}`,
         branch_id: branchId,
+        supplier_id: po.supplierId,
         post: true,
         lines: [
           {
@@ -759,6 +760,7 @@ export async function recordSupplierPayment(user: AuthUser, body: Record<string,
         source_id: paymentId,
         idempotency_key: `supplier_payment:${paymentId}`,
         branch_id: branchId,
+        supplier_id: supplier.id,
         post: true,
         lines: [
           {
