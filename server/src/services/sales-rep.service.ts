@@ -16,7 +16,24 @@ const employeeSelect = {
   branchId: true,
   userId: true,
   branch: { select: { id: true, code: true, name: true } },
-  user: { select: { id: true, username: true, defaultBranchId: true, role: true, status: true } }
+  user: {
+    select: {
+      id: true,
+      username: true,
+      defaultBranchId: true,
+      role: true,
+      status: true,
+      userBranches: {
+        where: { status: 'active' },
+        select: {
+          branchId: true,
+          status: true,
+          branch: { select: { id: true, code: true, name: true, isActive: true } }
+        },
+        orderBy: { assignedAt: 'asc' }
+      }
+    }
+  }
 } as const;
 
 const repInclude = {
@@ -38,6 +55,9 @@ function activityCount(row: {
 function presentRep<T extends { employee?: any; _count?: any }>(row: T) {
   const emp = row.employee;
   const activity = activityCount(row);
+  const operatingBranches = (emp?.user?.userBranches || [])
+    .map((ub: any) => ub.branch)
+    .filter((b: any) => b && b.isActive !== false);
   return {
     ...row,
     name: emp?.fullName ?? null,
@@ -46,6 +66,7 @@ function presentRep<T extends { employee?: any; _count?: any }>(row: T) {
     branch_id: emp?.branchId ?? null,
     user_id: emp?.userId ?? null,
     branch: emp?.branch ?? null,
+    operating_branches: operatingBranches,
     can_delete: activity === 0,
     activity_count: activity
   };

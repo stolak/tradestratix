@@ -233,6 +233,7 @@ export const SalesRepsPage: React.FC = () => {
                 <th>Code</th>
                 <th>Name</th>
                 <th>Home branch</th>
+                <th>Operates in</th>
                 <th>Commission %</th>
                 <th>Status</th>
                 <th />
@@ -241,12 +242,55 @@ export const SalesRepsPage: React.FC = () => {
             <tbody>
               {visible.map((r, index) => {
                 const active = r.status === 'active';
+                const homeCode = r.branch?.code || r.employee?.branch?.code;
+                const operating = (r.operating_branches ||
+                  r.employee?.user?.user_branches
+                    ?.map((ub: any) => ub.branch)
+                    .filter(Boolean) ||
+                  []) as any[];
                 return (
                   <tr key={r.id}>
                     <td>{index + 1}</td>
                     <td>{r.code || r.employee?.code || '—'}</td>
                     <td>{r.name || r.employee?.full_name}</td>
-                    <td>{r.branch?.code || r.employee?.branch?.code || '—'}</td>
+                    <td>{homeCode || '—'}</td>
+                    <td>
+                      {operating.length ? (
+                        <span style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                          {operating.map((b: any) => {
+                            const isHome = homeCode && b.code === homeCode;
+                            return (
+                              <span
+                                key={b.id || b.code}
+                                title={b.name || b.code}
+                                style={{
+                                  display: 'inline-block',
+                                  fontSize: '0.75rem',
+                                  fontWeight: isHome ? 700 : 500,
+                                  padding: '0.15rem 0.45rem',
+                                  borderRadius: 4,
+                                  background: isHome
+                                    ? 'color-mix(in srgb, var(--brand, #0f5c4c) 14%, transparent)'
+                                    : 'color-mix(in srgb, var(--ink-muted, #6b7280) 10%, transparent)',
+                                  color: isHome
+                                    ? 'var(--brand, #0f5c4c)'
+                                    : 'var(--ink, #1f2937)',
+                                  border: `1px solid ${
+                                    isHome
+                                      ? 'color-mix(in srgb, var(--brand, #0f5c4c) 35%, transparent)'
+                                      : 'color-mix(in srgb, var(--ink-muted, #6b7280) 28%, transparent)'
+                                  }`
+                                }}
+                              >
+                                {b.code || b.name}
+                              </span>
+                            );
+                          })}
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
                     <td>{Number(r.commission_percent)}%</td>
                     <td>
                       <span
@@ -304,7 +348,7 @@ export const SalesRepsPage: React.FC = () => {
               })}
               {!visible.length ? (
                 <tr>
-                  <td colSpan={7} style={{ color: 'var(--ink-muted)' }}>
+                  <td colSpan={8} style={{ color: 'var(--ink-muted)' }}>
                     No sales reps match this filter.
                   </td>
                 </tr>
