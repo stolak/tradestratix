@@ -4,6 +4,13 @@ Updated: 2026-11-10
 
 ## Completed
 
+- **Multi-branch architecture (cross-cutting)**
+  - Enhanced `UserBranch` membership (businessId, roleCode, status, assignedAt/By)
+  - `branchId` on operational docs; stock transfers keep `fromBranchId`/`toBranchId`
+  - Auth: `X-Branch-Id`, DB membership revalidation, `POST /auth/switch-branch`
+  - Branch deactivate (cannot remove last active); membership assign/revoke APIs
+  - Client branch switcher remounts scoped views
+  - Tests: `npm run test:branches` (11 assertions)
 - Phase 1–5 (foundation through banking/expenses/statements)
 - **Phase 6 — Assets, depreciation, budgeting**
   - FixedAsset register with optional acquisition journal

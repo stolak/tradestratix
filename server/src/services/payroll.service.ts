@@ -3,6 +3,12 @@ import { httpError, roundMoney, serialize, shortId, toDec } from '../utils/helpe
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 const runInclude = {
   items: { include: { employee: true } }
@@ -17,9 +23,13 @@ async function nextRunNumber(businessId: string) {
   return `PAY-${String(count + 1).padStart(5, '0')}`;
 }
 
-export async function listRuns(businessId: string, status?: string) {
+export async function listRuns(user: AuthUser, status?: string, opts?: BranchListOpts) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.payrollRun.findMany({
-    where: { businessId, ...(status ? { status } : {}) },
+    where: { businessId: user.businessId, ...scope, ...(status ? { status } : {}) },
     include: { items: true, _count: { select: { items: true } } },
     orderBy: { payDate: 'desc' }
   });
@@ -41,8 +51,16 @@ export async function createRun(user: AuthUser, body: Record<string, any>) {
   if (!periodStart || !periodEnd) throw httpError(400, 'period_start and period_end are required');
 
   const payDate = body.pay_date || body.payDate ? new Date(body.pay_date || body.payDate) : new Date();
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
   const employees = await prisma.employee.findMany({
-    where: { businessId: user.businessId, status: 'active' }
+    where: {
+      businessId: user.businessId,
+      status: 'active',
+      OR: [{ branchId }, { branchId: null }]
+    }
   });
   if (!employees.length) throw httpError(400, 'No active employees to payroll');
 
@@ -83,6 +101,7 @@ export async function createRun(user: AuthUser, body: Record<string, any>) {
     data: {
       id: shortId('pay'),
       businessId: user.businessId,
+      branchId,
       runNumber,
       periodStart: new Date(periodStart),
       periodEnd: new Date(periodEnd),
@@ -162,6 +181,7 @@ export async function postRun(user: AuthUser, id: string) {
         source_type: 'payroll',
         source_id: run.id,
         idempotency_key: `payroll:${run.id}`,
+        branch_id: run.branchId || undefined,
         post: true,
         lines: [
           {
@@ -249,6 +269,7 @@ export async function payRun(user: AuthUser, id: string, body: Record<string, an
         source_type: 'payroll_payment',
         source_id: run.id,
         idempotency_key: `payroll_payment:${run.id}`,
+        branch_id: run.branchId || undefined,
         post: true,
         lines: [
           {

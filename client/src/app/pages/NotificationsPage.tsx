@@ -38,7 +38,7 @@ export const NotificationsPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Notifications
@@ -78,7 +78,8 @@ export const NotificationsPage: React.FC = () => {
       </div>
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>Title</th>
@@ -118,7 +119,8 @@ export const NotificationsPage: React.FC = () => {
               </tr>
             ) : null}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

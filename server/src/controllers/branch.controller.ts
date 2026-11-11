@@ -33,3 +33,46 @@ export async function update(req: Request, res: Response, next: NextFunction) {
     return next(err);
   }
 }
+
+export async function deactivate(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await branchService.deactivateBranch(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function remove(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await branchService.deleteBranch(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listMembers(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await branchService.listMembers(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function assignMember(req: Request, res: Response, next: NextFunction) {
+  try {
+    const data = await branchService.assignMember(req.user!, req.params.id, req.body || {});
+    return res.status(201).json(data);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function revokeMember(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await branchService.revokeMember(req.user!, req.params.id, req.params.userId)
+    );
+  } catch (err) {
+    return next(err);
+  }
+}

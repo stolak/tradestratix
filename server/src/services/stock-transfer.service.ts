@@ -3,16 +3,41 @@ import { httpError, requireString, serialize, shortId } from '../utils/helpers.j
 import type { AuthUser } from '../types/express/index.js';
 import { createStockMovement } from './inventory.service.js';
 import { writeAudit } from './audit.service.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 async function nextTransferNumber(businessId: string) {
   const count = await prisma.stockTransfer.count({ where: { businessId } });
   return `TR-${String(count + 1).padStart(6, '0')}`;
 }
 
-export async function listTransfers(businessId: string, status?: string) {
+export async function listTransfers(
+  user: AuthUser,
+  status?: string,
+  opts?: BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
+  const branchFilter =
+    typeof scope.branchId === 'string'
+      ? {
+          OR: [{ fromBranchId: scope.branchId }, { toBranchId: scope.branchId }]
+        }
+      : {
+          OR: [
+            { fromBranchId: { in: scope.branchId.in } },
+            { toBranchId: { in: scope.branchId.in } }
+          ]
+        };
   return serialize(
     await prisma.stockTransfer.findMany({
-      where: { businessId, ...(status ? { status } : {}) },
+      where: { businessId: user.businessId, ...branchFilter, ...(status ? { status } : {}) },
       include: {
         fromWarehouse: true,
         toWarehouse: true,
@@ -41,6 +66,11 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
   ]);
   if (!fromWh || !toWh) throw httpError(400, 'Invalid warehouse');
 
+  await branchAccess.assertBranchMembership(user, fromWh.branchId);
+  await branchAccess.assertBranchActive(user.businessId, fromWh.branchId);
+  await branchAccess.assertBranchMembership(user, toWh.branchId);
+  await branchAccess.assertBranchActive(user.businessId, toWh.branchId);
+
   const transfer = await prisma.stockTransfer.create({
     data: {
       id: shortId('tr'),
@@ -48,6 +78,8 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
       transferNumber: await nextTransferNumber(user.businessId),
       fromWarehouseId,
       toWarehouseId,
+      fromBranchId: fromWh.branchId,
+      toBranchId: toWh.branchId,
       status: 'pending_approval',
       notes: body.notes || null,
       requestedById: user.id,

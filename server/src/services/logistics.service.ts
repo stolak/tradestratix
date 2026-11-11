@@ -2,6 +2,7 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, serialize, shortId, toDec } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import * as branchAccess from './branch-access.service.js';
 
 const vehicleInclude = {
   driver: { select: { id: true, fullName: true, code: true, phone: true } }
@@ -142,9 +143,17 @@ export async function updateVehicle(user: AuthUser, id: string, body: Record<str
 
 // ─── Deliveries ──────────────────────────────────────────────────────────────
 
-export async function listDeliveries(businessId: string, status?: string) {
+export async function listDeliveries(
+  user: AuthUser,
+  status?: string,
+  opts?: { branchId?: string | null; allowConsolidated?: boolean }
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.deliveryOrder.findMany({
-    where: { businessId, ...(status ? { status } : {}) },
+    where: { businessId: user.businessId, ...scope, ...(status ? { status } : {}) },
     include: deliveryInclude,
     orderBy: { createdAt: 'desc' }
   });
@@ -204,12 +213,19 @@ export async function createDelivery(user: AuthUser, body: Record<string, any>) 
     throw httpError(400, 'customer_id and warehouse_id are required');
   }
 
-  const [customer, warehouse] = await Promise.all([
-    prisma.customer.findFirst({ where: { id: customerId, businessId: user.businessId } }),
-    prisma.warehouse.findFirst({ where: { id: warehouseId, businessId: user.businessId } })
-  ]);
+  const resolvedBranchId = await branchAccess.resolveWriteBranchId(
+    user,
+    branchId || body.branch_id || body.branchId || user.activeBranchId
+  );
+  const warehouse = await branchAccess.resolveWarehouseInBranch(
+    user.businessId,
+    warehouseId,
+    resolvedBranchId
+  );
+  const customer = await prisma.customer.findFirst({
+    where: { id: customerId, businessId: user.businessId }
+  });
   if (!customer) throw httpError(400, 'Invalid customer_id');
-  if (!warehouse) throw httpError(400, 'Invalid warehouse_id');
 
   for (const [i, line] of itemsInput.entries()) {
     const product = await prisma.product.findFirst({
@@ -236,8 +252,8 @@ export async function createDelivery(user: AuthUser, body: Record<string, any>) 
       deliveryNumber,
       salesInvoiceId,
       customerId,
-      warehouseId,
-      branchId,
+      warehouseId: warehouse.id,
+      branchId: resolvedBranchId,
       vehicleId,
       driverName: body.driver_name || body.driverName || null,
       scheduledDate: body.scheduled_date || body.scheduledDate

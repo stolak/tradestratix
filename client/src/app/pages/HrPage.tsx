@@ -132,7 +132,7 @@ export const HrPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Human resources
@@ -172,7 +172,7 @@ export const HrPage: React.FC = () => {
             style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
           >
             <div style={{ fontWeight: 700 }}>Add employee</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+            <div className="form-grid">
               <div className="field">
                 <label>Full name</label>
                 <input
@@ -235,14 +235,17 @@ export const HrPage: React.FC = () => {
                   onChange={(e) => setEmpForm({ ...empForm, email: e.target.value })}
                 />
               </div>
+              <div className="form-grid--actions">
+                <button className="btn btn-primary" type="submit">
+                  Create employee
+                </button>
+              </div>
             </div>
-            <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-              Create employee
-            </button>
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -266,6 +269,7 @@ export const HrPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}
@@ -278,7 +282,7 @@ export const HrPage: React.FC = () => {
             style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
           >
             <div style={{ fontWeight: 700 }}>Record attendance</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+            <div className="form-grid">
               <div className="field">
                 <label>Employee</label>
                 <select
@@ -321,14 +325,17 @@ export const HrPage: React.FC = () => {
                   onChange={(e) => setAttForm({ ...attForm, notes: e.target.value })}
                 />
               </div>
+              <div className="form-grid--actions">
+                <button className="btn btn-primary" type="submit">
+                  Save attendance
+                </button>
+              </div>
             </div>
-            <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-              Save attendance
-            </button>
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Date</th>
@@ -348,6 +355,7 @@ export const HrPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}
@@ -360,7 +368,7 @@ export const HrPage: React.FC = () => {
             style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
           >
             <div style={{ fontWeight: 700 }}>Request leave</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+            <div className="form-grid">
               <div className="field">
                 <label>Employee</label>
                 <select
@@ -412,14 +420,17 @@ export const HrPage: React.FC = () => {
                   onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })}
                 />
               </div>
+              <div className="form-grid--actions">
+                <button className="btn btn-primary" type="submit">
+                  Submit leave
+                </button>
+              </div>
             </div>
-            <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-              Submit leave
-            </button>
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Employee</th>
@@ -466,6 +477,7 @@ export const HrPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}

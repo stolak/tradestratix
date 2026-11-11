@@ -2,11 +2,26 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, roundMoney, serialize, shortId, toDec } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import * as branchAccess from './branch-access.service.js';
 
-export async function listBudgets(businessId: string, fiscalYear?: number) {
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
+
+export async function listBudgets(
+  user: AuthUser,
+  fiscalYear?: number,
+  opts?: BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.budget.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      ...scope,
       ...(fiscalYear ? { fiscalYear } : {})
     },
     include: {
@@ -22,6 +37,11 @@ export async function createBudget(user: AuthUser, body: Record<string, any>) {
   const name = requireString(body.name, 'name');
   const fiscalYear = Number(body.fiscal_year ?? body.fiscalYear ?? new Date().getFullYear());
   if (!fiscalYear) throw httpError(400, 'fiscal_year is required');
+
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
 
   const rawLines = Array.isArray(body.lines) ? body.lines : [];
   if (!rawLines.length) throw httpError(400, 'At least one budget line is required');
@@ -49,6 +69,7 @@ export async function createBudget(user: AuthUser, body: Record<string, any>) {
     data: {
       id: shortId('bud'),
       businessId: user.businessId,
+      branchId,
       name,
       fiscalYear,
       status: 'draft',

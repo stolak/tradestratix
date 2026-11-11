@@ -1,5 +1,12 @@
 import { prisma } from '../utils/prisma.js';
 import { roundMoney, serialize } from '../utils/helpers.js';
+import type { AuthUser } from '../types/express/index.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 function daysPastDue(dueOrBill: Date | null | undefined, asOf: Date) {
   const base = dueOrBill || asOf;
@@ -24,11 +31,16 @@ const emptyBuckets = () => ({
   total: 0
 });
 
-export async function arAging(businessId: string, asOf?: string | Date) {
+export async function arAging(user: AuthUser, asOf?: string | Date, opts?: BranchListOpts) {
   const asOfDate = asOf ? new Date(asOf) : new Date();
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const invoices = await prisma.salesInvoice.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      ...scope,
       status: 'posted',
       paymentStatus: { in: ['open', 'partial'] },
       balance: { gt: 0 }
@@ -87,11 +99,16 @@ export async function arAging(businessId: string, asOf?: string | Date) {
   };
 }
 
-export async function apAging(businessId: string, asOf?: string | Date) {
+export async function apAging(user: AuthUser, asOf?: string | Date, opts?: BranchListOpts) {
   const asOfDate = asOf ? new Date(asOf) : new Date();
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const bills = await prisma.supplierBill.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      ...scope,
       status: { in: ['open', 'partial'] },
       balance: { gt: 0 }
     },
@@ -147,26 +164,35 @@ export async function apAging(businessId: string, asOf?: string | Date) {
   };
 }
 
-export async function customerStatement(businessId: string, customerId: string) {
-  const customer = await prisma.customer.findFirst({ where: { id: customerId, businessId } });
+export async function customerStatement(
+  user: AuthUser,
+  customerId: string,
+  opts?: BranchListOpts
+) {
+  const customer = await prisma.customer.findFirst({
+    where: { id: customerId, businessId: user.businessId }
+  });
   if (!customer) return null;
+
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
 
   const [invoices, payments] = await Promise.all([
     prisma.salesInvoice.findMany({
-      where: { businessId, customerId, status: 'posted' },
+      where: { businessId: user.businessId, customerId, status: 'posted', ...scope },
       include: { items: true },
       orderBy: { invoiceDate: 'asc' }
     }),
     prisma.customerPayment.findMany({
-      where: { businessId, customerId },
+      where: { businessId: user.businessId, customerId, ...scope },
       include: { allocations: { include: { invoice: true } } },
       orderBy: { paymentDate: 'asc' }
     })
   ]);
 
-  const openBalance = roundMoney(
-    invoices.reduce((s, i) => s + Number(i.balance), 0)
-  );
+  const openBalance = roundMoney(invoices.reduce((s, i) => s + Number(i.balance), 0));
 
   return serialize({
     customer,
@@ -176,17 +202,28 @@ export async function customerStatement(businessId: string, customerId: string) 
   });
 }
 
-export async function supplierStatement(businessId: string, supplierId: string) {
-  const supplier = await prisma.supplier.findFirst({ where: { id: supplierId, businessId } });
+export async function supplierStatement(
+  user: AuthUser,
+  supplierId: string,
+  opts?: BranchListOpts
+) {
+  const supplier = await prisma.supplier.findFirst({
+    where: { id: supplierId, businessId: user.businessId }
+  });
   if (!supplier) return null;
+
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
 
   const [bills, payments] = await Promise.all([
     prisma.supplierBill.findMany({
-      where: { businessId, supplierId },
+      where: { businessId: user.businessId, supplierId, ...scope },
       orderBy: { billDate: 'asc' }
     }),
     prisma.supplierPayment.findMany({
-      where: { businessId, supplierId },
+      where: { businessId: user.businessId, supplierId, ...scope },
       include: { allocations: { include: { bill: true } } },
       orderBy: { paymentDate: 'asc' }
     })

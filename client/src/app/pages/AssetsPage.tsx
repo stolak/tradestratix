@@ -114,7 +114,7 @@ export const AssetsPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Assets
@@ -150,7 +150,7 @@ export const AssetsPage: React.FC = () => {
         <>
           <form onSubmit={createAsset} className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 12 }}>
             <div style={{ fontWeight: 700 }}>Register asset</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+            <div className="form-grid">
               <div className="field">
                 <label>Name</label>
                 <input value={assetForm.name} onChange={(e) => setAssetForm({ ...assetForm, name: e.target.value })} required />
@@ -183,14 +183,17 @@ export const AssetsPage: React.FC = () => {
                   <option value="equity">Equity</option>
                 </select>
               </div>
+              <div className="form-grid--actions">
+                <button className="btn btn-primary" type="submit">
+                  Create &amp; post acquisition
+                </button>
+              </div>
             </div>
-            <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-              Create &amp; post acquisition
-            </button>
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -212,6 +215,7 @@ export const AssetsPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}
@@ -227,7 +231,8 @@ export const AssetsPage: React.FC = () => {
             </span>
           </div>
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Period</th>
@@ -247,6 +252,7 @@ export const AssetsPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}
@@ -255,7 +261,7 @@ export const AssetsPage: React.FC = () => {
         <>
           <form onSubmit={createBudget} className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 12 }}>
             <div style={{ fontWeight: 700 }}>New budget (annual line)</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+            <div className="form-grid">
               <div className="field">
                 <label>Name</label>
                 <input value={budgetForm.name} onChange={(e) => setBudgetForm({ ...budgetForm, name: e.target.value })} required />
@@ -278,14 +284,17 @@ export const AssetsPage: React.FC = () => {
                 <label>Amount</label>
                 <input type="number" min="0" value={budgetForm.amount} onChange={(e) => setBudgetForm({ ...budgetForm, amount: e.target.value })} required />
               </div>
+              <div className="form-grid--actions">
+                <button className="btn btn-primary" type="submit">
+                  Create budget
+                </button>
+              </div>
             </div>
-            <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-              Create budget
-            </button>
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -316,6 +325,7 @@ export const AssetsPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
 
           {vsActual ? (
@@ -323,7 +333,8 @@ export const AssetsPage: React.FC = () => {
               <div style={{ fontWeight: 700, marginBottom: 8 }}>
                 {vsActual.budget?.name} — budget vs actual
               </div>
-              <table className="table">
+              <div className="table-wrap">
+                <table className="table">
                 <thead>
                   <tr>
                     <th>Account</th>
@@ -344,7 +355,8 @@ export const AssetsPage: React.FC = () => {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+                </table>
+              </div>
             </div>
           ) : null}
         </>

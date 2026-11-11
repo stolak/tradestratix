@@ -73,7 +73,7 @@ export const PayrollPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Payroll
@@ -89,7 +89,7 @@ export const PayrollPage: React.FC = () => {
         style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
       >
         <div style={{ fontWeight: 700 }}>New payroll run</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+        <div className="form-grid">
           <div className="field">
             <label>Period start</label>
             <input
@@ -117,21 +117,15 @@ export const PayrollPage: React.FC = () => {
               required
             />
           </div>
+          <div className="form-grid--actions">
+            <button className="btn btn-primary" type="submit">
+              Create run
+            </button>
+          </div>
         </div>
-        <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-          Create run
-        </button>
       </form>
 
-      <div
-        className="card-surface"
-        style={{
-          padding: '1rem 1.25rem',
-          display: 'grid',
-          gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-          gap: 12
-        }}
-      >
+      <div className="card-surface form-grid" style={{ padding: '1rem 1.25rem' }}>
         <div className="field">
           <label>Pay method (for Pay action)</label>
           <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>
@@ -154,7 +148,8 @@ export const PayrollPage: React.FC = () => {
       </div>
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>Run #</th>
@@ -209,7 +204,8 @@ export const PayrollPage: React.FC = () => {
               </tr>
             ) : null}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

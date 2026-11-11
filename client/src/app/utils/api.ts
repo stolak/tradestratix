@@ -8,6 +8,8 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...(options.headers as Record<string, string> | undefined)
   };
   if (token) headers.Authorization = `Bearer ${token}`;
+  const branchId = storage.getActiveBranchId();
+  if (branchId) headers['X-Branch-Id'] = branchId;
 
   const res = await fetch(`${API_URL}${path}`, { ...options, headers });
   const data = await res.json().catch(() => ({}));
@@ -20,11 +22,26 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 export const api = {
   auth: {
     login: (username: string, password: string) =>
-      request<{ token: string; user: any; business: any; permissions: string[] }>('/auth/login', {
+      request<{
+        token: string;
+        user: any;
+        business: any;
+        permissions: string[];
+        branches?: any[];
+        active_branch_id?: string;
+      }>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ username, password })
       }),
-    me: () => request<any>('/auth/me')
+    me: () => request<any>('/auth/me'),
+    switchBranch: (branchId: string) =>
+      request<{ token: string; active_branch_id: string; branches: any[] }>(
+        '/auth/switch-branch',
+        {
+          method: 'POST',
+          body: JSON.stringify({ branch_id: branchId })
+        }
+      )
   },
   dashboard: {
     summary: () => request<any>('/dashboard/summary')
@@ -39,7 +56,14 @@ export const api = {
     create: (body: Record<string, unknown>) =>
       request<any>('/branches', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string, body: Record<string, unknown>) =>
-      request<any>(`/branches/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
+      request<any>(`/branches/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    deactivate: (id: string) =>
+      request<any>(`/branches/${id}/deactivate`, { method: 'POST', body: '{}' }),
+    members: (id: string) => request<any[]>(`/branches/${id}/members`),
+    assignMember: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/branches/${id}/members`, { method: 'POST', body: JSON.stringify(body) }),
+    revokeMember: (id: string, userId: string) =>
+      request<any>(`/branches/${id}/members/${userId}`, { method: 'DELETE' })
   },
   warehouses: {
     list: (branchId?: string) =>

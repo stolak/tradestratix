@@ -1,10 +1,17 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as hrService from '../services/hr.service.js';
 
+function branchListOpts(req: Request) {
+  return {
+    branchId: typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined,
+    allowConsolidated: req.query.consolidated === '1' || req.query.consolidated === 'true'
+  };
+}
+
 export async function listEmployees(req: Request, res: Response, next: NextFunction) {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    return res.json(await hrService.listEmployees(req.user!.businessId, status));
+    return res.json(await hrService.listEmployees(req.user!, status, branchListOpts(req)));
   } catch (err) {
     return next(err);
   }
@@ -29,11 +36,12 @@ export async function updateEmployee(req: Request, res: Response, next: NextFunc
 export async function listAttendance(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(
-      await hrService.listAttendance(req.user!.businessId, {
+      await hrService.listAttendance(req.user!, {
         employee_id:
           typeof req.query.employee_id === 'string' ? req.query.employee_id : undefined,
         from: typeof req.query.from === 'string' ? req.query.from : undefined,
-        to: typeof req.query.to === 'string' ? req.query.to : undefined
+        to: typeof req.query.to === 'string' ? req.query.to : undefined,
+        ...branchListOpts(req)
       })
     );
   } catch (err) {
@@ -52,7 +60,7 @@ export async function upsertAttendance(req: Request, res: Response, next: NextFu
 export async function listLeave(req: Request, res: Response, next: NextFunction) {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    return res.json(await hrService.listLeave(req.user!.businessId, status));
+    return res.json(await hrService.listLeave(req.user!, status, branchListOpts(req)));
   } catch (err) {
     return next(err);
   }

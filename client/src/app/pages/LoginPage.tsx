@@ -22,24 +22,8 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        display: 'grid',
-        gridTemplateColumns: '1.1fr 0.9fr'
-      }}
-    >
-      <section
-        style={{
-          padding: '4rem',
-          background:
-            'linear-gradient(145deg, rgba(10,63,53,0.92), rgba(15,92,76,0.85)), url("https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=1600&q=80") center/cover',
-          color: 'white',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'flex-end'
-        }}
-      >
+    <div className="login-shell">
+      <section className="login-shell__hero">
         <div className="display" style={{ fontSize: 'clamp(2.8rem, 6vw, 4.5rem)', lineHeight: 1 }}>
           {APP_NAME}
         </div>
@@ -52,7 +36,7 @@ export const LoginPage: React.FC = () => {
         style={{
           display: 'grid',
           placeItems: 'center',
-          padding: '2rem',
+          padding: 'clamp(1.25rem, 4vw, 2rem)',
           background: 'var(--bg)'
         }}
       >
@@ -89,9 +73,6 @@ export const LoginPage: React.FC = () => {
           <button className="btn btn-primary" type="submit" disabled={busy}>
             {busy ? 'Signing in…' : 'Sign in'}
           </button>
-          <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--ink-muted)' }}>
-            Seed demo: <strong>owner</strong> / <strong>password123</strong>
-          </p>
         </form>
       </section>
     </div>

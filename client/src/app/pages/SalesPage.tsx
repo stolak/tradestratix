@@ -168,7 +168,7 @@ export const SalesPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Sales
@@ -206,7 +206,7 @@ export const SalesPage: React.FC = () => {
             style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
           >
             <div style={{ fontWeight: 700 }}>New credit / account invoice</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            <div className="form-grid">
               <div className="field">
                 <label>Customer</label>
                 <select
@@ -329,7 +329,8 @@ export const SalesPage: React.FC = () => {
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Invoice #</th>
@@ -367,6 +368,7 @@ export const SalesPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}
@@ -379,7 +381,7 @@ export const SalesPage: React.FC = () => {
             style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
           >
             <div style={{ fontWeight: 700 }}>Record customer payment</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+            <div className="form-grid">
               <div className="field">
                 <label>Customer</label>
                 <select
@@ -430,7 +432,8 @@ export const SalesPage: React.FC = () => {
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Payment #</th>
@@ -459,6 +462,7 @@ export const SalesPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}

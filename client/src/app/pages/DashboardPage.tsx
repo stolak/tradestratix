@@ -15,7 +15,7 @@ export const DashboardPage: React.FC = () => {
   const counts = data?.counts || {};
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.4rem' }}>
           Operations overview
@@ -25,13 +25,7 @@ export const DashboardPage: React.FC = () => {
         </p>
       </header>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-          gap: '0.85rem'
-        }}
-      >
+      <div className="kpi-grid">
         {[
           ['Branches', counts.branches],
           ['Warehouses', counts.warehouses],
@@ -50,10 +44,11 @@ export const DashboardPage: React.FC = () => {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+      <div className="split-2">
         <div className="card-surface" style={{ padding: '1rem' }}>
           <h3 style={{ marginTop: 0 }}>Recent journals</h3>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Number</th>
@@ -75,11 +70,13 @@ export const DashboardPage: React.FC = () => {
                 </tr>
               ) : null}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
         <div className="card-surface" style={{ padding: '1rem' }}>
           <h3 style={{ marginTop: 0 }}>Recent audit</h3>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Module</th>
@@ -101,7 +98,8 @@ export const DashboardPage: React.FC = () => {
                 </tr>
               ) : null}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
       </div>
     </div>

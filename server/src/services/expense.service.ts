@@ -3,6 +3,12 @@ import { httpError, roundMoney, serialize, shortId, toDec } from '../utils/helpe
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 const expenseInclude = {
   lines: { include: { account: true } },
@@ -15,9 +21,13 @@ async function nextExpenseNumber(businessId: string) {
   return `EXP-${String(count + 1).padStart(5, '0')}`;
 }
 
-export async function listExpenses(businessId: string, status?: string) {
+export async function listExpenses(user: AuthUser, status?: string, opts?: BranchListOpts) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.expenseBill.findMany({
-    where: { businessId, ...(status ? { status } : {}) },
+    where: { businessId: user.businessId, ...scope, ...(status ? { status } : {}) },
     include: expenseInclude,
     orderBy: { expenseDate: 'desc' }
   });
@@ -64,11 +74,16 @@ export async function createExpense(user: AuthUser, body: Record<string, any>) {
 
   const payMethod = body.pay_method || body.payMethod || null;
   const bankAccountId = body.bank_account_id || body.bankAccountId || null;
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
 
   const created = await prisma.expenseBill.create({
     data: {
       id: shortId('exp'),
       businessId: user.businessId,
+      branchId,
       expenseNumber,
       vendorName: body.vendor_name || body.vendorName || null,
       supplierId: body.supplier_id || body.supplierId || null,
@@ -185,10 +200,15 @@ export async function postExpense(
     // If tax was recorded separately and not in lines, already in total via credit side only —
     // keep simple: credit = sum of line debits (subtotal). Adjust if taxAmount > 0.
     const lineDebit = roundMoney(expense.lines.reduce((s, l) => s + Number(l.amount), 0));
+    const creditLine = journalLines[journalLines.length - 1] as {
+      account_id: string;
+      credit: number;
+      description: string;
+    };
     if (Math.abs(lineDebit - total) > 0.01 && Number(expense.taxAmount) > 0 && map.tax_payable) {
       // Expand: lines debit + tax debit? Prefer tax as part of expense total on credit only:
       // Dr lines, Dr tax expense? Simpler: force credit = lineDebit for balance; tax ignored in GL for now
-      journalLines[journalLines.length - 1].credit = lineDebit;
+      creditLine.credit = lineDebit;
     }
 
     const journal = await createJournal(
@@ -199,6 +219,7 @@ export async function postExpense(
         source_type: 'expense',
         source_id: expense.id,
         idempotency_key: `expense:${expense.id}`,
+        branch_id: expense.branchId || undefined,
         post: true,
         lines: journalLines
       },
@@ -206,7 +227,7 @@ export async function postExpense(
     );
 
     const settled = payNow || method === 'cash' || method === 'bank';
-    const postedTotal = journalLines[journalLines.length - 1].credit as number;
+    const postedTotal = creditLine.credit;
 
     return tx.expenseBill.update({
       where: { id: expense.id },
@@ -271,6 +292,7 @@ export async function payExpense(user: AuthUser, id: string, body: Record<string
         source_type: 'expense_payment',
         source_id: expense.id,
         idempotency_key: `expense_payment:${expense.id}:${amount}`,
+        branch_id: expense.branchId || undefined,
         post: true,
         lines: [
           {

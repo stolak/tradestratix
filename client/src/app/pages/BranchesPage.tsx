@@ -33,7 +33,7 @@ export const BranchesPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Branches
@@ -43,32 +43,31 @@ export const BranchesPage: React.FC = () => {
         </p>
       </header>
 
-      <form
-        onSubmit={create}
-        className="card-surface"
-        style={{ padding: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr auto', gap: 12 }}
-      >
-        <div className="field">
-          <label>Name</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} required />
-        </div>
-        <div className="field">
-          <label>Code</label>
-          <input value={code} onChange={(e) => setCode(e.target.value)} required />
-        </div>
-        <div className="field">
-          <label>City</label>
-          <input value={city} onChange={(e) => setCity(e.target.value)} />
-        </div>
-        <div style={{ alignSelf: 'end' }}>
-          <button className="btn btn-primary" type="submit">
-            Add branch
-          </button>
+      <form onSubmit={create} className="card-surface" style={{ padding: '1rem' }}>
+        <div className="form-grid">
+          <div className="field">
+            <label>Name</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} required />
+          </div>
+          <div className="field">
+            <label>Code</label>
+            <input value={code} onChange={(e) => setCode(e.target.value)} required />
+          </div>
+          <div className="field">
+            <label>City</label>
+            <input value={city} onChange={(e) => setCity(e.target.value)} />
+          </div>
+          <div className="form-grid--actions">
+            <button className="btn btn-primary" type="submit">
+              Add branch
+            </button>
+          </div>
         </div>
       </form>
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>Code</th>
@@ -89,7 +88,8 @@ export const BranchesPage: React.FC = () => {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

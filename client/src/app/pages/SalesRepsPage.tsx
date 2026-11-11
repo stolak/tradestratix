@@ -47,7 +47,7 @@ export const SalesRepsPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Sales reps
@@ -62,7 +62,7 @@ export const SalesRepsPage: React.FC = () => {
         className="card-surface"
         style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
       >
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+        <div className="form-grid">
           <div className="field">
             <label>Name</label>
             <input
@@ -92,14 +92,17 @@ export const SalesRepsPage: React.FC = () => {
               onChange={(e) => setForm({ ...form, commission_percent: e.target.value })}
             />
           </div>
+          <div className="form-grid--actions">
+            <button className="btn btn-primary" type="submit">
+              Add sales rep
+            </button>
+          </div>
         </div>
-        <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-          Add sales rep
-        </button>
       </form>
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>Code</th>
@@ -120,12 +123,14 @@ export const SalesRepsPage: React.FC = () => {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
 
       <div className="card-surface" style={{ padding: '1rem' }}>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>Accrued commissions</div>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>Rep</th>
@@ -148,7 +153,8 @@ export const SalesRepsPage: React.FC = () => {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

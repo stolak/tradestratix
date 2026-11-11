@@ -13,7 +13,7 @@ export const RolesPage: React.FC = () => {
   }, []);
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Roles & access
@@ -23,7 +23,8 @@ export const RolesPage: React.FC = () => {
         </p>
       </header>
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>Code</th>
@@ -44,7 +45,8 @@ export const RolesPage: React.FC = () => {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

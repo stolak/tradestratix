@@ -3,15 +3,25 @@ import { httpError, requireString, roundMoney, serialize, shortId, toDec } from 
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 async function nextTxnNumber(businessId: string) {
   const count = await prisma.bankTransaction.count({ where: { businessId } });
   return `BTX-${String(count + 1).padStart(5, '0')}`;
 }
 
-export async function listBankAccounts(businessId: string) {
+export async function listBankAccounts(user: AuthUser, opts?: BranchListOpts) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.bankAccount.findMany({
-    where: { businessId },
+    where: { businessId: user.businessId, ...scope },
     include: { glAccount: true, _count: { select: { transactions: true } } },
     orderBy: { name: 'asc' }
   });
@@ -24,6 +34,11 @@ export async function createBankAccount(user: AuthUser, body: Record<string, any
   const glAccountId = body.gl_account_id || body.glAccountId || map.bank;
   if (!glAccountId) throw httpError(400, 'gl_account_id is required (or configure default bank account)');
 
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
+
   const gl = await prisma.account.findFirst({
     where: { id: glAccountId, businessId: user.businessId }
   });
@@ -33,6 +48,7 @@ export async function createBankAccount(user: AuthUser, body: Record<string, any
     data: {
       id: shortId('bnk'),
       businessId: user.businessId,
+      branchId,
       name,
       bankName: body.bank_name || body.bankName || null,
       accountNumber: body.account_number || body.accountNumber || null,
@@ -56,10 +72,19 @@ export async function createBankAccount(user: AuthUser, body: Record<string, any
   return serialize(row);
 }
 
-export async function listBankTransactions(businessId: string, bankAccountId?: string) {
+export async function listBankTransactions(
+  user: AuthUser,
+  bankAccountId?: string,
+  opts?: BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.bankTransaction.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      ...scope,
       ...(bankAccountId ? { bankAccountId } : {})
     },
     include: {
@@ -89,6 +114,10 @@ export async function deposit(user: AuthUser, body: Record<string, any>) {
   if (!amount || amount <= 0) throw httpError(400, 'amount must be > 0');
 
   const bank = await getBankAccount(user.businessId, bankAccountId);
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || bank.branchId || user.activeBranchId
+  );
   const map = await getDefaultAccountMap(user.businessId);
   const offsetAccountId =
     body.offset_account_id || body.offsetAccountId || map.cash || map.equity;
@@ -106,6 +135,7 @@ export async function deposit(user: AuthUser, body: Record<string, any>) {
         source_type: 'bank_deposit',
         source_id: txnId,
         idempotency_key: `bank_deposit:${txnId}`,
+        branch_id: branchId,
         post: true,
         lines: [
           { account_id: bank.glAccountId, debit: amount, description: `Deposit to ${bank.name}` },
@@ -119,6 +149,7 @@ export async function deposit(user: AuthUser, body: Record<string, any>) {
       data: {
         id: txnId,
         businessId: user.businessId,
+        branchId,
         bankAccountId,
         txnNumber,
         txnDate: body.txn_date || body.txnDate ? new Date(body.txn_date || body.txnDate) : new Date(),
@@ -152,6 +183,10 @@ export async function withdraw(user: AuthUser, body: Record<string, any>) {
   if (!amount || amount <= 0) throw httpError(400, 'amount must be > 0');
 
   const bank = await getBankAccount(user.businessId, bankAccountId);
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || bank.branchId || user.activeBranchId
+  );
   const map = await getDefaultAccountMap(user.businessId);
   const offsetAccountId =
     body.offset_account_id || body.offsetAccountId || map.expense || map.equity;
@@ -169,6 +204,7 @@ export async function withdraw(user: AuthUser, body: Record<string, any>) {
         source_type: 'bank_withdrawal',
         source_id: txnId,
         idempotency_key: `bank_withdrawal:${txnId}`,
+        branch_id: branchId,
         post: true,
         lines: [
           {
@@ -190,6 +226,7 @@ export async function withdraw(user: AuthUser, body: Record<string, any>) {
       data: {
         id: txnId,
         businessId: user.businessId,
+        branchId,
         bankAccountId,
         txnNumber,
         txnDate: body.txn_date || body.txnDate ? new Date(body.txn_date || body.txnDate) : new Date(),
@@ -232,6 +269,10 @@ export async function transfer(user: AuthUser, body: Record<string, any>) {
 
   const from = await getBankAccount(user.businessId, fromId);
   const to = await getBankAccount(user.businessId, toId);
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || from.branchId || user.activeBranchId
+  );
 
   const txnId = shortId('btx');
   const txnNumber = await nextTxnNumber(user.businessId);
@@ -245,6 +286,7 @@ export async function transfer(user: AuthUser, body: Record<string, any>) {
         source_type: 'bank_transfer',
         source_id: txnId,
         idempotency_key: `bank_transfer:${txnId}`,
+        branch_id: branchId,
         post: true,
         lines: [
           { account_id: to.glAccountId, debit: amount, description: `Transfer in ${to.name}` },
@@ -258,6 +300,7 @@ export async function transfer(user: AuthUser, body: Record<string, any>) {
       data: {
         id: txnId,
         businessId: user.businessId,
+        branchId,
         bankAccountId: fromId,
         txnNumber,
         txnDate: body.txn_date || body.txnDate ? new Date(body.txn_date || body.txnDate) : new Date(),

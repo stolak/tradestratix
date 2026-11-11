@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Menu } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
 import { Sidebar } from './components/Sidebar';
 import { LoginPage } from './pages/LoginPage';
@@ -29,11 +30,13 @@ import { DistributionPage } from './pages/DistributionPage';
 import { InsightsPage } from './pages/InsightsPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { SubscriptionsPage } from './pages/SubscriptionsPage';
+import { BranchSwitcher } from './components/BranchSwitcher';
 import { getRouteFromLocation, ROUTES, setRouteInLocation } from './routes';
 
 export const App: React.FC = () => {
-  const { user, loading, isAuthenticated, logout, can } = useAuth();
+  const { user, loading, isAuthenticated, logout, can, activeBranchId } = useAuth();
   const [route, setRoute] = useState(() => getRouteFromLocation() || ROUTES.DASHBOARD);
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     const onHash = () => setRoute(getRouteFromLocation() || ROUTES.DASHBOARD);
@@ -41,9 +44,23 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
+  useEffect(() => {
+    setNavOpen(false);
+  }, [route]);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNavOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [navOpen]);
+
   const navigate = (next: string) => {
     setRoute(next);
     setRouteInLocation(next);
+    setNavOpen(false);
   };
 
   if (loading) {
@@ -145,23 +162,49 @@ export const App: React.FC = () => {
 
   return (
     <div className="app-shell">
+      {navOpen ? (
+        <button
+          type="button"
+          className="app-shell__backdrop"
+          aria-label="Close menu"
+          onClick={() => setNavOpen(false)}
+        />
+      ) : null}
       <Sidebar
         current={route}
         onNavigate={navigate}
         can={can}
         businessName={user?.business?.name}
+        open={navOpen}
       />
       <div className="app-shell__main">
         <header className="app-shell__header">
-          <div style={{ color: 'var(--ink-muted)', fontSize: '0.9rem', minWidth: 0 }}>
-            Signed in as <strong style={{ color: 'var(--ink)' }}>{user?.full_name}</strong> ·{' '}
-            {user?.role}
+          <div className="app-shell__header-start">
+            <button
+              type="button"
+              className="btn btn-ghost app-shell__menu-btn"
+              aria-label="Open menu"
+              aria-expanded={navOpen}
+              onClick={() => setNavOpen(true)}
+            >
+              <Menu size={18} />
+              Menu
+            </button>
+            <div className="app-shell__user">
+              Signed in as <strong style={{ color: 'var(--ink)' }}>{user?.full_name}</strong> ·{' '}
+              {user?.role}
+            </div>
           </div>
-          <button type="button" className="btn btn-ghost" onClick={logout}>
-            Sign out
-          </button>
+          <div className="app-shell__header-end">
+            <BranchSwitcher />
+            <button type="button" className="btn btn-ghost" onClick={logout}>
+              Sign out
+            </button>
+          </div>
         </header>
-        <main className="app-shell__content">{content}</main>
+        <main className="app-shell__content" key={activeBranchId || 'no-branch'}>
+          {content}
+        </main>
       </div>
     </div>
   );

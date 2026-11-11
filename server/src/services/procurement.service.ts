@@ -11,6 +11,12 @@ import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { convertToBaseQty, createStockMovement } from './inventory.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 async function productAllowedUomIds(
   productId: string,
@@ -77,9 +83,17 @@ function addDays(date: Date, days: number) {
 
 // ─── Purchase Orders ─────────────────────────────────────────────────────────
 
-export async function listPurchaseOrders(businessId: string, status?: string) {
+export async function listPurchaseOrders(
+  user: AuthUser,
+  status?: string,
+  opts?: BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.purchaseOrder.findMany({
-    where: { businessId, ...(status ? { status } : {}) },
+    where: { businessId: user.businessId, ...scope, ...(status ? { status } : {}) },
     include: poInclude,
     orderBy: { createdAt: 'desc' }
   });
@@ -106,10 +120,15 @@ export async function createPurchaseOrder(user: AuthUser, body: Record<string, a
   });
   if (!supplier) throw httpError(400, 'Invalid supplier_id');
 
-  const warehouse = await prisma.warehouse.findFirst({
-    where: { id: warehouseId, businessId: user.businessId, isActive: true }
-  });
-  if (!warehouse) throw httpError(400, 'Invalid warehouse_id');
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
+  const warehouse = await branchAccess.resolveWarehouseInBranch(
+    user.businessId,
+    warehouseId,
+    branchId
+  );
 
   const lines: {
     productId: string;
@@ -174,7 +193,8 @@ export async function createPurchaseOrder(user: AuthUser, body: Record<string, a
       id: shortId('po'),
       businessId: user.businessId,
       supplierId,
-      warehouseId,
+      warehouseId: warehouse.id,
+      branchId,
       poNumber,
       status: 'draft',
       orderDate: body.order_date || body.orderDate ? new Date(body.order_date || body.orderDate) : new Date(),
@@ -298,9 +318,13 @@ export async function cancelPurchaseOrder(user: AuthUser, id: string) {
 
 // ─── Goods Receipt (posts stock + AP) ────────────────────────────────────────
 
-export async function listGoodsReceipts(businessId: string) {
+export async function listGoodsReceipts(user: AuthUser, opts?: BranchListOpts) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.goodsReceiptNote.findMany({
-    where: { businessId },
+    where: { businessId: user.businessId, ...scope },
     include: grnInclude,
     orderBy: { createdAt: 'desc' }
   });
@@ -334,11 +358,16 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
     throw httpError(400, 'PO must be approved (or partially received) before GRN');
   }
 
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || (po as any).branchId || user.activeBranchId
+  );
   const warehouseId = body.warehouse_id || body.warehouseId || po.warehouseId;
-  const warehouse = await prisma.warehouse.findFirst({
-    where: { id: warehouseId, businessId: user.businessId, isActive: true }
-  });
-  if (!warehouse) throw httpError(400, 'Invalid warehouse_id');
+  const warehouse = await branchAccess.resolveWarehouseInBranch(
+    user.businessId,
+    warehouseId,
+    branchId
+  );
 
   const accountMap = await getDefaultAccountMap(user.businessId);
   if (!accountMap.inventory || !accountMap.accounts_payable) {
@@ -405,7 +434,8 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
         businessId: user.businessId,
         supplierId: po.supplierId,
         purchaseOrderId: po.id,
-        warehouseId,
+        warehouseId: warehouse.id,
+        branchId,
         grnNumber,
         status: 'posted',
         receivedAt: body.received_at || body.receivedAt ? new Date(body.received_at || body.receivedAt) : new Date(),
@@ -455,7 +485,7 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
         {
           product_id: gri.productId,
           variant_id: gri.variantId,
-          warehouse_id: warehouseId,
+          warehouse_id: warehouse.id,
           movement_type: 'receive',
           quantity_in: baseQty,
           unit_cost: unitCostPerBase,
@@ -506,6 +536,7 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
         source_type: 'grn',
         source_id: grn.id,
         idempotency_key: `grn:${grn.id}`,
+        branch_id: branchId,
         post: true,
         lines: [
           {
@@ -530,6 +561,7 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
         id: billId,
         businessId: user.businessId,
         supplierId: po.supplierId,
+        branchId,
         grnId: grn.id,
         billNumber,
         billDate: new Date(),
@@ -570,10 +602,19 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
 
 // ─── AP Bills & Payments ─────────────────────────────────────────────────────
 
-export async function listSupplierBills(businessId: string, supplierId?: string) {
+export async function listSupplierBills(
+  user: AuthUser,
+  supplierId?: string,
+  opts?: BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.supplierBill.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      ...scope,
       ...(supplierId ? { supplierId } : {})
     },
     include: { supplier: true, grn: true },
@@ -582,10 +623,19 @@ export async function listSupplierBills(businessId: string, supplierId?: string)
   return serialize(rows);
 }
 
-export async function listSupplierPayments(businessId: string, supplierId?: string) {
+export async function listSupplierPayments(
+  user: AuthUser,
+  supplierId?: string,
+  opts?: BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.supplierPayment.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      ...scope,
       ...(supplierId ? { supplierId } : {})
     },
     include: {
@@ -602,6 +652,11 @@ export async function recordSupplierPayment(user: AuthUser, body: Record<string,
   const supplierId = requireString(body.supplier_id || body.supplierId, 'supplier_id');
   const amount = roundMoney(Number(body.amount));
   if (!amount || amount <= 0) throw httpError(400, 'amount must be greater than 0');
+
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
 
   const supplier = await prisma.supplier.findFirst({
     where: { id: supplierId, businessId: user.businessId }
@@ -640,6 +695,7 @@ export async function recordSupplierPayment(user: AuthUser, body: Record<string,
     const openBills = await prisma.supplierBill.findMany({
       where: {
         businessId: user.businessId,
+        branchId,
         supplierId,
         status: { in: ['open', 'partial'] },
         balance: { gt: 0 }
@@ -676,7 +732,7 @@ export async function recordSupplierPayment(user: AuthUser, body: Record<string,
   const result = await prisma.$transaction(async (tx) => {
     for (const a of allocations) {
       const bill = await tx.supplierBill.findFirst({
-        where: { id: a.billId, businessId: user.businessId, supplierId }
+        where: { id: a.billId, businessId: user.businessId, supplierId, branchId }
       });
       if (!bill) throw httpError(400, `Bill ${a.billId} not found for supplier`);
       const bal = Number(bill.balance);
@@ -702,6 +758,7 @@ export async function recordSupplierPayment(user: AuthUser, body: Record<string,
         source_type: 'supplier_payment',
         source_id: paymentId,
         idempotency_key: `supplier_payment:${paymentId}`,
+        branch_id: branchId,
         post: true,
         lines: [
           {
@@ -723,6 +780,7 @@ export async function recordSupplierPayment(user: AuthUser, body: Record<string,
       data: {
         id: paymentId,
         businessId: user.businessId,
+        branchId,
         supplierId,
         paymentNumber,
         paymentDate: body.payment_date || body.paymentDate

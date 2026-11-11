@@ -1,11 +1,30 @@
 import { prisma } from '../utils/prisma.js';
 import { roundMoney, serialize } from '../utils/helpers.js';
+import type { AuthUser } from '../types/express/index.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 function qtyNum(v: unknown): number {
   return Number(v ?? 0);
 }
 
-export async function getInsights(businessId: string) {
+export async function getInsights(user: AuthUser, opts?: BranchListOpts) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
+  const businessId = user.businessId;
+
+  const warehouses = await prisma.warehouse.findMany({
+    where: { businessId, ...scope },
+    select: { id: true }
+  });
+  const warehouseIds = warehouses.map((w) => w.id);
+
   const [
     salesAgg,
     purchaseAgg,
@@ -19,23 +38,24 @@ export async function getInsights(businessId: string) {
     budgetCount
   ] = await Promise.all([
     prisma.salesInvoice.aggregate({
-      where: { businessId, status: 'posted' },
+      where: { businessId, status: 'posted', ...scope },
       _sum: { totalAmount: true },
       _count: true
     }),
     prisma.supplierBill.aggregate({
-      where: { businessId, status: { not: 'void' } },
+      where: { businessId, status: { not: 'void' }, ...scope },
       _sum: { totalAmount: true },
       _count: true
     }),
     prisma.expenseBill.aggregate({
-      where: { businessId, status: 'posted' },
+      where: { businessId, status: 'posted', ...scope },
       _sum: { totalAmount: true },
       _count: true
     }),
     prisma.salesInvoice.aggregate({
       where: {
         businessId,
+        ...scope,
         status: 'posted',
         paymentStatus: { in: ['open', 'partial'] },
         balance: { gt: 0 }
@@ -46,6 +66,7 @@ export async function getInsights(businessId: string) {
     prisma.supplierBill.aggregate({
       where: {
         businessId,
+        ...scope,
         status: { in: ['open', 'partial'] },
         balance: { gt: 0 }
       },
@@ -57,7 +78,10 @@ export async function getInsights(businessId: string) {
       select: {
         id: true,
         reorderLevel: true,
-        stockLots: { select: { quantityOnHand: true, quantityReserved: true } }
+        stockLots: {
+          where: warehouseIds.length ? { warehouseId: { in: warehouseIds } } : { warehouseId: { in: [] } },
+          select: { quantityOnHand: true, quantityReserved: true }
+        }
       }
     }),
     (async () => {
@@ -67,13 +91,14 @@ export async function getInsights(businessId: string) {
       return prisma.stockLot.count({
         where: {
           businessId,
+          warehouseId: { in: warehouseIds },
           quantityOnHand: { gt: 0 },
           expiryDate: { not: null, gte: todayStr, lte: horizon }
         }
       });
     })(),
     prisma.payrollRun.findFirst({
-      where: { businessId },
+      where: { businessId, ...scope },
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
@@ -90,10 +115,10 @@ export async function getInsights(businessId: string) {
     }),
     prisma.deliveryOrder.groupBy({
       by: ['status'],
-      where: { businessId },
+      where: { businessId, ...scope },
       _count: { _all: true }
     }),
-    prisma.budget.count({ where: { businessId } })
+    prisma.budget.count({ where: { businessId, ...scope } })
   ]);
 
   let lowStockCount = 0;

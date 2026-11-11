@@ -37,7 +37,7 @@ export const InsightsPage: React.FC = () => {
   const deliveryRows = Object.entries(data?.deliveries_by_status || {});
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Insights
@@ -53,13 +53,7 @@ export const InsightsPage: React.FC = () => {
         </button>
       </div>
 
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-          gap: '0.85rem'
-        }}
-      >
+      <div className="kpi-grid">
         {kpis.map(([label, value, hint]) => (
           <div key={label} className="card-surface" style={{ padding: '1.1rem 1.2rem' }}>
             <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem', fontWeight: 600 }}>
@@ -79,10 +73,11 @@ export const InsightsPage: React.FC = () => {
         ))}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+      <div className="split-2">
         <div className="card-surface" style={{ padding: '1rem' }}>
           <h3 style={{ marginTop: 0 }}>Deliveries by status</h3>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Status</th>
@@ -102,13 +97,15 @@ export const InsightsPage: React.FC = () => {
                 </tr>
               ) : null}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
 
         <div className="card-surface" style={{ padding: '1rem' }}>
           <h3 style={{ marginTop: 0 }}>Last payroll run</h3>
           {data?.payroll_last_run ? (
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <tbody>
                 <tr>
                   <th>Run #</th>
@@ -130,7 +127,8 @@ export const InsightsPage: React.FC = () => {
                   </td>
                 </tr>
               </tbody>
-            </table>
+              </table>
+            </div>
           ) : (
             <p style={{ color: 'var(--ink-muted)', margin: 0 }}>No payroll runs yet</p>
           )}

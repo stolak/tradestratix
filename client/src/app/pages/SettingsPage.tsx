@@ -37,14 +37,14 @@ export const SettingsPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem', maxWidth: 820 }}>
+    <div className="page-stack" style={{ maxWidth: 820 }}>
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Business settings
         </h1>
       </header>
-      <form onSubmit={save} className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 12 }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <form onSubmit={save} className="card-surface" style={{ padding: '1.25rem' }}>
+        <div className="form-grid">
           <div className="field">
             <label>Business name</label>
             <input value={form.name || ''} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -99,17 +99,19 @@ export const SettingsPage: React.FC = () => {
             <label>City</label>
             <input value={form.city || ''} onChange={(e) => setForm({ ...form, city: e.target.value })} />
           </div>
+          <div className="field" style={{ gridColumn: '1 / -1' }}>
+            <label>Address</label>
+            <input
+              value={form.address_line1 || ''}
+              onChange={(e) => setForm({ ...form, address_line1: e.target.value })}
+            />
+          </div>
+          <div className="form-grid--actions">
+            <button className="btn btn-primary" type="submit">
+              Save settings
+            </button>
+          </div>
         </div>
-        <div className="field">
-          <label>Address</label>
-          <input
-            value={form.address_line1 || ''}
-            onChange={(e) => setForm({ ...form, address_line1: e.target.value })}
-          />
-        </div>
-        <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-          Save settings
-        </button>
       </form>
     </div>
   );

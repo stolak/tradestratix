@@ -2,24 +2,30 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, serialize, shortId } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import {
+  canAccessAllBranches,
+  ensureUserBranchMembership,
+  listAuthorisedBranchIds
+} from './branch-access.service.js';
 
-function scopedBranchFilter(user: AuthUser) {
+async function scopedBranchFilter(user: AuthUser) {
   const base: Record<string, unknown> = { businessId: user.businessId };
-  if (
-    user.role !== 'business_owner' &&
-    user.role !== 'managing_director' &&
-    user.role !== 'general_manager' &&
-    user.branchIds &&
-    user.branchIds.length > 0
-  ) {
-    base.id = { in: user.branchIds };
+  if (!canAccessAllBranches(user)) {
+    const ids = user.branchIds?.length
+      ? user.branchIds
+      : await listAuthorisedBranchIds(user.id, user.businessId);
+    if (ids.length > 0) {
+      base.id = { in: ids };
+    } else {
+      base.id = '__none__';
+    }
   }
   return base;
 }
 
 export async function listBranches(user: AuthUser) {
   const rows = await prisma.branch.findMany({
-    where: scopedBranchFilter(user) as any,
+    where: (await scopedBranchFilter(user)) as any,
     include: { warehouses: true },
     orderBy: { name: 'asc' }
   });
@@ -61,6 +67,9 @@ export async function createBranch(user: AuthUser, body: Record<string, any>) {
         createdById: user.id
       }
     });
+
+    await ensureUserBranchMembership(user.id, user.businessId, created.id, user.id);
+
     await writeAudit({
       user,
       action: 'create',
@@ -125,4 +134,266 @@ export async function getBranch(user: AuthUser, id: string) {
   });
   if (!row) throw httpError(404, 'Branch not found');
   return serialize(row);
+}
+
+export async function deactivateBranch(user: AuthUser, id: string) {
+  const existing = await prisma.branch.findFirst({
+    where: { id, businessId: user.businessId }
+  });
+  if (!existing) throw httpError(404, 'Branch not found');
+  if (!existing.isActive) return serialize(existing);
+
+  const activeCount = await prisma.branch.count({
+    where: { businessId: user.businessId, isActive: true }
+  });
+  if (activeCount <= 1) {
+    throw httpError(409, 'Cannot deactivate the only active branch');
+  }
+
+  const updated = await prisma.branch.update({
+    where: { id },
+    data: { isActive: false, updatedById: user.id }
+  });
+
+  await writeAudit({
+    user,
+    action: 'deactivate',
+    module: 'branches',
+    entityType: 'Branch',
+    entityId: id,
+    summary: `Deactivated branch ${updated.code}`
+  });
+  return serialize(updated);
+}
+
+async function countBranchDependents(businessId: string, branchId: string) {
+  const [
+    purchaseOrders,
+    salesInvoices,
+    journalEntries,
+    warehouses,
+    stockLots,
+    goodsReceipts,
+    supplierBills,
+    expenseBills,
+    bankAccounts,
+    payrollRuns,
+    budgets
+  ] = await Promise.all([
+    prisma.purchaseOrder.count({ where: { businessId, branchId } }),
+    prisma.salesInvoice.count({ where: { businessId, branchId } }),
+    prisma.journalEntry.count({ where: { businessId, branchId } }),
+    prisma.warehouse.count({ where: { businessId, branchId } }),
+    prisma.stockLot.count({
+      where: { businessId, warehouse: { branchId } }
+    }),
+    prisma.goodsReceiptNote.count({ where: { businessId, branchId } }),
+    prisma.supplierBill.count({ where: { businessId, branchId } }),
+    prisma.expenseBill.count({ where: { businessId, branchId } }),
+    prisma.bankAccount.count({ where: { businessId, branchId } }),
+    prisma.payrollRun.count({ where: { businessId, branchId } }),
+    prisma.budget.count({ where: { businessId, branchId } })
+  ]);
+
+  return {
+    purchaseOrders,
+    salesInvoices,
+    journalEntries,
+    warehouses,
+    stockLots,
+    goodsReceipts,
+    supplierBills,
+    expenseBills,
+    bankAccounts,
+    payrollRuns,
+    budgets,
+    total:
+      purchaseOrders +
+      salesInvoices +
+      journalEntries +
+      warehouses +
+      stockLots +
+      goodsReceipts +
+      supplierBills +
+      expenseBills +
+      bankAccounts +
+      payrollRuns +
+      budgets
+  };
+}
+
+export async function deleteBranch(user: AuthUser, id: string) {
+  const existing = await prisma.branch.findFirst({
+    where: { id, businessId: user.businessId }
+  });
+  if (!existing) throw httpError(404, 'Branch not found');
+
+  const deps = await countBranchDependents(user.businessId, id);
+  if (deps.total > 0) {
+    throw httpError(
+      409,
+      'Branch has historical or linked records; deactivate instead of deleting',
+      { dependents: deps }
+    );
+  }
+
+  await prisma.userBranch.deleteMany({ where: { branchId: id } });
+  await prisma.branch.delete({ where: { id } });
+
+  await writeAudit({
+    user,
+    action: 'delete',
+    module: 'branches',
+    entityType: 'Branch',
+    entityId: id,
+    summary: `Deleted branch ${existing.code}`
+  });
+  return { deleted: true, id };
+}
+
+export async function listMembers(user: AuthUser, branchId: string) {
+  const branch = await prisma.branch.findFirst({
+    where: { id: branchId, businessId: user.businessId }
+  });
+  if (!branch) throw httpError(404, 'Branch not found');
+
+  const rows = await prisma.userBranch.findMany({
+    where: { branchId, businessId: user.businessId },
+    include: {
+      user: {
+        select: {
+          id: true,
+          username: true,
+          fullName: true,
+          role: true,
+          email: true,
+          status: true
+        }
+      }
+    },
+    orderBy: { assignedAt: 'desc' }
+  });
+  return serialize(rows);
+}
+
+export async function assignMember(
+  user: AuthUser,
+  branchId: string,
+  body: Record<string, any>
+) {
+  const branch = await prisma.branch.findFirst({
+    where: { id: branchId, businessId: user.businessId }
+  });
+  if (!branch) throw httpError(404, 'Branch not found');
+
+  const targetUserId = requireString(body.user_id || body.userId, 'user_id');
+  const target = await prisma.user.findFirst({
+    where: { id: targetUserId, businessId: user.businessId }
+  });
+  if (!target) throw httpError(404, 'User not found');
+
+  const roleCode =
+    body.role_code != null || body.roleCode != null
+      ? String(body.role_code ?? body.roleCode ?? '').trim() || null
+      : undefined;
+
+  const existing = await prisma.userBranch.findUnique({
+    where: { userId_branchId: { userId: targetUserId, branchId } }
+  });
+
+  const row = existing
+    ? await prisma.userBranch.update({
+        where: { userId_branchId: { userId: targetUserId, branchId } },
+        data: {
+          status: 'active',
+          businessId: user.businessId,
+          assignedById: user.id,
+          ...(roleCode !== undefined ? { roleCode } : {})
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              role: true,
+              email: true,
+              status: true
+            }
+          }
+        }
+      })
+    : await prisma.userBranch.create({
+        data: {
+          userId: targetUserId,
+          businessId: user.businessId,
+          branchId,
+          status: 'active',
+          roleCode: roleCode ?? null,
+          assignedById: user.id
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              role: true,
+              email: true,
+              status: true
+            }
+          }
+        }
+      });
+
+  await writeAudit({
+    user,
+    action: 'assign_member',
+    module: 'branches',
+    entityType: 'UserBranch',
+    entityId: `${targetUserId}:${branchId}`,
+    summary: `Assigned user ${target.username} to branch ${branch.code}`
+  });
+
+  return serialize(row);
+}
+
+export async function revokeMember(user: AuthUser, branchId: string, memberUserId: string) {
+  const branch = await prisma.branch.findFirst({
+    where: { id: branchId, businessId: user.businessId }
+  });
+  if (!branch) throw httpError(404, 'Branch not found');
+
+  const existing = await prisma.userBranch.findFirst({
+    where: { userId: memberUserId, branchId, businessId: user.businessId }
+  });
+  if (!existing) throw httpError(404, 'Membership not found');
+
+  const updated = await prisma.userBranch.update({
+    where: { userId_branchId: { userId: memberUserId, branchId } },
+    data: { status: 'revoked' },
+    include: {
+      user: {
+        select: {
+          id: true,
+          username: true,
+          fullName: true,
+          role: true,
+          email: true,
+          status: true
+        }
+      }
+    }
+  });
+
+  await writeAudit({
+    user,
+    action: 'revoke_member',
+    module: 'branches',
+    entityType: 'UserBranch',
+    entityId: `${memberUserId}:${branchId}`,
+    summary: `Revoked branch membership for ${updated.user.username} on ${branch.code}`
+  });
+
+  return serialize(updated);
 }

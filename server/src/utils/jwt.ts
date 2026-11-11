@@ -15,6 +15,7 @@ export function signToken(user: AuthUser): string {
       email: user.email,
       department: user.department,
       defaultBranchId: user.defaultBranchId,
+      activeBranchId: user.activeBranchId || null,
       branchIds: user.branchIds || [],
       permissions: user.permissions || []
     },
@@ -34,6 +35,7 @@ export function verifyToken(token: string): AuthUser {
     email: payload.email,
     department: payload.department,
     defaultBranchId: payload.defaultBranchId,
+    activeBranchId: payload.activeBranchId || null,
     branchIds: payload.branchIds || [],
     permissions: payload.permissions || []
   };

@@ -11,6 +11,12 @@ import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { convertToBaseQty, createStockMovement } from './inventory.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 const invoiceInclude = {
   customer: true,
@@ -128,10 +134,18 @@ async function buildInvoiceLines(user: AuthUser, itemsInput: any[]) {
   return lines;
 }
 
-export async function listInvoices(businessId: string, opts?: { status?: string; channel?: string }) {
+export async function listInvoices(
+  user: AuthUser,
+  opts?: { status?: string; channel?: string } & BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.salesInvoice.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      ...scope,
       ...(opts?.status ? { status: opts.status } : {}),
       ...(opts?.channel ? { channel: opts.channel } : {})
     },
@@ -164,10 +178,15 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
   });
   if (!customer) throw httpError(400, 'Invalid customer_id');
 
-  const warehouse = await prisma.warehouse.findFirst({
-    where: { id: warehouseId, businessId: user.businessId, isActive: true }
-  });
-  if (!warehouse) throw httpError(400, 'Invalid warehouse_id');
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
+  const warehouse = await branchAccess.resolveWarehouseInBranch(
+    user.businessId,
+    warehouseId,
+    branchId
+  );
 
   const salesRepId = body.sales_rep_id || body.salesRepId || null;
   if (salesRepId) {
@@ -189,8 +208,8 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
       id: shortId('inv'),
       businessId: user.businessId,
       customerId,
-      warehouseId,
-      branchId: body.branch_id || body.branchId || warehouse.branchId || user.defaultBranchId || null,
+      warehouseId: warehouse.id,
+      branchId,
       salesRepId,
       invoiceNumber,
       channel,
@@ -421,6 +440,7 @@ export async function postInvoice(
           data: {
             id: shortId('scm'),
             businessId: user.businessId,
+            branchId: invoice.branchId,
             salesRepId: invoice.salesRepId,
             invoiceId: invoice.id,
             baseAmount: toDec(totalAmount),
@@ -442,6 +462,7 @@ export async function postInvoice(
         data: {
           id: paymentId,
           businessId: user.businessId,
+          branchId: invoice.branchId,
           customerId: invoice.customerId,
           paymentNumber,
           paymentDate: new Date(),
@@ -493,10 +514,19 @@ export async function postInvoice(
   return serialize(result);
 }
 
-export async function listCustomerPayments(businessId: string, customerId?: string) {
+export async function listCustomerPayments(
+  user: AuthUser,
+  customerId?: string,
+  opts?: BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.customerPayment.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      ...scope,
       ...(customerId ? { customerId } : {})
     },
     include: {
@@ -513,6 +543,11 @@ export async function recordCustomerPayment(user: AuthUser, body: Record<string,
   const customerId = requireString(body.customer_id || body.customerId, 'customer_id');
   const amount = roundMoney(Number(body.amount));
   if (!amount || amount <= 0) throw httpError(400, 'amount must be greater than 0');
+
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
 
   const customer = await prisma.customer.findFirst({
     where: { id: customerId, businessId: user.businessId }
@@ -550,6 +585,7 @@ export async function recordCustomerPayment(user: AuthUser, body: Record<string,
     const openInvoices = await prisma.salesInvoice.findMany({
       where: {
         businessId: user.businessId,
+        branchId,
         customerId,
         status: 'posted',
         paymentStatus: { in: ['open', 'partial'] },
@@ -588,7 +624,13 @@ export async function recordCustomerPayment(user: AuthUser, body: Record<string,
   const result = await prisma.$transaction(async (tx) => {
     for (const a of allocations) {
       const inv = await tx.salesInvoice.findFirst({
-        where: { id: a.invoiceId, businessId: user.businessId, customerId, status: 'posted' }
+        where: {
+          id: a.invoiceId,
+          businessId: user.businessId,
+          customerId,
+          status: 'posted',
+          branchId
+        }
       });
       if (!inv) throw httpError(400, `Invoice ${a.invoiceId} not found for customer`);
       const bal = Number(inv.balance);
@@ -614,6 +656,7 @@ export async function recordCustomerPayment(user: AuthUser, body: Record<string,
         source_type: 'customer_payment',
         source_id: paymentId,
         idempotency_key: `customer_payment:${paymentId}`,
+        branch_id: branchId,
         post: true,
         lines: [
           {
@@ -635,6 +678,7 @@ export async function recordCustomerPayment(user: AuthUser, body: Record<string,
       data: {
         id: paymentId,
         businessId: user.businessId,
+        branchId,
         customerId,
         paymentNumber,
         paymentDate: body.payment_date || body.paymentDate

@@ -146,7 +146,7 @@ export const DistributionPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Distribution
@@ -185,7 +185,7 @@ export const DistributionPage: React.FC = () => {
             style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
           >
             <div style={{ fontWeight: 700 }}>Add vehicle</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+            <div className="form-grid">
               <div className="field">
                 <label>Name</label>
                 <input
@@ -218,14 +218,17 @@ export const DistributionPage: React.FC = () => {
                   onChange={(e) => setVehicleForm({ ...vehicleForm, capacity: e.target.value })}
                 />
               </div>
+              <div className="form-grid--actions">
+                <button className="btn btn-primary" type="submit">
+                  Create vehicle
+                </button>
+              </div>
             </div>
-            <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-              Create vehicle
-            </button>
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Name</th>
@@ -249,6 +252,7 @@ export const DistributionPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}
@@ -277,7 +281,7 @@ export const DistributionPage: React.FC = () => {
                 From invoice
               </button>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+            <div className="form-grid">
               {mode === 'invoice' ? (
                 <div className="field">
                   <label>Sales invoice</label>
@@ -393,14 +397,17 @@ export const DistributionPage: React.FC = () => {
                   }
                 />
               </div>
+              <div className="form-grid--actions">
+                <button className="btn btn-primary" type="submit">
+                  Create delivery
+                </button>
+              </div>
             </div>
-            <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-              Create delivery
-            </button>
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Delivery #</th>
@@ -467,6 +474,7 @@ export const DistributionPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}

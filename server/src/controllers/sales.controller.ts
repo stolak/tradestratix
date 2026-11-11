@@ -1,11 +1,20 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as salesService from '../services/sales.service.js';
 
+function branchListOpts(req: Request) {
+  return {
+    branchId: typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined,
+    allowConsolidated: req.query.consolidated === '1' || req.query.consolidated === 'true'
+  };
+}
+
 export async function listInvoices(req: Request, res: Response, next: NextFunction) {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const channel = typeof req.query.channel === 'string' ? req.query.channel : undefined;
-    return res.json(await salesService.listInvoices(req.user!.businessId, { status, channel }));
+    return res.json(
+      await salesService.listInvoices(req.user!, { status, channel, ...branchListOpts(req) })
+    );
   } catch (err) {
     return next(err);
   }
@@ -60,7 +69,9 @@ export async function listPayments(req: Request, res: Response, next: NextFuncti
   try {
     const customerId =
       typeof req.query.customer_id === 'string' ? req.query.customer_id : undefined;
-    return res.json(await salesService.listCustomerPayments(req.user!.businessId, customerId));
+    return res.json(
+      await salesService.listCustomerPayments(req.user!, customerId, branchListOpts(req))
+    );
   } catch (err) {
     return next(err);
   }

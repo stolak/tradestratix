@@ -24,7 +24,7 @@ export const SubscriptionsPage: React.FC = () => {
   }, []);
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Subscriptions
@@ -43,7 +43,7 @@ export const SubscriptionsPage: React.FC = () => {
       <div className="card-surface" style={{ padding: '1.25rem' }}>
         <div style={{ fontWeight: 700, marginBottom: 8 }}>Current plan</div>
         {current ? (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+          <div className="kpi-grid">
             <div>
               <div style={{ color: 'var(--ink-muted)', fontSize: 12 }}>Plan</div>
               <div className="display" style={{ fontSize: '1.5rem' }}>
@@ -75,7 +75,8 @@ export const SubscriptionsPage: React.FC = () => {
       </div>
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>Plan</th>
@@ -119,7 +120,8 @@ export const SubscriptionsPage: React.FC = () => {
               </tr>
             ) : null}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

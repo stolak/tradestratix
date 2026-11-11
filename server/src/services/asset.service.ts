@@ -3,6 +3,12 @@ import { httpError, requireString, roundMoney, serialize, shortId, toDec } from 
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 const assetInclude = {
   branch: true,
@@ -18,9 +24,13 @@ function defaultPeriodLabel(d = new Date()) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
-export async function listAssets(businessId: string, status?: string) {
+export async function listAssets(user: AuthUser, status?: string, opts?: BranchListOpts) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.fixedAsset.findMany({
-    where: { businessId, ...(status ? { status } : {}) },
+    where: { businessId: user.businessId, ...scope, ...(status ? { status } : {}) },
     include: { branch: true },
     orderBy: { name: 'asc' }
   });
@@ -56,6 +66,10 @@ export async function createAsset(user: AuthUser, body: Record<string, any>) {
 
   const assetId = shortId('fa');
   let acquisitionJournalEntryId: string | null = null;
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
 
   const created = await prisma.$transaction(async (tx) => {
     if (shouldPost) {
@@ -82,6 +96,7 @@ export async function createAsset(user: AuthUser, body: Record<string, any>) {
           source_type: 'asset_acquisition',
           source_id: assetId,
           idempotency_key: `asset_acquisition:${assetId}`,
+          branch_id: branchId,
           post: true,
           lines: [
             {
@@ -105,7 +120,7 @@ export async function createAsset(user: AuthUser, body: Record<string, any>) {
       data: {
         id: assetId,
         businessId: user.businessId,
-        branchId: body.branch_id || body.branchId || user.defaultBranchId || null,
+        branchId,
         code: body.code ? String(body.code).trim() : null,
         name,
         category: body.category || 'equipment',
@@ -190,6 +205,7 @@ export async function runDepreciation(
           source_type: 'depreciation',
           source_id: entryId,
           idempotency_key: `depreciation:${asset.id}:${periodLabel}`,
+          branch_id: asset.branchId || undefined,
           post: true,
           lines: [
             {

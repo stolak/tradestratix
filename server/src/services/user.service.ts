@@ -63,7 +63,10 @@ export async function createUser(actor: AuthUser, body: Record<string, any>) {
           ? {
               userBranches: {
                 create: (body.branch_ids || body.branchIds).map((branchId: string) => ({
-                  branchId
+                  branchId,
+                  businessId: actor.businessId,
+                  status: 'active',
+                  assignedById: actor.id
                 }))
               }
             }

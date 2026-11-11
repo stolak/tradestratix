@@ -58,7 +58,7 @@ export const AccountingPage: React.FC = () => {
   ];
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Accounting
@@ -86,7 +86,8 @@ export const AccountingPage: React.FC = () => {
 
       {tab === 'coa' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Code</th>
@@ -106,12 +107,14 @@ export const AccountingPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
 
       {tab === 'journals' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Number</th>
@@ -136,12 +139,14 @@ export const AccountingPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
 
       {tab === 'trial' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Code</th>
@@ -172,6 +177,7 @@ export const AccountingPage: React.FC = () => {
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
 
@@ -186,7 +192,8 @@ export const AccountingPage: React.FC = () => {
           ).map(([title, rows, total]) => (
             <div key={title}>
               <div style={{ fontWeight: 700, marginBottom: 6 }}>{title}</div>
-              <table className="table">
+              <div className="table-wrap">
+                <table className="table">
                 <tbody>
                   {(rows || []).map((r: any) => (
                     <tr key={r.code}>
@@ -205,7 +212,8 @@ export const AccountingPage: React.FC = () => {
                     </td>
                   </tr>
                 </tbody>
-              </table>
+                </table>
+              </div>
             </div>
           ))}
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.1rem' }}>
@@ -230,7 +238,8 @@ export const AccountingPage: React.FC = () => {
           ).map(([title, rows, total]) => (
             <div key={title}>
               <div style={{ fontWeight: 700, marginBottom: 6 }}>{title}</div>
-              <table className="table">
+              <div className="table-wrap">
+                <table className="table">
                 <tbody>
                   {(rows || []).map((r: any) => (
                     <tr key={r.code}>
@@ -249,7 +258,8 @@ export const AccountingPage: React.FC = () => {
                     </td>
                   </tr>
                 </tbody>
-              </table>
+                </table>
+              </div>
             </div>
           ))}
           <div style={{ color: 'var(--ink-muted)' }}>
@@ -261,7 +271,8 @@ export const AccountingPage: React.FC = () => {
 
       {tab === 'periods' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Period</th>
@@ -293,6 +304,7 @@ export const AccountingPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
     </div>

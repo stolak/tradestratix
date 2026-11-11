@@ -462,7 +462,7 @@ export const ProductsPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
@@ -511,7 +511,7 @@ export const ProductsPage: React.FC = () => {
         {/* Identity */}
         <div style={{ display: 'grid', gap: 12 }}>
           {sectionTitle(1, 'Product details', 'Basic identity and stock policy for this item.')}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+          <div className="products-grid-4">
             <div className="field">
               <label>Name</label>
               <input
@@ -664,15 +664,7 @@ export const ProductsPage: React.FC = () => {
               conversions.map((row) => {
                 const from = uoms.find((u) => u.id === row.from_uom_id);
                 return (
-                  <div
-                    key={row.key}
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1.3fr auto 0.7fr auto 1.2fr auto',
-                      gap: 8,
-                      alignItems: 'end'
-                    }}
-                  >
+                  <div key={row.key} className="form-grid">
                     <div className="field">
                       <label>Packaging UoM</label>
                       <select
@@ -717,15 +709,17 @@ export const ProductsPage: React.FC = () => {
                     <div style={{ paddingBottom: 10, color: 'var(--ink-muted)', fontSize: '0.85rem' }}>
                       1 {from?.code || '?'} = {row.factor || '…'} {baseUom?.code || 'base'}
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      onClick={() =>
-                        setConversions((rows) => rows.filter((r) => r.key !== row.key))
-                      }
-                    >
-                      Remove
-                    </button>
+                    <div className="form-grid--actions">
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() =>
+                          setConversions((rows) => rows.filter((r) => r.key !== row.key))
+                        }
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
                 );
               })
@@ -761,7 +755,7 @@ export const ProductsPage: React.FC = () => {
             'Purchase unit',
             'Select how you normally buy this item. Choices are limited to the units defined above.'
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, maxWidth: 640 }}>
+          <div className="products-grid-2">
             <div className="field">
               <label>Purchase UoM</label>
               <select
@@ -806,6 +800,7 @@ export const ProductsPage: React.FC = () => {
           )}
 
           <div
+            className="products-price-editor"
             style={{
               border: '1px solid var(--line)',
               borderRadius: 14,
@@ -813,10 +808,8 @@ export const ProductsPage: React.FC = () => {
             }}
           >
             <div
+              className="products-price-editor__row"
               style={{
-                display: 'grid',
-                gridTemplateColumns: '1.2fr 1fr 1fr 1fr auto auto',
-                gap: 8,
                 padding: '0.65rem 1rem',
                 background: 'rgba(26,35,50,0.04)',
                 fontSize: '0.75rem',
@@ -837,13 +830,10 @@ export const ProductsPage: React.FC = () => {
             {sellingRows.map((row) => (
               <div
                 key={row.key}
+                className="products-price-editor__row"
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: '1.2fr 1fr 1fr 1fr auto auto',
-                  gap: 8,
                   padding: '0.75rem 1rem',
-                  borderTop: '1px solid var(--line)',
-                  alignItems: 'center'
+                  borderTop: '1px solid var(--line)'
                 }}
               >
                 <select
@@ -944,7 +934,7 @@ export const ProductsPage: React.FC = () => {
           </button>
         </div>
 
-        <div style={{ display: 'flex', gap: 8, justifySelf: 'start' }}>
+        <div className="form-grid--actions">
           <button className="btn btn-primary" type="submit">
             {editingId ? 'Save changes' : 'Create product'}
           </button>
@@ -957,7 +947,8 @@ export const ProductsPage: React.FC = () => {
       </form>
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>SKU</th>
@@ -1037,14 +1028,7 @@ export const ProductsPage: React.FC = () => {
                 {expandedId === p.id ? (
                   <tr>
                     <td colSpan={8} style={{ background: 'rgba(15,92,76,0.03)' }}>
-                      <div
-                        style={{
-                          padding: '0.75rem 0.85rem',
-                          display: 'grid',
-                          gridTemplateColumns: '1fr 1fr',
-                          gap: 16
-                        }}
-                      >
+                      <div className="split-2" style={{ padding: '0.75rem 0.85rem' }}>
                         <div>
                           <strong>Packaging</strong>
                           <div style={{ marginTop: 6, fontSize: '0.9rem' }}>
@@ -1080,6 +1064,7 @@ export const ProductsPage: React.FC = () => {
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

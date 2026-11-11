@@ -74,7 +74,7 @@ export const SuppliersPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
@@ -115,13 +115,7 @@ export const SuppliersPage: React.FC = () => {
             </button>
           </div>
         ) : null}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
-            gap: 12
-          }}
-        >
+        <div className="form-grid">
           <div className="field">
             <label>Name</label>
             <input
@@ -174,14 +168,17 @@ export const SuppliersPage: React.FC = () => {
               onChange={(e) => setForm({ ...form, notes: e.target.value })}
             />
           </div>
+          <div className="form-grid--actions">
+            <button className="btn btn-primary" type="submit">
+              {editingId ? 'Save changes' : 'Add supplier'}
+            </button>
+          </div>
         </div>
-        <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-          {editingId ? 'Save changes' : 'Add supplier'}
-        </button>
       </form>
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>Code</th>
@@ -212,7 +209,8 @@ export const SuppliersPage: React.FC = () => {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

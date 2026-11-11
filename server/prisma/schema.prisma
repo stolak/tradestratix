@@ -81,6 +81,7 @@ model Business {
   branches             Branch[]
   warehouses           Warehouse[]
   users                User[]
+  userBranches         UserBranch[]
   roles                Role[]
   accounts             Account[]
   journalEntries       JournalEntry[]
@@ -184,9 +185,25 @@ model Branch {
   fixedAssets     FixedAsset[]
   employees       Employee[]
   deliveryOrders  DeliveryOrder[]
+  purchaseOrders  PurchaseOrder[]
+  goodsReceipts   GoodsReceiptNote[]
+  supplierBills   SupplierBill[]
+  supplierPayments SupplierPayment[]
+  customerPayments CustomerPayment[]
+  salesCommissions SalesCommission[]
+  expenseBills    ExpenseBill[]
+  bankAccounts    BankAccount[]
+  bankTransactions BankTransaction[]
+  stockMovements  StockMovement[]
+  transfersFrom   StockTransfer[] @relation("TransferFromBranch")
+  transfersTo     StockTransfer[] @relation("TransferToBranch")
+  payrollRuns     PayrollRun[]
+  budgets         Budget[]
+  auditLogs       AuditLog[]
 
   @@unique([businessId, code])
   @@index([businessId])
+  @@index([businessId, isActive])
   @@map("branches")
 }
 
@@ -363,12 +380,22 @@ model UserPermissionOverride {
 }
 
 model UserBranch {
-  userId   String @map("user_id")
-  branchId String @map("branch_id")
-  user     User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  branch   Branch @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  userId       String   @map("user_id")
+  businessId   String   @map("business_id")
+  branchId     String   @map("branch_id")
+  /// Optional branch-specific role code (e.g. sales_manager)
+  roleCode     String?  @map("role_code")
+  /// active | revoked
+  status       String   @default("active")
+  assignedAt   DateTime @default(now()) @map("assigned_at")
+  assignedById String?  @map("assigned_by_id")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branch       Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
 
   @@id([userId, branchId])
+  @@index([businessId, userId])
+  @@index([branchId, status])
   @@map("user_branches")
 }
 
@@ -525,6 +552,7 @@ model AccountingPeriod {
 model AuditLog {
   id         String   @id
   businessId String?  @map("business_id")
+  branchId   String?  @map("branch_id")
   userId     String?  @map("user_id")
   action     String
   module     String
@@ -535,8 +563,10 @@ model AuditLog {
   ipAddress  String?  @map("ip_address")
   createdAt  DateTime @default(now()) @map("created_at")
   business   Business? @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  branch     Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
 
   @@index([businessId, createdAt])
+  @@index([businessId, branchId, createdAt])
   @@index([module])
   @@map("audit_logs")
 }
@@ -774,6 +804,7 @@ model StockLot {
 model StockMovement {
   id                   String   @id
   businessId           String   @map("business_id")
+  branchId             String?  @map("branch_id")
   productId            String   @map("product_id")
   variantId            String   @map("variant_id")
   warehouseId          String   @map("warehouse_id")
@@ -797,6 +828,7 @@ model StockMovement {
   status               String   @default("completed")
   createdAt            DateTime @default(now()) @map("created_at")
   business             Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch               Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   product              Product  @relation(fields: [productId], references: [id])
   variant              ProductVariant @relation(fields: [variantId], references: [id])
   warehouse            Warehouse @relation(fields: [warehouseId], references: [id])
@@ -806,6 +838,7 @@ model StockMovement {
   @@unique([businessId, idempotencyKey])
   @@index([productId, createdAt])
   @@index([warehouseId])
+  @@index([branchId])
   @@index([lotId])
   @@map("stock_movements")
 }
@@ -816,6 +849,8 @@ model StockTransfer {
   transferNumber  String   @map("transfer_number")
   fromWarehouseId String   @map("from_warehouse_id")
   toWarehouseId   String   @map("to_warehouse_id")
+  fromBranchId    String?  @map("from_branch_id")
+  toBranchId      String?  @map("to_branch_id")
   /// draft | pending_approval | approved | in_transit | received | rejected | cancelled
   status          String   @default("draft")
   notes           String?  @db.Text
@@ -828,10 +863,14 @@ model StockTransfer {
   business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   fromWarehouse   Warehouse @relation("TransferFrom", fields: [fromWarehouseId], references: [id])
   toWarehouse     Warehouse @relation("TransferTo", fields: [toWarehouseId], references: [id])
+  fromBranch      Branch?  @relation("TransferFromBranch", fields: [fromBranchId], references: [id], onDelete: SetNull)
+  toBranch        Branch?  @relation("TransferToBranch", fields: [toBranchId], references: [id], onDelete: SetNull)
   items           StockTransferItem[]
 
   @@unique([businessId, transferNumber])
   @@index([status])
+  @@index([fromBranchId])
+  @@index([toBranchId])
   @@map("stock_transfers")
 }
 
@@ -894,6 +933,7 @@ model Supplier {
 model PurchaseOrder {
   id            String   @id
   businessId    String   @map("business_id")
+  branchId      String?  @map("branch_id")
   supplierId    String   @map("supplier_id")
   warehouseId   String   @map("warehouse_id")
   poNumber      String   @map("po_number")
@@ -912,6 +952,7 @@ model PurchaseOrder {
   updatedAt     DateTime @updatedAt @map("updated_at")
 
   business  Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch    Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   supplier  Supplier @relation(fields: [supplierId], references: [id])
   warehouse Warehouse @relation(fields: [warehouseId], references: [id])
   items     PurchaseOrderItem[]
@@ -919,6 +960,7 @@ model PurchaseOrder {
 
   @@unique([businessId, poNumber])
   @@index([businessId, status])
+  @@index([branchId])
   @@index([supplierId])
   @@map("purchase_orders")
 }
@@ -949,6 +991,7 @@ model PurchaseOrderItem {
 model GoodsReceiptNote {
   id              String   @id
   businessId      String   @map("business_id")
+  branchId        String?  @map("branch_id")
   supplierId      String   @map("supplier_id")
   purchaseOrderId String?  @map("purchase_order_id")
   warehouseId     String   @map("warehouse_id")
@@ -965,6 +1008,7 @@ model GoodsReceiptNote {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   business      Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch        Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   supplier      Supplier @relation(fields: [supplierId], references: [id])
   purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
   warehouse     Warehouse @relation(fields: [warehouseId], references: [id])
@@ -973,6 +1017,7 @@ model GoodsReceiptNote {
 
   @@unique([businessId, grnNumber])
   @@index([businessId, status])
+  @@index([branchId])
   @@map("goods_receipt_notes")
 }
 
@@ -1004,6 +1049,7 @@ model GoodsReceiptItem {
 model SupplierBill {
   id             String   @id
   businessId     String   @map("business_id")
+  branchId       String?  @map("branch_id")
   supplierId     String   @map("supplier_id")
   grnId          String?  @unique @map("grn_id")
   billNumber     String   @map("bill_number")
@@ -1022,12 +1068,14 @@ model SupplierBill {
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   supplier    Supplier @relation(fields: [supplierId], references: [id])
   grn         GoodsReceiptNote? @relation(fields: [grnId], references: [id])
   allocations SupplierPaymentAllocation[]
 
   @@unique([businessId, billNumber])
   @@index([businessId, status])
+  @@index([branchId])
   @@index([supplierId])
   @@map("supplier_bills")
 }
@@ -1035,6 +1083,7 @@ model SupplierBill {
 model SupplierPayment {
   id             String   @id
   businessId     String   @map("business_id")
+  branchId       String?  @map("branch_id")
   supplierId     String   @map("supplier_id")
   paymentNumber  String   @map("payment_number")
   paymentDate    DateTime @default(now()) @map("payment_date")
@@ -1050,12 +1099,14 @@ model SupplierPayment {
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   supplier    Supplier @relation(fields: [supplierId], references: [id])
   account     Account? @relation(fields: [accountId], references: [id])
   allocations SupplierPaymentAllocation[]
 
   @@unique([businessId, paymentNumber])
   @@index([businessId, supplierId])
+  @@index([branchId])
   @@map("supplier_payments")
 }
 
@@ -1220,6 +1271,7 @@ model SalesInvoiceItem {
 model CustomerPayment {
   id             String   @id
   businessId     String   @map("business_id")
+  branchId       String?  @map("branch_id")
   customerId     String   @map("customer_id")
   paymentNumber  String   @map("payment_number")
   paymentDate    DateTime @default(now()) @map("payment_date")
@@ -1235,12 +1287,14 @@ model CustomerPayment {
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   customer    Customer @relation(fields: [customerId], references: [id])
   account     Account? @relation(fields: [accountId], references: [id])
   allocations CustomerPaymentAllocation[]
 
   @@unique([businessId, paymentNumber])
   @@index([businessId, customerId])
+  @@index([branchId])
   @@map("customer_payments")
 }
 
@@ -1261,6 +1315,7 @@ model CustomerPaymentAllocation {
 model SalesCommission {
   id               String   @id
   businessId       String   @map("business_id")
+  branchId         String?  @map("branch_id")
   salesRepId       String   @map("sales_rep_id")
   invoiceId        String   @map("invoice_id")
   baseAmount       Decimal  @map("base_amount") @db.Decimal(18, 4)
@@ -1271,11 +1326,13 @@ model SalesCommission {
   createdAt        DateTime @default(now()) @map("created_at")
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch   Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   salesRep SalesRep @relation(fields: [salesRepId], references: [id])
   invoice  SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
 
   @@unique([invoiceId, salesRepId])
   @@index([businessId, salesRepId])
+  @@index([branchId])
   @@map("sales_commissions")
 }
 
@@ -1284,6 +1341,7 @@ model SalesCommission {
 model BankAccount {
   id              String   @id
   businessId      String   @map("business_id")
+  branchId        String?  @map("branch_id")
   name            String
   bankName        String?  @map("bank_name")
   accountNumber   String?  @map("account_number")
@@ -1297,18 +1355,21 @@ model BankAccount {
   createdById     String?  @map("created_by_id")
 
   business     Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch       Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   glAccount    Account  @relation(fields: [glAccountId], references: [id])
   transactions BankTransaction[] @relation("BankTxnAccount")
   transfersIn  BankTransaction[] @relation("BankTxnCounterparty")
   expenseBills ExpenseBill[]
 
   @@index([businessId])
+  @@index([branchId])
   @@map("bank_accounts")
 }
 
 model BankTransaction {
   id                       String   @id
   businessId               String   @map("business_id")
+  branchId                 String?  @map("branch_id")
   bankAccountId            String   @map("bank_account_id")
   txnNumber                String   @map("txn_number")
   txnDate                  DateTime @default(now()) @map("txn_date")
@@ -1326,18 +1387,21 @@ model BankTransaction {
   updatedAt                DateTime @updatedAt @map("updated_at")
 
   business               Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch                 Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   bankAccount            BankAccount @relation("BankTxnAccount", fields: [bankAccountId], references: [id])
   counterpartyBankAccount BankAccount? @relation("BankTxnCounterparty", fields: [counterpartyBankAccountId], references: [id])
   offsetAccount          Account? @relation("BankTxnOffsetAccount", fields: [offsetAccountId], references: [id])
 
   @@unique([businessId, txnNumber])
   @@index([businessId, bankAccountId])
+  @@index([branchId])
   @@map("bank_transactions")
 }
 
 model ExpenseBill {
   id             String   @id
   businessId     String   @map("business_id")
+  branchId       String?  @map("branch_id")
   expenseNumber  String   @map("expense_number")
   vendorName     String?  @map("vendor_name")
   supplierId     String?  @map("supplier_id")
@@ -1363,12 +1427,14 @@ model ExpenseBill {
   updatedAt      DateTime @updatedAt @map("updated_at")
 
   business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch      Branch?  @relation(fields: [branchId], references: [id], onDelete: SetNull)
   supplier    Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
   lines       ExpenseBillLine[]
 
   @@unique([businessId, expenseNumber])
   @@index([businessId, status])
+  @@index([branchId])
   @@map("expense_bills")
 }
 
@@ -1441,6 +1507,7 @@ model DepreciationEntry {
 model Budget {
   id         String   @id
   businessId String   @map("business_id")
+  branchId   String?  @map("branch_id")
   name       String
   fiscalYear Int      @map("fiscal_year")
   /// draft | active | closed
@@ -1451,9 +1518,11 @@ model Budget {
   updatedAt  DateTime @updatedAt @map("updated_at")
 
   business Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch   Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
   lines    BudgetLine[]
 
   @@index([businessId, fiscalYear])
+  @@index([branchId])
   @@map("budgets")
 }
 
@@ -1558,6 +1627,7 @@ model LeaveRequest {
 model PayrollRun {
   id               String   @id
   businessId       String   @map("business_id")
+  branchId         String?  @map("branch_id")
   runNumber        String   @map("run_number")
   periodStart      DateTime @map("period_start")
   periodEnd        DateTime @map("period_end")
@@ -1575,10 +1645,12 @@ model PayrollRun {
   updatedAt        DateTime @updatedAt @map("updated_at")
 
   business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch   Branch?       @relation(fields: [branchId], references: [id], onDelete: SetNull)
   items    PayrollItem[]
 
   @@unique([businessId, runNumber])
   @@index([businessId, status])
+  @@index([branchId])
   @@map("payroll_runs")
 }
 

@@ -17,6 +17,7 @@ export async function writeAudit(params: {
     data: {
       id: shortId('aud'),
       businessId: params.businessId ?? params.user?.businessId ?? null,
+      branchId: params.user?.activeBranchId ?? null,
       userId: params.user?.id ?? null,
       action: params.action,
       module: params.module,

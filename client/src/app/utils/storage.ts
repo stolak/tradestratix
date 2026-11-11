@@ -1,5 +1,6 @@
 const TOKEN_KEY = 'tradestratix_token';
 const USER_KEY = 'tradestratix_user';
+const BRANCH_KEY = 'tradestratix_active_branch';
 
 export const storage = {
   getToken(): string | null {
@@ -20,8 +21,16 @@ export const storage = {
   setUser(user: unknown) {
     localStorage.setItem(USER_KEY, JSON.stringify(user));
   },
+  getActiveBranchId(): string | null {
+    return localStorage.getItem(BRANCH_KEY);
+  },
+  setActiveBranchId(id: string | null) {
+    if (!id) localStorage.removeItem(BRANCH_KEY);
+    else localStorage.setItem(BRANCH_KEY, id);
+  },
   clearAuth() {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
+    localStorage.removeItem(BRANCH_KEY);
   }
 };

@@ -2,11 +2,20 @@ import type { Request, Response, NextFunction } from 'express';
 import * as inventoryService from '../services/inventory.service.js';
 import * as transferService from '../services/stock-transfer.service.js';
 
+function branchListOpts(req: Request) {
+  return {
+    branchId: typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined,
+    allowConsolidated: req.query.consolidated === '1' || req.query.consolidated === 'true'
+  };
+}
+
 export async function board(req: Request, res: Response, next: NextFunction) {
   try {
     const warehouseId =
       typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : undefined;
-    return res.json(await inventoryService.inventoryBoard(req.user!.businessId, warehouseId));
+    return res.json(
+      await inventoryService.inventoryBoard(req.user!, warehouseId, branchListOpts(req))
+    );
   } catch (err) {
     return next(err);
   }
@@ -15,11 +24,12 @@ export async function board(req: Request, res: Response, next: NextFunction) {
 export async function lots(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(
-      await inventoryService.listLots(req.user!.businessId, {
+      await inventoryService.listLots(req.user!, {
         product_id: typeof req.query.product_id === 'string' ? req.query.product_id : undefined,
         warehouse_id:
           typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : undefined,
-        include_empty: req.query.include_empty === 'true'
+        include_empty: req.query.include_empty === 'true',
+        ...branchListOpts(req)
       })
     );
   } catch (err) {
@@ -30,10 +40,11 @@ export async function lots(req: Request, res: Response, next: NextFunction) {
 export async function movements(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(
-      await inventoryService.listMovements(req.user!.businessId, {
+      await inventoryService.listMovements(req.user!, {
         product_id: typeof req.query.product_id === 'string' ? req.query.product_id : undefined,
         warehouse_id:
-          typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : undefined
+          typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : undefined,
+        ...branchListOpts(req)
       })
     );
   } catch (err) {
@@ -68,7 +79,7 @@ export async function adjust(req: Request, res: Response, next: NextFunction) {
 export async function expiry(req: Request, res: Response, next: NextFunction) {
   try {
     const days = req.query.within_days ? Number(req.query.within_days) : 90;
-    return res.json(await inventoryService.expiryReport(req.user!.businessId, days));
+    return res.json(await inventoryService.expiryReport(req.user!, days, branchListOpts(req)));
   } catch (err) {
     return next(err);
   }
@@ -77,7 +88,7 @@ export async function expiry(req: Request, res: Response, next: NextFunction) {
 export async function listTransfers(req: Request, res: Response, next: NextFunction) {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    return res.json(await transferService.listTransfers(req.user!.businessId, status));
+    return res.json(await transferService.listTransfers(req.user!, status, branchListOpts(req)));
   } catch (err) {
     return next(err);
   }

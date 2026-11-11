@@ -160,7 +160,7 @@ export const PosPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Point of Sale
@@ -170,9 +170,9 @@ export const PosPage: React.FC = () => {
         </p>
       </header>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: 16 }}>
+      <div className="split-pos">
         <div className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+          <div className="form-grid">
             <div className="field">
               <label>Customer</label>
               <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} required>
@@ -202,7 +202,7 @@ export const PosPage: React.FC = () => {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 0.8fr 1fr auto', gap: 8, alignItems: 'end' }}>
+          <div className="form-grid">
             <div className="field">
               <label>Product</label>
               <select
@@ -258,9 +258,11 @@ export const PosPage: React.FC = () => {
                 onChange={(e) => setUnitPrice(e.target.value)}
               />
             </div>
-            <button type="button" className="btn btn-ghost" onClick={addLine}>
-              Add
-            </button>
+            <div className="form-grid--actions">
+              <button type="button" className="btn btn-ghost" onClick={addLine}>
+                Add
+              </button>
+            </div>
           </div>
 
           <div className="field">
@@ -275,7 +277,8 @@ export const PosPage: React.FC = () => {
             </select>
           </div>
 
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Item</th>
@@ -306,7 +309,8 @@ export const PosPage: React.FC = () => {
                 </tr>
               ))}
             </tbody>
-          </table>
+            </table>
+          </div>
         </div>
 
         <div className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 16, alignContent: 'start' }}>

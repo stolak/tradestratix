@@ -3,6 +3,12 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, roundMoney, serialize, shortId, toDec } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 const ACCOUNT_TYPES = new Set(['asset', 'liability', 'equity', 'revenue', 'expense', 'cogs']);
 
@@ -192,6 +198,10 @@ export async function createJournal(
 
   const shouldPost = body.post !== false;
   const entryDate = body.entry_date ? new Date(body.entry_date) : new Date();
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
 
   const run = async (tx: Prisma.TransactionClient) => {
     const entryNumber = await nextEntryNumber(user.businessId, tx);
@@ -199,7 +209,7 @@ export async function createJournal(
       data: {
         id: shortId('je'),
         businessId: user.businessId,
-        branchId: body.branch_id || body.branchId || user.defaultBranchId || null,
+        branchId,
         entryNumber,
         entryDate,
         memo: body.memo || null,
@@ -274,10 +284,18 @@ export async function reverseJournal(user: AuthUser, id: string, memo?: string) 
   return reversal;
 }
 
-export async function listJournals(businessId: string, opts?: { limit?: number; status?: string }) {
+export async function listJournals(
+  user: AuthUser,
+  opts?: { limit?: number; status?: string } & BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.journalEntry.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      ...scope,
       ...(opts?.status ? { status: opts.status } : {})
     },
     include: { lines: { include: { account: true } } },
@@ -287,10 +305,14 @@ export async function listJournals(businessId: string, opts?: { limit?: number; 
   return serialize(rows);
 }
 
-export async function trialBalance(businessId: string) {
+export async function trialBalance(user: AuthUser, opts?: BranchListOpts) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const lines = await prisma.journalLine.findMany({
     where: {
-      journalEntry: { businessId, status: 'posted' }
+      journalEntry: { businessId: user.businessId, status: 'posted', ...scope }
     },
     include: { account: true }
   });
@@ -371,13 +393,15 @@ function accountNet(debit: number, credit: number, accountType: string) {
 async function postedLinesInRange(
   businessId: string,
   from?: Date | null,
-  to?: Date | null
+  to?: Date | null,
+  branchFilter?: { branchId: string } | { branchId: { in: string[] } }
 ) {
   return prisma.journalLine.findMany({
     where: {
       journalEntry: {
         businessId,
         status: 'posted',
+        ...(branchFilter || {}),
         ...(from || to
           ? {
               entryDate: {
@@ -393,13 +417,18 @@ async function postedLinesInRange(
 }
 
 export async function profitAndLoss(
-  businessId: string,
+  user: AuthUser,
   from?: string | Date,
-  to?: string | Date
+  to?: string | Date,
+  opts?: BranchListOpts
 ) {
   const fromDate = from ? new Date(from) : null;
   const toDate = to ? new Date(to) : null;
-  const lines = await postedLinesInRange(businessId, fromDate, toDate);
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
+  const lines = await postedLinesInRange(user.businessId, fromDate, toDate, scope);
 
   const buckets: Record<string, { code: string; name: string; amount: number }[]> = {
     revenue: [],
@@ -455,9 +484,13 @@ export async function profitAndLoss(
   };
 }
 
-export async function balanceSheet(businessId: string, asOf?: string | Date) {
+export async function balanceSheet(user: AuthUser, asOf?: string | Date, opts?: BranchListOpts) {
   const asOfDate = asOf ? new Date(asOf) : new Date();
-  const lines = await postedLinesInRange(businessId, null, asOfDate);
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
+  const lines = await postedLinesInRange(user.businessId, null, asOfDate, scope);
 
   const map = new Map<
     string,
@@ -494,7 +527,7 @@ export async function balanceSheet(businessId: string, asOf?: string | Date) {
   }
 
   // Fold P&L into equity as current-year earnings
-  const pl = await profitAndLoss(businessId, undefined, asOfDate);
+  const pl = await profitAndLoss(user, undefined, asOfDate, opts);
   const netProfit = pl.totals.net_profit;
   if (netProfit !== 0) {
     sections.equity.push({

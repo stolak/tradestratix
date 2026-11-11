@@ -34,56 +34,55 @@ export const UnitsOfMeasurePage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Units of measure
         </h1>
       </header>
-      <form
-        onSubmit={create}
-        className="card-surface"
-        style={{ padding: '1rem', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr auto', gap: 12 }}
-      >
-        <div className="field">
-          <label>Code</label>
-          <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} required />
-        </div>
-        <div className="field">
-          <label>Name</label>
-          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-        </div>
-        <div className="field">
-          <label>Category</label>
-          <select
-            value={form.unit_category}
-            onChange={(e) => setForm({ ...form, unit_category: e.target.value })}
-          >
-            <option>Count</option>
-            <option>Packaging</option>
-            <option>Weight</option>
-            <option>Volume</option>
-            <option>Length</option>
-          </select>
-        </div>
-        <div className="field">
-          <label>Allows decimal</label>
-          <select
-            value={form.allows_decimal ? '1' : '0'}
-            onChange={(e) => setForm({ ...form, allows_decimal: e.target.value === '1' })}
-          >
-            <option value="0">No</option>
-            <option value="1">Yes</option>
-          </select>
-        </div>
-        <div style={{ alignSelf: 'end' }}>
-          <button className="btn btn-primary" type="submit">
-            Add
-          </button>
+      <form onSubmit={create} className="card-surface" style={{ padding: '1rem' }}>
+        <div className="form-grid">
+          <div className="field">
+            <label>Code</label>
+            <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} required />
+          </div>
+          <div className="field">
+            <label>Name</label>
+            <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+          </div>
+          <div className="field">
+            <label>Category</label>
+            <select
+              value={form.unit_category}
+              onChange={(e) => setForm({ ...form, unit_category: e.target.value })}
+            >
+              <option>Count</option>
+              <option>Packaging</option>
+              <option>Weight</option>
+              <option>Volume</option>
+              <option>Length</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Allows decimal</label>
+            <select
+              value={form.allows_decimal ? '1' : '0'}
+              onChange={(e) => setForm({ ...form, allows_decimal: e.target.value === '1' })}
+            >
+              <option value="0">No</option>
+              <option value="1">Yes</option>
+            </select>
+          </div>
+          <div className="form-grid--actions">
+            <button className="btn btn-primary" type="submit">
+              Add
+            </button>
+          </div>
         </div>
       </form>
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>Code</th>
@@ -102,7 +101,8 @@ export const UnitsOfMeasurePage: React.FC = () => {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

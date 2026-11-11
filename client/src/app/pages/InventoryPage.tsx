@@ -84,7 +84,7 @@ export const InventoryPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Inventory
@@ -114,11 +114,8 @@ export const InventoryPage: React.FC = () => {
         ))}
       </div>
 
-      <form
-        onSubmit={onReceive}
-        className="card-surface"
-        style={{ padding: '1rem', display: 'grid', gridTemplateColumns: 'repeat(6, 1fr) auto auto', gap: 10 }}
-      >
+      <form onSubmit={onReceive} className="card-surface" style={{ padding: '1rem' }}>
+        <div className="form-grid">
         <div className="field">
           <label>Product</label>
           <select
@@ -179,21 +176,21 @@ export const InventoryPage: React.FC = () => {
             required={Boolean(selectedProduct?.track_expiry)}
           />
         </div>
-        <div style={{ alignSelf: 'end' }}>
+        <div className="form-grid--actions">
           <button className="btn btn-primary" type="submit">
             Receive
           </button>
-        </div>
-        <div style={{ alignSelf: 'end' }}>
           <button className="btn btn-ghost" type="button" onClick={() => void onIssue()}>
             Issue
           </button>
+        </div>
         </div>
       </form>
 
       {tab === 'board' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Product</th>
@@ -223,12 +220,14 @@ export const InventoryPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
 
       {tab === 'movements' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>When</th>
@@ -254,12 +253,14 @@ export const InventoryPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
 
       {tab === 'expiry' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Product</th>
@@ -286,12 +287,14 @@ export const InventoryPage: React.FC = () => {
               ) : null}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
 
       {tab === 'transfers' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Number</th>
@@ -370,6 +373,7 @@ export const InventoryPage: React.FC = () => {
               ) : null}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
     </div>

@@ -39,7 +39,7 @@ export const WarehousesPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Warehouses
@@ -49,52 +49,46 @@ export const WarehousesPage: React.FC = () => {
         </p>
       </header>
 
-      <form
-        onSubmit={create}
-        className="card-surface"
-        style={{
-          padding: '1rem',
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr 1fr 1fr auto',
-          gap: 12
-        }}
-      >
-        <div className="field">
-          <label>Name</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} required />
-        </div>
-        <div className="field">
-          <label>Code</label>
-          <input value={code} onChange={(e) => setCode(e.target.value)} required />
-        </div>
-        <div className="field">
-          <label>Branch</label>
-          <select value={branchId} onChange={(e) => setBranchId(e.target.value)} required>
-            {branches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.code} — {b.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label>Category</label>
-          <select value={category} onChange={(e) => setCategory(e.target.value)}>
-            <option value="main">Main</option>
-            <option value="retail">Retail</option>
-            <option value="damaged">Damaged</option>
-            <option value="quarantine">Quarantine</option>
-          </select>
-        </div>
-        <div style={{ alignSelf: 'end' }}>
-          <button className="btn btn-primary" type="submit">
-            Add warehouse
-          </button>
+      <form onSubmit={create} className="card-surface" style={{ padding: '1rem' }}>
+        <div className="form-grid">
+          <div className="field">
+            <label>Name</label>
+            <input value={name} onChange={(e) => setName(e.target.value)} required />
+          </div>
+          <div className="field">
+            <label>Code</label>
+            <input value={code} onChange={(e) => setCode(e.target.value)} required />
+          </div>
+          <div className="field">
+            <label>Branch</label>
+            <select value={branchId} onChange={(e) => setBranchId(e.target.value)} required>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.code} — {b.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Category</label>
+            <select value={category} onChange={(e) => setCategory(e.target.value)}>
+              <option value="main">Main</option>
+              <option value="retail">Retail</option>
+              <option value="damaged">Damaged</option>
+              <option value="quarantine">Quarantine</option>
+            </select>
+          </div>
+          <div className="form-grid--actions">
+            <button className="btn btn-primary" type="submit">
+              Add warehouse
+            </button>
+          </div>
         </div>
       </form>
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>Code</th>
@@ -115,7 +109,8 @@ export const WarehousesPage: React.FC = () => {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

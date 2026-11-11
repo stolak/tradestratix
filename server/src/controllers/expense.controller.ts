@@ -1,10 +1,17 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as expenseService from '../services/expense.service.js';
 
+function branchListOpts(req: Request) {
+  return {
+    branchId: typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined,
+    allowConsolidated: req.query.consolidated === '1' || req.query.consolidated === 'true'
+  };
+}
+
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    return res.json(await expenseService.listExpenses(req.user!.businessId, status));
+    return res.json(await expenseService.listExpenses(req.user!, status, branchListOpts(req)));
   } catch (err) {
     return next(err);
   }

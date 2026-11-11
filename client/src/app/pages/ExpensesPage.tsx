@@ -94,7 +94,7 @@ export const ExpensesPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Expenses
@@ -110,7 +110,7 @@ export const ExpensesPage: React.FC = () => {
         style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
       >
         <div style={{ fontWeight: 700 }}>New expense</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+        <div className="form-grid">
           <div className="field">
             <label>Vendor</label>
             <input
@@ -177,14 +177,17 @@ export const ExpensesPage: React.FC = () => {
               </select>
             </div>
           ) : null}
+          <div className="form-grid--actions">
+            <button className="btn btn-primary" type="submit">
+              {form.pay_method === 'ap' ? 'Create & post to AP' : 'Create & pay'}
+            </button>
+          </div>
         </div>
-        <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-          {form.pay_method === 'ap' ? 'Create & post to AP' : 'Create & pay'}
-        </button>
       </form>
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>Expense #</th>
@@ -239,7 +242,8 @@ export const ExpensesPage: React.FC = () => {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

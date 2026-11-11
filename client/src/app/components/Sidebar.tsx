@@ -132,12 +132,13 @@ type Props = {
   onNavigate: (route: string) => void;
   can: (...codes: string[]) => boolean;
   businessName?: string;
+  open?: boolean;
 };
 
-export const Sidebar: React.FC<Props> = ({ current, onNavigate, can, businessName }) => {
+export const Sidebar: React.FC<Props> = ({ current, onNavigate, can, businessName, open }) => {
   return (
     <aside
-      className="app-shell__sidebar"
+      className={`app-shell__sidebar${open ? ' is-open' : ''}`}
       style={{
         background: 'linear-gradient(180deg, #0a3f35 0%, #0f5c4c 55%, #134e4a 100%)',
         color: '#e8f5f1',

@@ -27,7 +27,7 @@ export const ReportsPage: React.FC = () => {
   const parties = tab === 'ar' ? ar?.customers || [] : ap?.suppliers || [];
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Statements
@@ -58,15 +58,7 @@ export const ReportsPage: React.FC = () => {
       </div>
 
       {data?.totals ? (
-        <div
-          className="card-surface"
-          style={{
-            padding: '1rem 1.25rem',
-            display: 'grid',
-            gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
-            gap: 12
-          }}
-        >
+        <div className="card-surface kpi-grid" style={{ padding: '1rem 1.25rem' }}>
           {(
             [
               ['current', 'Current'],
@@ -88,7 +80,8 @@ export const ReportsPage: React.FC = () => {
       ) : null}
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <table className="table">
+        <div className="table-wrap">
+          <table className="table">
           <thead>
             <tr>
               <th>{tab === 'ar' ? 'Customer' : 'Supplier'}</th>
@@ -120,7 +113,8 @@ export const ReportsPage: React.FC = () => {
               </tr>
             ) : null}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     </div>
   );

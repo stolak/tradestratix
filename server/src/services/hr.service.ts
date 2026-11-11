@@ -2,6 +2,12 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, serialize, shortId, toDec } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 function dateOnly(value: string | Date) {
   const d = value instanceof Date ? value : new Date(value);
@@ -9,9 +15,13 @@ function dateOnly(value: string | Date) {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
-export async function listEmployees(businessId: string, status?: string) {
+export async function listEmployees(user: AuthUser, status?: string, opts?: BranchListOpts) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.employee.findMany({
-    where: { businessId, ...(status ? { status } : {}) },
+    where: { businessId: user.businessId, ...scope, ...(status ? { status } : {}) },
     include: { branch: true },
     orderBy: { fullName: 'asc' }
   });
@@ -20,12 +30,16 @@ export async function listEmployees(businessId: string, status?: string) {
 
 export async function createEmployee(user: AuthUser, body: Record<string, any>) {
   const fullName = requireString(body.full_name || body.fullName, 'full_name');
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
   try {
     const row = await prisma.employee.create({
       data: {
         id: shortId('emp'),
         businessId: user.businessId,
-        branchId: body.branch_id || body.branchId || user.defaultBranchId || null,
+        branchId,
         userId: body.user_id || body.userId || null,
         code: body.code ? String(body.code).trim() : null,
         fullName,
@@ -124,13 +138,18 @@ export async function updateEmployee(user: AuthUser, id: string, body: Record<st
 }
 
 export async function listAttendance(
-  businessId: string,
-  opts: { employee_id?: string; from?: string; to?: string } = {}
+  user: AuthUser,
+  opts: { employee_id?: string; from?: string; to?: string } & BranchListOpts = {}
 ) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts.branchId,
+    allowConsolidated: opts.allowConsolidated
+  });
   const rows = await prisma.attendanceRecord.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
       ...(opts.employee_id ? { employeeId: opts.employee_id } : {}),
+      employee: { ...scope },
       ...(opts.from || opts.to
         ? {
             workDate: {
@@ -195,9 +214,17 @@ export async function upsertAttendance(user: AuthUser, body: Record<string, any>
   return serialize(row);
 }
 
-export async function listLeave(businessId: string, status?: string) {
+export async function listLeave(user: AuthUser, status?: string, opts?: BranchListOpts) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
   const rows = await prisma.leaveRequest.findMany({
-    where: { businessId, ...(status ? { status } : {}) },
+    where: {
+      businessId: user.businessId,
+      ...(status ? { status } : {}),
+      employee: { ...scope }
+    },
     include: { employee: true },
     orderBy: { createdAt: 'desc' }
   });

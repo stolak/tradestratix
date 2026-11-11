@@ -154,6 +154,28 @@ async function main() {
     }
   }
 
+  // One-off consolidated branch reporting permission
+  {
+    const code = 'branches.report_all';
+    const existing = await prisma.permission.findUnique({ where: { code } });
+    if (existing) {
+      permissionIds[code] = existing.id;
+    } else {
+      const row = await prisma.permission.create({
+        data: {
+          id: id('perm'),
+          code,
+          name: 'branches report_all',
+          description: 'Consolidate / report across all authorised branches',
+          module: 'branches',
+          action: 'report_all',
+          sortOrder: sort++
+        }
+      });
+      permissionIds[code] = row.id;
+    }
+  }
+
   // System roles (platform-wide templates, businessId null)
   const roleIds: Record<string, string> = {};
   for (const r of SYSTEM_ROLES) {
@@ -321,6 +343,24 @@ async function main() {
     });
   }
 
+  let branch2 = await prisma.branch.findFirst({
+    where: { businessId: business.id, code: 'BR2' }
+  });
+  if (!branch2) {
+    branch2 = await prisma.branch.create({
+      data: {
+        id: id('br'),
+        businessId: business.id,
+        name: 'Ikeja Retail',
+        code: 'BR2',
+        city: 'Ikeja',
+        state: 'Lagos',
+        country: 'NG',
+        addressLine1: '45 Allen Avenue'
+      }
+    });
+  }
+
   let warehouse = await prisma.warehouse.findFirst({
     where: { businessId: business.id, code: 'MAIN' }
   });
@@ -333,6 +373,22 @@ async function main() {
         name: 'Main Warehouse',
         code: 'MAIN',
         category: 'main'
+      }
+    });
+  }
+
+  let warehouse2 = await prisma.warehouse.findFirst({
+    where: { businessId: business.id, code: 'IKEJA' }
+  });
+  if (!warehouse2) {
+    warehouse2 = await prisma.warehouse.create({
+      data: {
+        id: id('wh'),
+        businessId: business.id,
+        branchId: branch2.id,
+        name: 'Ikeja Retail Store',
+        code: 'IKEJA',
+        category: 'retail'
       }
     });
   }
@@ -354,9 +410,54 @@ async function main() {
         email: 'owner@demodistro.local',
         defaultBranchId: branch.id,
         userRoles: { create: [{ roleId: ownerRoleId }] },
-        userBranches: { create: [{ branchId: branch.id }] }
+        userBranches: {
+          create: [
+            {
+              branchId: branch.id,
+              businessId: business.id,
+              status: 'active'
+            },
+            {
+              branchId: branch2.id,
+              businessId: business.id,
+              status: 'active'
+            }
+          ]
+        }
       }
     });
+  } else {
+    for (const b of [branch, branch2]) {
+      const membership = await prisma.userBranch.findUnique({
+        where: { userId_branchId: { userId: owner.id, branchId: b.id } }
+      });
+      if (!membership) {
+        await prisma.userBranch.create({
+          data: {
+            userId: owner.id,
+            businessId: business.id,
+            branchId: b.id,
+            status: 'active',
+            assignedById: owner.id
+          }
+        });
+      } else {
+        await prisma.userBranch.update({
+          where: { userId_branchId: { userId: owner.id, branchId: b.id } },
+          data: {
+            businessId: business.id,
+            status: 'active',
+            assignedById: membership.assignedById || owner.id
+          }
+        });
+      }
+    }
+    if (!owner.defaultBranchId) {
+      owner = await prisma.user.update({
+        where: { id: owner.id },
+        data: { defaultBranchId: branch.id }
+      });
+    }
   }
 
   // Chart of accounts for business
@@ -772,6 +873,7 @@ async function main() {
       data: {
         id: id('po'),
         businessId: business.id,
+        branchId: branch.id,
         supplierId: supplier.id,
         warehouseId: warehouse.id,
         poNumber: 'PO-00001',
@@ -860,7 +962,9 @@ async function main() {
   console.log('Seed complete.');
   console.log('Login: owner / password123');
   console.log(`Business: ${business.name} (${business.id})`);
-  console.log(`Branch: ${branch.code} | Warehouse: ${warehouse.code}`);
+  console.log(
+    `Branches: ${branch.code}, ${branch2.code} | Warehouses: ${warehouse.code}, ${warehouse2.code}`
+  );
   console.log('Phase 2 samples: Sparkle Cola (expiry batches), Nike T-Shirt (size/colour variants)');
   console.log(
     `Phase 3 samples: Supplier ${supplier.code}, approved PO ${samplePo?.poNumber || 'n/a'}`
@@ -881,6 +985,7 @@ async function main() {
       data: {
         id: id('bnk'),
         businessId: business.id,
+        branchId: branch.id,
         name: 'Main Operating Account',
         bankName: 'Demo Bank',
         accountNumber: '0123456789',
@@ -926,6 +1031,7 @@ async function main() {
       data: {
         id: id('bud'),
         businessId: business.id,
+        branchId: branch.id,
         name: `FY ${year} OpEx`,
         fiscalYear: year,
         status: 'active',

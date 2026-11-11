@@ -7,6 +7,7 @@ export type AuthUser = {
   email?: string | null;
   department?: string | null;
   defaultBranchId?: string | null;
+  activeBranchId?: string | null;
   branchIds?: string[];
   permissions?: string[];
 };

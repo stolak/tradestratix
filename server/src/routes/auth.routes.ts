@@ -23,4 +23,13 @@ router.post('/login', authController.login);
  */
 router.get('/me', authenticateStrict, authController.me);
 
+/**
+ * @openapi
+ * /api/v1/auth/switch-branch:
+ *   post:
+ *     tags: [Auth]
+ *     summary: Switch active branch and receive a new token
+ */
+router.post('/switch-branch', authenticateStrict, authController.switchBranch);
+
 export default router;

@@ -218,7 +218,7 @@ export const PurchasesPage: React.FC = () => {
   ];
 
   return (
-    <div style={{ display: 'grid', gap: '1.25rem' }}>
+    <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
           Purchases
@@ -252,7 +252,7 @@ export const PurchasesPage: React.FC = () => {
             style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
           >
             <div style={{ fontWeight: 700 }}>New purchase order</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+            <div className="form-grid">
               <div className="field">
                 <label>Supplier</label>
                 <select
@@ -357,7 +357,8 @@ export const PurchasesPage: React.FC = () => {
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>PO #</th>
@@ -430,6 +431,7 @@ export const PurchasesPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}
@@ -446,7 +448,7 @@ export const PurchasesPage: React.FC = () => {
               Posts remaining ordered qty into stock and creates an open AP bill (Dr Inventory / Cr
               AP).
             </p>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: 12 }}>
+            <div className="form-grid">
               <div className="field">
                 <label>Approved PO</label>
                 <select
@@ -500,7 +502,8 @@ export const PurchasesPage: React.FC = () => {
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>GRN #</th>
@@ -524,13 +527,15 @@ export const PurchasesPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}
 
       {tab === 'bills' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <table className="table">
+          <div className="table-wrap">
+            <table className="table">
             <thead>
               <tr>
                 <th>Bill #</th>
@@ -556,6 +561,7 @@ export const PurchasesPage: React.FC = () => {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
 
@@ -567,7 +573,7 @@ export const PurchasesPage: React.FC = () => {
             style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
           >
             <div style={{ fontWeight: 700 }}>Record supplier payment</div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 12 }}>
+            <div className="form-grid">
               <div className="field">
                 <label>Supplier</label>
                 <select
@@ -619,7 +625,8 @@ export const PurchasesPage: React.FC = () => {
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <table className="table">
+            <div className="table-wrap">
+              <table className="table">
               <thead>
                 <tr>
                   <th>Payment #</th>
@@ -648,6 +655,7 @@ export const PurchasesPage: React.FC = () => {
                 ))}
               </tbody>
             </table>
+            </div>
           </div>
         </>
       ) : null}

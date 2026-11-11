@@ -3,6 +3,12 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, roundMoney, serialize, shortId, toDec } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import * as branchAccess from './branch-access.service.js';
+
+type BranchListOpts = {
+  branchId?: string | null;
+  allowConsolidated?: boolean;
+};
 
 type DbClient = Prisma.TransactionClient | typeof prisma;
 
@@ -244,10 +250,16 @@ async function createSingleMovement(
   const unitCost = input.unit_cost != null ? Number(input.unit_cost) : qtyNum(lot.unitCost) || null;
   const totalCost = unitCost != null ? roundMoney(unitCost * moved) : null;
 
+  const warehouse = await client.warehouse.findFirst({
+    where: { id: input.warehouse_id, businessId: user.businessId },
+    select: { branchId: true }
+  });
+
   return client.stockMovement.create({
     data: {
       id: shortId('sm'),
       businessId: user.businessId,
+      branchId: warehouse?.branchId || null,
       productId: input.product_id,
       variantId: input.variant_id,
       warehouseId: input.warehouse_id,
@@ -527,9 +539,31 @@ export async function adjustStock(user: AuthUser, body: Record<string, any>) {
   return serialize(movement);
 }
 
-export async function inventoryBoard(businessId: string, warehouseId?: string) {
+export async function inventoryBoard(
+  user: AuthUser,
+  warehouseId?: string,
+  opts?: BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
+  const warehouses = await prisma.warehouse.findMany({
+    where: { businessId: user.businessId, isActive: true, ...scope },
+    select: { id: true }
+  });
+  const warehouseIds = warehouses.map((w) => w.id);
+  if (warehouseId && !warehouseIds.includes(warehouseId)) {
+    throw httpError(400, 'Warehouse is outside the active branch scope');
+  }
+  const scopedWarehouseFilter = warehouseId
+    ? { warehouseId }
+    : warehouseIds.length
+      ? { warehouseId: { in: warehouseIds } }
+      : { warehouseId: { in: [] as string[] } };
+
   const products = await prisma.product.findMany({
-    where: { businessId, status: 'active' },
+    where: { businessId: user.businessId, status: 'active' },
     include: {
       category: true,
       brand: true,
@@ -540,7 +574,7 @@ export async function inventoryBoard(businessId: string, warehouseId?: string) {
           stockLots: {
             where: {
               quantityOnHand: { gt: 0 },
-              ...(warehouseId ? { warehouseId } : {})
+              ...scopedWarehouseFilter
             },
             include: { warehouse: true },
             orderBy: [{ expiryDate: 'asc' }, { createdAt: 'asc' }]
@@ -581,14 +615,31 @@ export async function inventoryBoard(businessId: string, warehouseId?: string) {
 }
 
 export async function listLots(
-  businessId: string,
-  filters: { product_id?: string; warehouse_id?: string; include_empty?: boolean } = {}
+  user: AuthUser,
+  filters: {
+    product_id?: string;
+    warehouse_id?: string;
+    include_empty?: boolean;
+  } & BranchListOpts = {}
 ) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: filters.branchId,
+    allowConsolidated: filters.allowConsolidated
+  });
+  const warehouses = await prisma.warehouse.findMany({
+    where: { businessId: user.businessId, ...scope },
+    select: { id: true }
+  });
+  const warehouseIds = warehouses.map((w) => w.id);
   const lots = await prisma.stockLot.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
       ...(filters.product_id ? { productId: filters.product_id } : {}),
-      ...(filters.warehouse_id ? { warehouseId: filters.warehouse_id } : {}),
+      ...(filters.warehouse_id
+        ? { warehouseId: filters.warehouse_id }
+        : warehouseIds.length
+          ? { warehouseId: { in: warehouseIds } }
+          : { warehouseId: { in: [] as string[] } }),
       ...(!filters.include_empty ? { quantityOnHand: { gt: 0 } } : {})
     },
     include: {
@@ -612,12 +663,17 @@ export async function listLots(
 }
 
 export async function listMovements(
-  businessId: string,
-  filters: { product_id?: string; warehouse_id?: string } = {}
+  user: AuthUser,
+  filters: { product_id?: string; warehouse_id?: string } & BranchListOpts = {}
 ) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: filters.branchId,
+    allowConsolidated: filters.allowConsolidated
+  });
   const movements = await prisma.stockMovement.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      ...scope,
       ...(filters.product_id ? { productId: filters.product_id } : {}),
       ...(filters.warehouse_id ? { warehouseId: filters.warehouse_id } : {})
     },
@@ -633,13 +689,27 @@ export async function listMovements(
   return serialize(movements);
 }
 
-export async function expiryReport(businessId: string, withinDays = 90) {
+export async function expiryReport(
+  user: AuthUser,
+  withinDays = 90,
+  opts?: BranchListOpts
+) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
+  const warehouses = await prisma.warehouse.findMany({
+    where: { businessId: user.businessId, ...scope },
+    select: { id: true }
+  });
+  const warehouseIds = warehouses.map((w) => w.id);
   const today = new Date();
   const horizon = new Date(today.getTime() + withinDays * 86400000).toISOString().slice(0, 10);
   const todayStr = today.toISOString().slice(0, 10);
   const lots = await prisma.stockLot.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      warehouseId: { in: warehouseIds },
       quantityOnHand: { gt: 0 },
       expiryDate: { not: null, lte: horizon }
     },

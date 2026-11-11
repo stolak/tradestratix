@@ -1,11 +1,18 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as budgetService from '../services/budget.service.js';
 
+function branchListOpts(req: Request) {
+  return {
+    branchId: typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined,
+    allowConsolidated: req.query.consolidated === '1' || req.query.consolidated === 'true'
+  };
+}
+
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
     const fy =
       typeof req.query.fiscal_year === 'string' ? Number(req.query.fiscal_year) : undefined;
-    return res.json(await budgetService.listBudgets(req.user!.businessId, fy));
+    return res.json(await budgetService.listBudgets(req.user!, fy, branchListOpts(req)));
   } catch (err) {
     return next(err);
   }

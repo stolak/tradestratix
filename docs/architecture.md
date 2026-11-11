@@ -18,6 +18,16 @@ Modular monolith with layered boundaries:
 - JWT includes `businessId`, `userId`, role codes, and optional branch scope
 - Queries always filter by tenant; cross-tenant access is rejected in middleware/services
 
+## Multi-branch (mandatory)
+
+- Every business has ≥1 active branch (default **Head Office / HQ** on onboarding)
+- Operational transactions carry `branchId` (inventory transfers also keep `fromBranchId` / `toBranchId`)
+- Users ↔ branches via `UserBranch` (businessId, roleCode, status, assignedAt/By)
+- Active branch selected via `X-Branch-Id` header; membership re-checked on every request from DB (revocation-safe)
+- `POST /auth/switch-branch` issues a new token with `activeBranchId`
+- List/report APIs scope to the active branch unless consolidated access (`business_owner` / cross-branch roles / `branches.report_all`)
+- Deactivated branches reject new writes; historical rows remain; last active branch cannot be deactivated
+
 ## API
 
 - Base path: `/api/v1`

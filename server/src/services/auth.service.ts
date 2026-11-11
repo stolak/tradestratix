@@ -5,15 +5,17 @@ import { httpError, omitPassword, serialize, shortId } from '../utils/helpers.js
 import { getUserPermissionCodes } from './permission.service.js';
 import { writeAudit } from './audit.service.js';
 import type { AuthUser } from '../types/express/index.js';
+import * as branchAccess from './branch-access.service.js';
 
-async function toAuthUser(userId: string): Promise<AuthUser> {
+async function toAuthUser(userId: string, preferredBranchId?: string | null): Promise<AuthUser> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: { userBranches: true }
   });
   if (!user) throw httpError(401, 'User not found');
   const permissions = await getUserPermissionCodes(user.id);
-  return {
+
+  const base: AuthUser = {
     id: user.id,
     businessId: user.businessId,
     username: user.username,
@@ -22,9 +24,11 @@ async function toAuthUser(userId: string): Promise<AuthUser> {
     email: user.email,
     department: user.department,
     defaultBranchId: user.defaultBranchId,
-    branchIds: user.userBranches.map((b) => b.branchId),
+    branchIds: user.userBranches.filter((b) => b.status === 'active').map((b) => b.branchId),
     permissions
   };
+
+  return branchAccess.hydrateBranchContext(base, preferredBranchId || user.defaultBranchId);
 }
 
 export async function login(
@@ -51,13 +55,31 @@ export async function login(
   if (!ok) throw httpError(401, 'Invalid username or password');
   if (user.business.status !== 'active') throw httpError(403, 'Business account is not active');
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { lastLoginAt: new Date() }
-  });
+  const defaultBranch = await branchAccess.ensureDefaultBranch(user.businessId, user.id);
+  await branchAccess.ensureUserMembership(
+    user.businessId,
+    user.id,
+    user.defaultBranchId || defaultBranch.id,
+    user.id,
+    user.role
+  );
 
-  const authUser = await toAuthUser(user.id);
+  if (!user.defaultBranchId) {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { defaultBranchId: defaultBranch.id, lastLoginAt: new Date() }
+    });
+  } else {
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date() }
+    });
+  }
+
+  const authUser = await toAuthUser(user.id, user.defaultBranchId || defaultBranch.id);
   const token = signToken(authUser);
+  const branches = await branchAccess.listAuthorisedBranches(authUser);
+
   await writeAudit({
     user: authUser,
     action: 'login',
@@ -66,27 +88,64 @@ export async function login(
     ipAddress: meta?.ipAddress
   });
 
+  const freshUser = await prisma.user.findUnique({ where: { id: user.id } });
+
   return {
     token,
-    user: serialize(omitPassword(user)),
+    user: serialize(omitPassword(freshUser || user)),
     business: serialize(user.business),
-    permissions: authUser.permissions
+    permissions: authUser.permissions,
+    branches: serialize(branches),
+    active_branch_id: authUser.activeBranchId
   };
 }
 
-export async function me(userId: string) {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
+export async function me(user: AuthUser) {
+  const row = await prisma.user.findUnique({
+    where: { id: user.id },
     include: {
       business: true,
       userBranches: { include: { branch: true } },
       userRoles: { include: { role: true } }
     }
   });
-  if (!user) throw httpError(404, 'User not found');
+  if (!row) throw httpError(404, 'User not found');
   const permissions = await getUserPermissionCodes(user.id);
+  const authUser = await toAuthUser(user.id, user.activeBranchId);
+  const branches = await branchAccess.listAuthorisedBranches(authUser);
+
+  const profile = serialize(omitPassword(row));
   return {
-    ...serialize(omitPassword(user)),
-    permissions
+    ...(typeof profile === 'object' && profile !== null ? (profile as Record<string, unknown>) : {}),
+    permissions,
+    branches: serialize(branches),
+    active_branch_id: authUser.activeBranchId
+  };
+}
+
+export async function switchBranch(user: AuthUser, branchId: string) {
+  if (!branchId?.trim()) throw httpError(400, 'branch_id is required');
+  const branch = await branchAccess.assertBranchMembership(user, branchId);
+  if (!branch.isActive) {
+    throw httpError(409, 'Cannot switch to a deactivated branch');
+  }
+
+  const authUser = await toAuthUser(user.id, branchId);
+  const token = signToken(authUser);
+  const branches = await branchAccess.listAuthorisedBranches(authUser);
+
+  await writeAudit({
+    user: authUser,
+    action: 'switch_branch',
+    module: 'auth',
+    entityType: 'Branch',
+    entityId: branchId,
+    summary: `Switched active branch to ${branch.code}`
+  });
+
+  return {
+    token,
+    active_branch_id: authUser.activeBranchId,
+    branches: serialize(branches)
   };
 }

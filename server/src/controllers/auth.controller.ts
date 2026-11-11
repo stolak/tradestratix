@@ -20,7 +20,18 @@ export async function login(req: Request, res: Response, next: NextFunction) {
 export async function me(req: Request, res: Response, next: NextFunction) {
   try {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
-    const result = await authService.me(req.user.id);
+    const result = await authService.me(req.user);
+    return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function switchBranch(req: Request, res: Response, next: NextFunction) {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Authentication required' });
+    const branchId = req.body?.branch_id || req.body?.branchId;
+    const result = await authService.switchBranch(req.user, String(branchId || ''));
     return res.json(result);
   } catch (err) {
     return next(err);
