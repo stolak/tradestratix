@@ -12,6 +12,7 @@ import { writeAudit } from './audit.service.js';
 import { convertToBaseQty, createStockMovement } from './inventory.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import * as branchAccess from './branch-access.service.js';
+import { assertSalesRepInBranch } from './sales-rep.service.js';
 
 type BranchListOpts = {
   branchId?: string | null;
@@ -205,12 +206,36 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
     branchId
   );
 
-  const salesRepId = body.sales_rep_id || body.salesRepId || null;
+  const isWalkIn =
+    customer.customerType === 'walk_in' ||
+    String(customer.code || '').toUpperCase() === 'WALK-IN';
+
+  const myRep = await prisma.salesRep.findFirst({
+    where: {
+      businessId: user.businessId,
+      status: 'active',
+      employee: { userId: user.id }
+    },
+    select: { id: true }
+  });
+
+  let salesRepId: string | null = body.sales_rep_id || body.salesRepId || null;
+
+  if (isWalkIn) {
+    if (!myRep) {
+      throw httpError(400, 'Only sales representatives can sell to walk-in customers');
+    }
+    if (salesRepId && salesRepId !== myRep.id) {
+      throw httpError(
+        400,
+        'Walk-in sales must be attributed to the logged-in sales representative'
+      );
+    }
+    salesRepId = myRep.id;
+  }
+
   if (salesRepId) {
-    const rep = await prisma.salesRep.findFirst({
-      where: { id: salesRepId, businessId: user.businessId, status: 'active' }
-    });
-    if (!rep) throw httpError(400, 'Invalid sales_rep_id');
+    await assertSalesRepInBranch(user.businessId, salesRepId, branchId);
   }
 
   const lines = await buildInvoiceLines(user, itemsInput);

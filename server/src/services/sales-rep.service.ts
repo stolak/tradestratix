@@ -172,13 +172,71 @@ export async function promoteEmployeeToSalesRep(
   return presentRep(row);
 }
 
-export async function listSalesReps(businessId: string) {
+export async function findSalesRepForUser(businessId: string, userId: string) {
+  const row = await prisma.salesRep.findFirst({
+    where: {
+      businessId,
+      status: 'active',
+      employee: { userId }
+    },
+    include: repInclude
+  });
+  return row ? serialize(presentRep(row)) : null;
+}
+
+/** Active sales reps whose linked login can operate in the given branch. */
+export async function listSalesReps(
+  businessId: string,
+  opts?: { branchId?: string | null; activeOnly?: boolean }
+) {
+  const branchId = opts?.branchId || null;
   const rows = await prisma.salesRep.findMany({
-    where: { businessId },
+    where: {
+      businessId,
+      ...(opts?.activeOnly === false ? {} : { status: 'active' }),
+      ...(branchId
+        ? {
+            employee: {
+              user: {
+                userBranches: {
+                  some: { branchId, status: 'active' }
+                }
+              }
+            }
+          }
+        : {})
+    },
     include: repInclude,
     orderBy: { employee: { fullName: 'asc' } }
   });
   return serialize(rows.map(presentRep));
+}
+
+export async function assertSalesRepInBranch(
+  businessId: string,
+  salesRepId: string,
+  branchId: string
+) {
+  const rep = await prisma.salesRep.findFirst({
+    where: {
+      id: salesRepId,
+      businessId,
+      status: 'active',
+      employee: {
+        user: {
+          userBranches: { some: { branchId, status: 'active' } }
+        }
+      }
+    },
+    include: { employee: { select: { id: true, fullName: true, userId: true } } }
+  });
+  if (!rep) {
+    throw httpError(
+      400,
+      'sales_rep_id is invalid or the representative cannot operate in this branch'
+    );
+  }
+  return rep;
 }
 
 export async function createSalesRep(user: AuthUser, body: Record<string, any>) {

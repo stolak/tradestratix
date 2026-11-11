@@ -67,11 +67,94 @@ async function warehouseIdsWithActivity(businessId: string, warehouseIds: string
   return blocked;
 }
 
+const WAREHOUSE_MANAGE_ROLES = new Set([
+  'business_owner',
+  'managing_director',
+  'general_manager',
+  'warehouse_manager',
+  'inventory_officer',
+  'branch_manager'
+]);
+
+function canManageAllWarehouses(user: AuthUser) {
+  if (WAREHOUSE_MANAGE_ROLES.has(user.role)) return true;
+  const perms = user.permissions || [];
+  return (
+    perms.includes('warehouses.create') ||
+    perms.includes('warehouses.edit') ||
+    perms.includes('warehouses.delete')
+  );
+}
+
+/** Assign all active warehouses in the given branches to a user (idempotent). */
+export async function assignBranchWarehousesToUser(opts: {
+  businessId: string;
+  userId: string;
+  branchIds: string[];
+  assignedById?: string | null;
+}) {
+  const branchIds = [...new Set(opts.branchIds.filter(Boolean))];
+  if (!branchIds.length) return [];
+
+  const warehouses = await prisma.warehouse.findMany({
+    where: {
+      businessId: opts.businessId,
+      branchId: { in: branchIds },
+      isActive: true
+    },
+    select: { id: true }
+  });
+
+  for (const wh of warehouses) {
+    await prisma.userWarehouse.upsert({
+      where: { userId_warehouseId: { userId: opts.userId, warehouseId: wh.id } },
+      create: {
+        userId: opts.userId,
+        businessId: opts.businessId,
+        warehouseId: wh.id,
+        status: 'active',
+        assignedById: opts.assignedById || null
+      },
+      update: {
+        status: 'active',
+        assignedById: opts.assignedById || null,
+        assignedAt: new Date()
+      }
+    });
+  }
+  return warehouses.map((w) => w.id);
+}
+
+/**
+ * List warehouses for the active/switched branch.
+ * Non-managers only see warehouses explicitly assigned via UserWarehouse.
+ */
 export async function listWarehouses(user: AuthUser, branchId?: string) {
+  const effectiveBranchId =
+    branchId || user.activeBranchId || user.defaultBranchId || null;
+
+  let assignedIds: string[] | null = null;
+  if (!canManageAllWarehouses(user)) {
+    const assignments = await prisma.userWarehouse.findMany({
+      where: {
+        userId: user.id,
+        businessId: user.businessId,
+        status: 'active',
+        ...(effectiveBranchId
+          ? { warehouse: { branchId: effectiveBranchId, isActive: true } }
+          : { warehouse: { isActive: true } })
+      },
+      select: { warehouseId: true }
+    });
+    assignedIds = assignments.map((a) => a.warehouseId);
+  }
+
   const rows = await prisma.warehouse.findMany({
     where: {
       businessId: user.businessId,
-      ...(branchId ? { branchId } : {})
+      isActive: true,
+      ...(effectiveBranchId ? { branchId: effectiveBranchId } : {}),
+      ...(assignedIds ? { id: { in: assignedIds } } : {})
     },
     include: { branch: true },
     orderBy: { name: 'asc' }

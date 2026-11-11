@@ -5,6 +5,7 @@ import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
 import { promoteEmployeeToSalesRep } from './sales-rep.service.js';
+import { assignBranchWarehousesToUser } from './warehouse.service.js';
 
 type BranchListOpts = {
   branchId?: string | null;
@@ -195,6 +196,35 @@ export async function createEmployee(user: AuthUser, body: Record<string, any>) 
 
       return { emp, login };
     });
+
+    // Default warehouse access = active warehouses in the employee's authorised branches
+    const requestedWarehouseIds = Array.isArray(body.warehouse_ids || body.warehouseIds)
+      ? (body.warehouse_ids || body.warehouseIds).map(String)
+      : null;
+    if (requestedWarehouseIds?.length) {
+      for (const warehouseId of requestedWarehouseIds) {
+        await prisma.userWarehouse.upsert({
+          where: {
+            userId_warehouseId: { userId: created.login.id, warehouseId }
+          },
+          create: {
+            userId: created.login.id,
+            businessId: user.businessId,
+            warehouseId,
+            status: 'active',
+            assignedById: user.id
+          },
+          update: { status: 'active', assignedById: user.id, assignedAt: new Date() }
+        });
+      }
+    } else {
+      await assignBranchWarehousesToUser({
+        businessId: user.businessId,
+        userId: created.login.id,
+        branchIds: membershipBranchIds,
+        assignedById: user.id
+      });
+    }
 
     let salesRep = null as any;
     if (isSalesRep) {

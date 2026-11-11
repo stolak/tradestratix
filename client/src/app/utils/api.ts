@@ -29,6 +29,8 @@ export const api = {
         permissions: string[];
         branches?: any[];
         active_branch_id?: string;
+        is_sales_rep?: boolean;
+        sales_rep?: any;
       }>('/auth/login', {
         method: 'POST',
         body: JSON.stringify({ username, password })
@@ -255,7 +257,11 @@ export const api = {
       request<any>(`/customers/${id}/notes`, { method: 'POST', body: JSON.stringify(body) })
   },
   salesReps: {
-    list: () => request<any[]>('/sales-reps'),
+    list: (branchId?: string) =>
+      request<any[]>(
+        `/sales-reps${branchId ? `?branch_id=${encodeURIComponent(branchId)}` : ''}`
+      ),
+    me: () => request<any | null>('/sales-reps/me'),
     create: (body: Record<string, unknown>) =>
       request<any>('/sales-reps', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string, body: Record<string, unknown>) =>

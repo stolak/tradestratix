@@ -3,7 +3,11 @@ import * as warehouseService from '../services/warehouse.service.js';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
-    const branchId = typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined;
+    // Prefer explicit query, else the user's switched/default branch (X-Branch-Id → activeBranchId).
+    const branchId =
+      typeof req.query.branch_id === 'string'
+        ? req.query.branch_id
+        : req.user?.activeBranchId || req.user?.defaultBranchId || undefined;
     return res.json(await warehouseService.listWarehouses(req.user!, branchId));
   } catch (err) {
     return next(err);

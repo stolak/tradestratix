@@ -11,6 +11,11 @@ router.get(
   requirePermission('sales_reps.view', 'sales.view', 'pos.view'),
   salesRepController.list
 );
+router.get(
+  '/me',
+  requirePermission('sales_reps.view', 'sales.view', 'pos.view'),
+  salesRepController.mine
+);
 router.post('/', requirePermission('sales_reps.create'), salesRepController.create);
 router.get(
   '/commissions/list',

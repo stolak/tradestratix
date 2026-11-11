@@ -7,6 +7,7 @@ import {
   ensureUserBranchMembership,
   listAuthorisedBranchIds
 } from './branch-access.service.js';
+import { assignBranchWarehousesToUser } from './warehouse.service.js';
 
 async function scopedBranchFilter(user: AuthUser) {
   const base: Record<string, unknown> = { businessId: user.businessId };
@@ -420,6 +421,14 @@ export async function assignMember(
           }
         }
       });
+
+  // Grant default warehouse access for the newly authorised branch
+  await assignBranchWarehousesToUser({
+    businessId: user.businessId,
+    userId: targetUserId,
+    branchIds: [branchId],
+    assignedById: user.id
+  });
 
   await writeAudit({
     user,

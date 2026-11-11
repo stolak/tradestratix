@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Info } from 'lucide-react';
+import Swal from 'sweetalert2';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
+import { useAuth } from '../context/AuthContext';
 
 type CartLine = {
   key: string;
@@ -12,7 +15,20 @@ type CartLine = {
   unit_price: string;
 };
 
+function isWalkInCustomer(c: any) {
+  return (
+    c?.customer_type === 'walk_in' ||
+    String(c?.code || '').toUpperCase() === 'WALK-IN'
+  );
+}
+
 export const PosPage: React.FC = () => {
+  const { activeBranchId, user } = useAuth();
+  const [mySalesRep, setMySalesRep] = useState<{ id: string } | null>(
+    () => (user?.sales_rep?.id ? { id: user.sales_rep.id } : null)
+  );
+  const isSalesRep = Boolean(user?.is_sales_rep || user?.sales_rep?.id || mySalesRep?.id);
+  const mySalesRepId = mySalesRep?.id || user?.sales_rep?.id || '';
   const [customers, setCustomers] = useState<any[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
@@ -28,6 +44,17 @@ export const PosPage: React.FC = () => {
   const [unitPrice, setUnitPrice] = useState('');
   const [cart, setCart] = useState<CartLine[]>([]);
   const [busy, setBusy] = useState(false);
+
+  const selectableCustomers = useMemo(
+    () => (isSalesRep ? customers : customers.filter((c) => !isWalkInCustomer(c))),
+    [customers, isSalesRep]
+  );
+  const selectedCustomer = useMemo(
+    () => selectableCustomers.find((c) => c.id === customerId),
+    [selectableCustomers, customerId]
+  );
+  const salesRepLocked =
+    isWalkInCustomer(selectedCustomer) && isSalesRep && !!mySalesRepId;
 
   const uomsForProduct = (p: any) => {
     if (!p) return [] as { id: string; code: string; name: string }[];
@@ -72,10 +99,11 @@ export const PosPage: React.FC = () => {
   const load = async () => {
     const settled = await Promise.allSettled([
       api.customers.list(),
-      api.warehouses.list(),
+      api.warehouses.list(activeBranchId || undefined),
       api.products.list(),
-      api.salesReps.list(),
-      api.sales.invoices('posted', 'pos')
+      api.salesReps.list(activeBranchId || undefined),
+      api.sales.invoices('posted', 'pos'),
+      api.salesReps.me()
     ]);
     const value = <T,>(i: number, fallback: T): T =>
       settled[i].status === 'fulfilled' ? ((settled[i] as PromiseFulfilledResult<T>).value as T) : fallback;
@@ -85,6 +113,11 @@ export const PosPage: React.FC = () => {
     const p = value<any[]>(2, []);
     const r = value<any[]>(3, []);
     const inv = value<any[]>(4, []);
+    const meRep = value<any | null>(5, null);
+    const resolvedRepId = meRep?.id || user?.sales_rep?.id || '';
+    const resolvedIsRep = Boolean(meRep?.id || user?.is_sales_rep || user?.sales_rep?.id);
+    setMySalesRep(meRep?.id ? { id: meRep.id } : null);
+    const visible = resolvedIsRep ? c : c.filter((x) => !isWalkInCustomer(x));
 
     setCustomers(c);
     setWarehouses(w);
@@ -95,7 +128,7 @@ export const PosPage: React.FC = () => {
     const failed = settled
       .map((s, i) =>
         s.status === 'rejected'
-          ? ['Customers', 'Warehouses', 'Products', 'Sales reps', 'Invoices'][i]
+          ? ['Customers', 'Warehouses', 'Products', 'Sales reps', 'Invoices', 'My sales rep'][i]
           : null
       )
       .filter(Boolean);
@@ -103,9 +136,21 @@ export const PosPage: React.FC = () => {
       await alertError('POS', `Could not load: ${failed.join(', ')}`);
     }
 
-    const walkIn = c.find((x: any) => x.customer_type === 'walk_in' || x.code === 'WALK-IN');
-    setCustomerId((id) => id || walkIn?.id || c[0]?.id || '');
-    setWarehouseId((id) => id || w[0]?.id || '');
+    const preferred =
+      (resolvedIsRep
+        ? visible.find((x) => isWalkInCustomer(x))
+        : visible.find((x) => !isWalkInCustomer(x))) || visible[0];
+    setCustomerId((id) =>
+      visible.some((x) => x.id === id) ? id : preferred?.id || ''
+    );
+    setWarehouseId((id) => (w.some((x) => x.id === id) ? id : w[0]?.id || ''));
+    setSalesRepId((id) => {
+      const nextCustomer =
+        visible.find((x) => x.id === (visible.some((v) => v.id === customerId) ? customerId : preferred?.id)) ||
+        preferred;
+      if (isWalkInCustomer(nextCustomer) && resolvedIsRep && resolvedRepId) return resolvedRepId;
+      return r.some((x) => x.id === id) ? id : '';
+    });
     const product = p[0];
     if (product && !productId) {
       const uom = defaultSellUomId(product);
@@ -117,7 +162,12 @@ export const PosPage: React.FC = () => {
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [activeBranchId]);
+
+  useEffect(() => {
+    if (!salesRepLocked) return;
+    setSalesRepId(mySalesRepId);
+  }, [salesRepLocked, mySalesRepId]);
 
   useEffect(() => {
     if (!selectedProduct) return;
@@ -192,8 +242,19 @@ export const PosPage: React.FC = () => {
           <div className="form-grid">
             <div className="field">
               <label>Customer</label>
-              <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} required>
-                {customers.map((c) => (
+              <select
+                value={customerId}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  const next = selectableCustomers.find((c) => c.id === nextId);
+                  setCustomerId(nextId);
+                  if (isWalkInCustomer(next) && isSalesRep && mySalesRepId) {
+                    setSalesRepId(mySalesRepId);
+                  }
+                }}
+                required
+              >
+                {selectableCustomers.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
@@ -283,12 +344,52 @@ export const PosPage: React.FC = () => {
           </div>
 
           <div className="field">
-            <label>Sales rep (optional)</label>
-            <select value={salesRepId} onChange={(e) => setSalesRepId(e.target.value)}>
-              <option value="">—</option>
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6
+              }}
+            >
+              Sales rep
+              <button
+                type="button"
+                aria-label="Sales rep help"
+                onClick={() =>
+                  void Swal.fire({
+                    icon: 'info',
+                    title: 'Sales rep',
+                    text: salesRepLocked
+                      ? 'Walk-in sales are locked to the logged-in sales representative and cannot be changed.'
+                      : 'Optional. Choose a sales representative for this sale when selling to account customers.',
+                    confirmButtonColor: '#0f5c4c'
+                  })
+                }
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: 'none',
+                  background: 'transparent',
+                  padding: 0,
+                  margin: 0,
+                  color: 'var(--ink-muted)',
+                  cursor: 'pointer'
+                }}
+              >
+                <Info size={15} />
+              </button>
+            </label>
+            <select
+              value={salesRepId}
+              onChange={(e) => setSalesRepId(e.target.value)}
+              disabled={salesRepLocked}
+              required={salesRepLocked}
+            >
+              {!salesRepLocked ? <option value="">—</option> : null}
               {reps.map((r) => (
                 <option key={r.id} value={r.id}>
-                  {r.name}
+                  {r.name || r.employee?.full_name}
                 </option>
               ))}
             </select>

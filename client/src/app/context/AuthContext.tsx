@@ -20,6 +20,8 @@ export type AuthUser = {
   business?: any;
   branches?: any[];
   active_branch_id?: string | null;
+  is_sales_rep?: boolean;
+  sales_rep?: { id: string; code?: string | null; status?: string; commission_percent?: number } | null;
 };
 
 export type BranchOption = {
@@ -80,6 +82,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       permissions?: string[];
       branches?: any[];
       active_branch_id?: string | null;
+      is_sales_rep?: boolean;
+      sales_rep?: AuthUser['sales_rep'];
     }) => {
       const branchList = normalizeBranches(next.branches ?? next.user.branches);
       const active =
@@ -91,7 +95,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...next.user,
         permissions: next.permissions || next.user.permissions || [],
         branches: branchList,
-        active_branch_id: active
+        active_branch_id: active,
+        is_sales_rep: Boolean(
+          next.is_sales_rep ?? next.user.is_sales_rep ?? next.sales_rep?.id ?? next.user.sales_rep?.id
+        ),
+        sales_rep: next.sales_rep ?? next.user.sales_rep ?? null
       };
       storage.setUser(merged);
       if (next.token) {
@@ -121,7 +129,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           user: me,
           permissions: me.permissions,
           branches: me.branches,
-          active_branch_id: me.active_branch_id || storage.getActiveBranchId()
+          active_branch_id: me.active_branch_id || storage.getActiveBranchId(),
+          is_sales_rep: me.is_sales_rep,
+          sales_rep: me.sales_rep
         });
       } catch {
         storage.clearAuth();
@@ -145,7 +155,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         token: result.token,
         permissions: result.permissions,
         branches: result.branches,
-        active_branch_id: result.active_branch_id
+        active_branch_id: result.active_branch_id,
+        is_sales_rep: result.is_sales_rep,
+        sales_rep: result.sales_rep
       });
     },
     [applySession]

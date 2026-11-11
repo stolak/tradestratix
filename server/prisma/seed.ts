@@ -1366,7 +1366,11 @@ async function main() {
 
   // Sales rep = employee first + login; commercial SalesRep profile is separate
   let salesRepUser = await prisma.user.findFirst({
-    where: { businessId: business.id, username: 'amaka' }
+    where: {
+      businessId: business.id,
+      OR: [{ username: 'amaka.sales' }, { username: 'amaka' }]
+    },
+    orderBy: { username: 'desc' }
   });
   if (!salesRepUser) {
     const salesRepRole = await prisma.role.findFirst({
@@ -1379,7 +1383,7 @@ async function main() {
       data: {
         id: id('usr'),
         businessId: business.id,
-        username: 'amaka',
+        username: 'amaka.sales',
         passwordHash: await bcrypt.hash('password123', 10),
         fullName: 'Amaka Sales',
         role: 'sales_representative',
@@ -1403,7 +1407,11 @@ async function main() {
   }
 
   let salesRepEmployee = await prisma.employee.findFirst({
-    where: { businessId: business.id, code: 'EMP-REP-01' }
+    where: {
+      businessId: business.id,
+      OR: [{ userId: salesRepUser.id }, { code: 'REP-01' }, { code: 'EMP-REP-01' }]
+    },
+    orderBy: { updatedAt: 'desc' }
   });
   if (!salesRepEmployee) {
     salesRepEmployee = await prisma.employee.create({
@@ -1423,15 +1431,22 @@ async function main() {
         createdById: owner.id
       }
     });
-  } else if (!salesRepEmployee.userId) {
+  } else if (salesRepEmployee.userId !== salesRepUser.id) {
     salesRepEmployee = await prisma.employee.update({
       where: { id: salesRepEmployee.id },
-      data: { userId: salesRepUser.id, branchId: salesRepEmployee.branchId || branch.id }
+      data: {
+        userId: salesRepUser.id,
+        branchId: salesRepEmployee.branchId || branch.id,
+        status: 'active'
+      }
     });
   }
 
   let salesRep = await prisma.salesRep.findFirst({
-    where: { businessId: business.id, code: 'REP-01' }
+    where: {
+      businessId: business.id,
+      OR: [{ employeeId: salesRepEmployee.id }, { code: 'REP-01' }, { code: 'EMP-REP-01' }]
+    }
   });
   if (!salesRep) {
     salesRep = await prisma.salesRep.create({
@@ -1440,14 +1455,18 @@ async function main() {
         businessId: business.id,
         employeeId: salesRepEmployee.id,
         code: 'REP-01',
+        status: 'active',
         commissionPercent: 5,
         createdById: owner.id
       }
     });
-  } else if (!salesRep.employeeId) {
+  } else {
     salesRep = await prisma.salesRep.update({
       where: { id: salesRep.id },
-      data: { employeeId: salesRepEmployee.id }
+      data: {
+        employeeId: salesRep.employeeId || salesRepEmployee.id,
+        status: 'active'
+      }
     });
   }
 
@@ -1654,6 +1673,40 @@ async function main() {
       module: 'dashboard'
     }
   }).catch(() => undefined);
+
+  // Ensure each user can operate warehouses in their authorised branches
+  const businessUsers = await prisma.user.findMany({
+    where: { businessId: business.id },
+    select: { id: true }
+  });
+  let whAssignments = 0;
+  for (const u of businessUsers) {
+    const memberships = await prisma.userBranch.findMany({
+      where: { userId: u.id, businessId: business.id, status: 'active' },
+      select: { branchId: true }
+    });
+    const branchIds = memberships.map((m) => m.branchId);
+    if (!branchIds.length) continue;
+    const whs = await prisma.warehouse.findMany({
+      where: { businessId: business.id, branchId: { in: branchIds }, isActive: true },
+      select: { id: true }
+    });
+    for (const wh of whs) {
+      await prisma.userWarehouse.upsert({
+        where: { userId_warehouseId: { userId: u.id, warehouseId: wh.id } },
+        create: {
+          userId: u.id,
+          businessId: business.id,
+          warehouseId: wh.id,
+          status: 'active',
+          assignedById: owner.id
+        },
+        update: { status: 'active' }
+      });
+      whAssignments += 1;
+    }
+  }
+  console.log(`User warehouse assignments synced (${whAssignments} rows touched)`);
 
   console.log(
     `Phase 6–9 samples: asset ${forklift.code}, budget ${opexBudget.name}, emp ${employee.code}, van ${van.code}, plan ${starter.code}`

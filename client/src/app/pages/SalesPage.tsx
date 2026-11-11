@@ -1,10 +1,27 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Info } from 'lucide-react';
+import Swal from 'sweetalert2';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
+import { useAuth } from '../context/AuthContext';
+import { SearchSelect } from '../components/SearchSelect';
 
 type Tab = 'invoices' | 'payments';
 
+function isWalkInCustomer(c: any) {
+  return (
+    c?.customer_type === 'walk_in' ||
+    String(c?.code || '').toUpperCase() === 'WALK-IN'
+  );
+}
+
 export const SalesPage: React.FC = () => {
+  const { activeBranchId, user } = useAuth();
+  const [mySalesRep, setMySalesRep] = useState<{ id: string } | null>(
+    () => (user?.sales_rep?.id ? { id: user.sales_rep.id } : null)
+  );
+  const isSalesRep = Boolean(user?.is_sales_rep || user?.sales_rep?.id || mySalesRep?.id);
+  const mySalesRepId = mySalesRep?.id || user?.sales_rep?.id || '';
   const [tab, setTab] = useState<Tab>('invoices');
   const [customers, setCustomers] = useState<any[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
@@ -30,6 +47,39 @@ export const SalesPage: React.FC = () => {
     method: 'cash',
     reference: ''
   });
+
+  const selectableCustomers = useMemo(
+    () => (isSalesRep ? customers : customers.filter((c) => !isWalkInCustomer(c))),
+    [customers, isSalesRep]
+  );
+
+  const selectedCustomer = useMemo(
+    () => selectableCustomers.find((c) => c.id === form.customer_id),
+    [selectableCustomers, form.customer_id]
+  );
+  const walkInSelected = isWalkInCustomer(selectedCustomer);
+  const salesRepLocked = walkInSelected && isSalesRep && !!mySalesRepId;
+
+  const customerOptions = useMemo(
+    () => selectableCustomers.map((c) => ({ value: c.id, label: c.name })),
+    [selectableCustomers]
+  );
+  const warehouseOptions = useMemo(
+    () => warehouses.map((w) => ({ value: w.id, label: `${w.code} — ${w.name}` })),
+    [warehouses]
+  );
+  const salesRepOptions = useMemo(
+    () =>
+      reps.map((r) => ({
+        value: r.id,
+        label: `${r.name || r.employee?.full_name || 'Rep'} (${Number(r.commission_percent)}%)`
+      })),
+    [reps]
+  );
+  const productOptions = useMemo(
+    () => products.map((p) => ({ value: p.id, label: p.name })),
+    [products]
+  );
 
   const uomsForProduct = (p: any) => {
     if (!p) return [] as { id: string; code: string; name: string }[];
@@ -67,11 +117,12 @@ export const SalesPage: React.FC = () => {
   const load = async () => {
     const settled = await Promise.allSettled([
       api.customers.list(),
-      api.warehouses.list(),
+      api.warehouses.list(activeBranchId || undefined),
       api.products.list(),
-      api.salesReps.list(),
+      api.salesReps.list(activeBranchId || undefined),
       api.sales.invoices(),
-      api.sales.payments()
+      api.sales.payments(),
+      api.salesReps.me()
     ]);
     const value = <T,>(i: number, fallback: T): T =>
       settled[i].status === 'fulfilled' ? ((settled[i] as PromiseFulfilledResult<T>).value as T) : fallback;
@@ -82,6 +133,12 @@ export const SalesPage: React.FC = () => {
     const r = value<any[]>(3, []);
     const inv = value<any[]>(4, []);
     const pay = value<any[]>(5, []);
+    const meRep = value<any | null>(6, null);
+    const resolvedRepId = meRep?.id || user?.sales_rep?.id || '';
+    const resolvedIsRep = Boolean(meRep?.id || user?.is_sales_rep || user?.sales_rep?.id);
+    setMySalesRep(meRep?.id ? { id: meRep.id } : null);
+
+    const visibleCustomers = resolvedIsRep ? c : c.filter((x) => !isWalkInCustomer(x));
 
     setCustomers(c);
     setWarehouses(w);
@@ -93,7 +150,9 @@ export const SalesPage: React.FC = () => {
     const failed = settled
       .map((s, i) =>
         s.status === 'rejected'
-          ? ['Customers', 'Warehouses', 'Products', 'Sales reps', 'Invoices', 'Payments'][i]
+          ? ['Customers', 'Warehouses', 'Products', 'Sales reps', 'Invoices', 'Payments', 'My sales rep'][
+              i
+            ]
           : null
       )
       .filter(Boolean);
@@ -105,24 +164,46 @@ export const SalesPage: React.FC = () => {
 
     const product = p[0];
     const uom = defaultSellUomId(product);
-    setForm((f) => ({
-      ...f,
-      customer_id:
-        f.customer_id || c.find((x: any) => x.customer_type !== 'walk_in')?.id || c[0]?.id || '',
-      warehouse_id: f.warehouse_id || w[0]?.id || '',
-      product_id: f.product_id || product?.id || '',
-      uom_id: f.uom_id || uom,
-      unit_price: f.unit_price || defaultPrice(product, uom)
-    }));
+    setForm((f) => {
+      const nextCustomer =
+        visibleCustomers.some((x) => x.id === f.customer_id)
+          ? f.customer_id
+          : visibleCustomers.find((x) => !isWalkInCustomer(x))?.id ||
+            visibleCustomers[0]?.id ||
+            '';
+      const nextCustomerRow = visibleCustomers.find((x) => x.id === nextCustomer);
+      const lockRep = isWalkInCustomer(nextCustomerRow) && resolvedIsRep && resolvedRepId;
+      return {
+        ...f,
+        customer_id: nextCustomer,
+        warehouse_id: w.some((x) => x.id === f.warehouse_id) ? f.warehouse_id : w[0]?.id || '',
+        sales_rep_id: lockRep
+          ? resolvedRepId
+          : r.some((x) => x.id === f.sales_rep_id)
+            ? f.sales_rep_id
+            : '',
+        product_id: f.product_id || product?.id || '',
+        uom_id: f.uom_id || uom,
+        unit_price: f.unit_price || defaultPrice(product, uom)
+      };
+    });
     setPayForm((f) => ({
       ...f,
-      customer_id: f.customer_id || c[0]?.id || ''
+      customer_id:
+        visibleCustomers.some((x) => x.id === f.customer_id)
+          ? f.customer_id
+          : visibleCustomers[0]?.id || ''
     }));
   };
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [activeBranchId]);
+
+  useEffect(() => {
+    if (!salesRepLocked) return;
+    setForm((f) => (f.sales_rep_id === mySalesRepId ? f : { ...f, sales_rep_id: mySalesRepId }));
+  }, [salesRepLocked, mySalesRepId]);
 
   useEffect(() => {
     if (!selectedProduct) return;
@@ -230,68 +311,97 @@ export const SalesPage: React.FC = () => {
             <div className="form-grid">
               <div className="field">
                 <label>Customer</label>
-                <select
+                <SearchSelect
                   value={form.customer_id}
-                  onChange={(e) => setForm({ ...form, customer_id: e.target.value })}
+                  options={customerOptions}
                   required
-                >
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Search customer…"
+                  onChange={(nextId) => {
+                    const next = selectableCustomers.find((c) => c.id === nextId);
+                    const lockRep = isWalkInCustomer(next) && isSalesRep && mySalesRepId;
+                    setForm({
+                      ...form,
+                      customer_id: nextId,
+                      sales_rep_id: lockRep ? mySalesRepId : form.sales_rep_id
+                    });
+                  }}
+                />
               </div>
               <div className="field">
                 <label>Warehouse</label>
-                <select
+                <SearchSelect
                   value={form.warehouse_id}
-                  onChange={(e) => setForm({ ...form, warehouse_id: e.target.value })}
+                  options={warehouseOptions}
                   required
-                >
-                  {warehouses.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.code} — {w.name}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Search warehouse…"
+                  onChange={(warehouse_id) => setForm({ ...form, warehouse_id })}
+                />
               </div>
               <div className="field">
-                <label>Sales rep (optional)</label>
-                <select
-                  value={form.sales_rep_id}
-                  onChange={(e) => setForm({ ...form, sales_rep_id: e.target.value })}
+                <label
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6
+                  }}
                 >
-                  <option value="">—</option>
-                  {reps.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name} ({Number(r.commission_percent)}%)
-                    </option>
-                  ))}
-                </select>
+                  Sales rep
+                  <button
+                    type="button"
+                    aria-label="Sales rep help"
+                    onClick={() =>
+                      void Swal.fire({
+                        icon: 'info',
+                        title: 'Sales rep',
+                        text: salesRepLocked
+                          ? 'Walk-in sales are locked to the logged-in sales representative and cannot be changed.'
+                          : 'Optional. Choose a sales representative for this invoice when selling to account customers.',
+                        confirmButtonColor: '#0f5c4c'
+                      })
+                    }
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: 'none',
+                      background: 'transparent',
+                      padding: 0,
+                      margin: 0,
+                      color: 'var(--ink-muted)',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <Info size={15} />
+                  </button>
+                </label>
+                <SearchSelect
+                  value={form.sales_rep_id}
+                  options={salesRepOptions}
+                  disabled={salesRepLocked}
+                  required={salesRepLocked}
+                  allowEmpty={!salesRepLocked}
+                  placeholder="Search sales rep…"
+                  onChange={(sales_rep_id) => setForm({ ...form, sales_rep_id })}
+                />
               </div>
               <div className="field">
                 <label>Product</label>
-                <select
+                <SearchSelect
                   value={form.product_id}
-                  onChange={(e) => {
-                    const p = products.find((x) => x.id === e.target.value);
+                  options={productOptions}
+                  required
+                  placeholder="Search product…"
+                  onChange={(product_id) => {
+                    const p = products.find((x) => x.id === product_id);
                     const uom = defaultSellUomId(p);
                     setForm({
                       ...form,
-                      product_id: e.target.value,
+                      product_id,
                       uom_id: uom,
                       unit_price: defaultPrice(p, uom)
                     });
                   }}
-                  required
-                >
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
               <div className="field">
                 <label>Selling UoM</label>

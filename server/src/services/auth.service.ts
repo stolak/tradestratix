@@ -89,6 +89,14 @@ export async function login(
   });
 
   const freshUser = await prisma.user.findUnique({ where: { id: user.id } });
+  const salesRep = await prisma.salesRep.findFirst({
+    where: {
+      businessId: user.businessId,
+      status: 'active',
+      employee: { userId: user.id }
+    },
+    select: { id: true, code: true, status: true, commissionPercent: true }
+  });
 
   return {
     token,
@@ -96,7 +104,16 @@ export async function login(
     business: serialize(user.business),
     permissions: authUser.permissions,
     branches: serialize(branches),
-    active_branch_id: authUser.activeBranchId
+    active_branch_id: authUser.activeBranchId,
+    sales_rep: salesRep
+      ? serialize({
+          id: salesRep.id,
+          code: salesRep.code,
+          status: salesRep.status,
+          commission_percent: salesRep.commissionPercent
+        })
+      : null,
+    is_sales_rep: !!salesRep
   };
 }
 
@@ -114,12 +131,30 @@ export async function me(user: AuthUser) {
   const authUser = await toAuthUser(user.id, user.activeBranchId);
   const branches = await branchAccess.listAuthorisedBranches(authUser);
 
+  const salesRep = await prisma.salesRep.findFirst({
+    where: {
+      businessId: user.businessId,
+      status: 'active',
+      employee: { userId: user.id }
+    },
+    select: { id: true, code: true, status: true, commissionPercent: true }
+  });
+
   const profile = serialize(omitPassword(row));
   return {
     ...(typeof profile === 'object' && profile !== null ? (profile as Record<string, unknown>) : {}),
     permissions,
     branches: serialize(branches),
-    active_branch_id: authUser.activeBranchId
+    active_branch_id: authUser.activeBranchId,
+    sales_rep: salesRep
+      ? serialize({
+          id: salesRep.id,
+          code: salesRep.code,
+          status: salesRep.status,
+          commission_percent: salesRep.commissionPercent
+        })
+      : null,
+    is_sales_rep: !!salesRep
   };
 }
 
