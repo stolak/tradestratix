@@ -82,6 +82,7 @@ model Business {
   warehouses           Warehouse[]
   users                User[]
   userBranches         UserBranch[]
+  userWarehouses       UserWarehouse[]
   roles                Role[]
   accounts             Account[]
   journalEntries       JournalEntry[]
@@ -233,6 +234,7 @@ model Warehouse {
   goodsReceipts  GoodsReceiptNote[]
   salesInvoices  SalesInvoice[]
   deliveryOrders DeliveryOrder[]
+  userWarehouses UserWarehouse[]
 
   @@unique([businessId, code])
   @@index([branchId])
@@ -266,6 +268,7 @@ model User {
   userRoles       UserRole[]
   permissionOverrides UserPermissionOverride[]
   userBranches    UserBranch[]
+  userWarehouses  UserWarehouse[]
   loginHistory    LoginHistory[]
   refreshTokens   RefreshToken[]
   salesReps       SalesRep[]
@@ -397,6 +400,24 @@ model UserBranch {
   @@index([businessId, userId])
   @@index([branchId, status])
   @@map("user_branches")
+}
+
+model UserWarehouse {
+  userId       String    @map("user_id")
+  businessId   String    @map("business_id")
+  warehouseId  String    @map("warehouse_id")
+  /// active | revoked
+  status       String    @default("active")
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  assignedById String?   @map("assigned_by_id")
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  warehouse    Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  business     Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@id([userId, warehouseId])
+  @@index([businessId, userId])
+  @@index([warehouseId, status])
+  @@map("user_warehouses")
 }
 
 model LoginHistory {

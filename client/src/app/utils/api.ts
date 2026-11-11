@@ -87,7 +87,9 @@ export const api = {
   users: {
     list: () => request<any[]>('/users'),
     create: (body: Record<string, unknown>) =>
-      request<any>('/users', { method: 'POST', body: JSON.stringify(body) })
+      request<any>('/users', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(body) })
   },
   rbac: {
     roles: () => request<any[]>('/rbac/roles'),
