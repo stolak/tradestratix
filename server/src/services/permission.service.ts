@@ -1,5 +1,7 @@
 import { prisma } from '../utils/prisma.js';
-import { serialize } from '../utils/helpers.js';
+import { httpError, serialize } from '../utils/helpers.js';
+import type { AuthUser } from '../types/express/index.js';
+import { writeAudit } from './audit.service.js';
 
 export async function getUserPermissionCodes(userId: string): Promise<string[]> {
   const user = await prisma.user.findUnique({
@@ -46,7 +48,21 @@ export async function userHasAnyPermission(userId: string, codes: string[]): Pro
 }
 
 export async function listPermissions() {
-  const rows = await prisma.permission.findMany({ orderBy: [{ module: 'asc' }, { sortOrder: 'asc' }] });
+  const rows = await prisma.permission.findMany({
+    where: { isActive: true },
+    orderBy: [{ module: 'asc' }, { sortOrder: 'asc' }]
+  });
+  return serialize(rows);
+}
+
+export async function listMenus(businessId: string) {
+  const rows = await prisma.menu.findMany({
+    where: {
+      isActive: true,
+      OR: [{ businessId }, { businessId: null }]
+    },
+    orderBy: [{ section: 'asc' }, { sortOrder: 'asc' }]
+  });
   return serialize(rows);
 }
 
@@ -60,6 +76,97 @@ export async function listRoles(businessId: string) {
     orderBy: { sortOrder: 'asc' }
   });
   return serialize(rows);
+}
+
+export async function getRole(businessId: string, roleId: string) {
+  const role = await prisma.role.findFirst({
+    where: {
+      id: roleId,
+      OR: [{ businessId }, { businessId: null }]
+    },
+    include: {
+      rolePermissions: { include: { permission: true } },
+      roleMenus: { include: { menu: true } }
+    }
+  });
+  if (!role) throw httpError(404, 'Role not found');
+  return serialize(role);
+}
+
+export async function updateRoleAccess(
+  actor: AuthUser,
+  roleId: string,
+  body: Record<string, any>
+) {
+  const role = await prisma.role.findFirst({
+    where: {
+      id: roleId,
+      OR: [{ businessId: actor.businessId }, { businessId: null }]
+    }
+  });
+  if (!role) throw httpError(404, 'Role not found');
+
+  const rawPermissionIds = body.permission_ids ?? body.permissionIds;
+  const rawMenuIds = body.menu_ids ?? body.menuIds;
+  const permissionIds: string[] | null = Array.isArray(rawPermissionIds)
+    ? [...new Set(rawPermissionIds.map((v) => String(v)).filter((v): v is string => Boolean(v)))]
+    : null;
+  const menuIds: string[] | null = Array.isArray(rawMenuIds)
+    ? [...new Set(rawMenuIds.map((v) => String(v)).filter((v): v is string => Boolean(v)))]
+    : null;
+
+  if (permissionIds) {
+    if (permissionIds.length) {
+      const count = await prisma.permission.count({
+        where: { id: { in: permissionIds }, isActive: true }
+      });
+      if (count !== permissionIds.length) {
+        throw httpError(400, 'One or more permission_ids are invalid');
+      }
+    }
+    await prisma.$transaction(async (tx) => {
+      await tx.rolePermission.deleteMany({ where: { roleId } });
+      if (permissionIds.length) {
+        await tx.rolePermission.createMany({
+          data: permissionIds.map((permissionId) => ({ roleId, permissionId }))
+        });
+      }
+    });
+  }
+
+  if (menuIds) {
+    if (menuIds.length) {
+      const count = await prisma.menu.count({
+        where: {
+          id: { in: menuIds },
+          isActive: true,
+          OR: [{ businessId: actor.businessId }, { businessId: null }]
+        }
+      });
+      if (count !== menuIds.length) {
+        throw httpError(400, 'One or more menu_ids are invalid');
+      }
+    }
+    await prisma.$transaction(async (tx) => {
+      await tx.roleMenu.deleteMany({ where: { roleId } });
+      if (menuIds.length) {
+        await tx.roleMenu.createMany({
+          data: menuIds.map((menuId) => ({ roleId, menuId }))
+        });
+      }
+    });
+  }
+
+  await writeAudit({
+    user: actor,
+    action: 'update_access',
+    module: 'roles',
+    entityType: 'Role',
+    entityId: roleId,
+    summary: `Updated access for role ${role.code}`
+  });
+
+  return getRole(actor.businessId, roleId);
 }
 
 export async function getUserMenus(userId: string) {

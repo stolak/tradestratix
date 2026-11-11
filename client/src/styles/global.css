@@ -331,6 +331,235 @@ a {
   font-size: clamp(1.6rem, 3vw, 2.2rem);
 }
 
+/* ── Roles access editor ─────────────────────────────────────────── */
+
+.roles-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 1rem;
+  min-width: 0;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .roles-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.roles-list {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.75rem;
+  max-height: min(70vh, 720px);
+  overflow: auto;
+}
+
+.roles-list__item {
+  display: grid;
+  gap: 0.2rem;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 0.75rem 0.85rem;
+  background: rgba(255, 255, 255, 0.45);
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.roles-list__item:hover {
+  border-color: color-mix(in srgb, var(--brand) 25%, var(--line));
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.roles-list__item.is-active {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--line));
+  background:
+    linear-gradient(135deg, rgba(15, 92, 76, 0.08), transparent 55%),
+    rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 12%, transparent);
+}
+
+.roles-list__name {
+  font-weight: 650;
+  font-size: 0.95rem;
+}
+
+.roles-list__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+}
+
+.card-surface.roles-editor,
+.roles-editor {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+  overflow: visible;
+}
+
+.roles-editor__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.85rem;
+  padding: 1rem 1.15rem;
+}
+
+.roles-editor__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0 1.15rem;
+}
+
+.roles-tab {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.55);
+  color: var(--ink-muted);
+  border-radius: 999px;
+  padding: 0.45rem 0.9rem;
+  font-weight: 600;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+
+.roles-tab.is-active {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: white;
+}
+
+.roles-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  align-items: end;
+  padding: 0 1.15rem;
+}
+
+.roles-panel {
+  padding: 0 1.15rem 1.15rem;
+  display: grid;
+  gap: 0.85rem;
+  max-height: min(62vh, 640px);
+  overflow: auto;
+  min-width: 0;
+}
+
+.roles-module {
+  border: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  overflow: visible;
+  min-width: 0;
+}
+
+.roles-module__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 0.9rem;
+  background: rgba(15, 92, 76, 0.04);
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+}
+
+.roles-module__title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-transform: capitalize;
+  color: var(--ink);
+}
+
+.roles-module__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.55rem;
+  min-width: 0;
+}
+
+.roles-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--ink);
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid transparent;
+}
+
+.roles-check:hover {
+  border-color: color-mix(in srgb, var(--brand) 22%, var(--line));
+  background: rgba(15, 92, 76, 0.05);
+}
+
+.roles-check.is-on {
+  border-color: color-mix(in srgb, var(--brand) 35%, var(--line));
+  background: rgba(15, 92, 76, 0.07);
+}
+
+.roles-check input[type='checkbox'] {
+  appearance: auto;
+  -webkit-appearance: checkbox;
+  width: 1.1rem;
+  height: 1.1rem;
+  min-width: 1.1rem;
+  margin: 0.15rem 0 0;
+  flex: 0 0 auto;
+  accent-color: var(--brand);
+  cursor: pointer;
+}
+
+.roles-check__text {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.roles-check__code {
+  display: block;
+  color: var(--ink-muted);
+  font-size: 0.74rem;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.roles-empty {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--ink-muted);
+}
+
+.roles-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.9rem 1.15rem;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 252, 247, 0.92);
+  position: sticky;
+  bottom: 0;
+}
+
 .split-2 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

@@ -93,8 +93,15 @@ export const api = {
   },
   rbac: {
     roles: () => request<any[]>('/rbac/roles'),
+    role: (id: string) => request<any>(`/rbac/roles/${id}`),
     permissions: () => request<any[]>('/rbac/permissions'),
-    menus: () => request<any[]>('/rbac/me/menus')
+    menus: () => request<any[]>('/rbac/menus'),
+    myMenus: () => request<any[]>('/rbac/me/menus'),
+    updateRoleAccess: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/rbac/roles/${id}/access`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      })
   },
   accounting: {
     accounts: () => request<any[]>('/accounting/accounts'),
