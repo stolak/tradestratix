@@ -13,6 +13,7 @@ import { convertToBaseQty, createStockMovement } from './inventory.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import * as branchAccess from './branch-access.service.js';
 import { assertSalesRepInBranch } from './sales-rep.service.js';
+import { userHasAnyPermission } from './permission.service.js';
 
 type BranchListOpts = {
   branchId?: string | null;
@@ -75,12 +76,18 @@ async function productAllowedUomIds(productId: string, baseUomId: string, sellin
   return ids;
 }
 
-function resolveUnitPrice(product: any, bodyItem: any, uomId: string) {
-  if (bodyItem.unit_price != null || bodyItem.unitPrice != null) {
-    return Number(bodyItem.unit_price ?? bodyItem.unitPrice);
+/** Price attached to the selected UoM (selling-price row, then level/default fallbacks). */
+function listUnitPrice(product: any, bodyItem: any, uomId: string, index: number) {
+  const prices: any[] = product.sellingPrices || [];
+  const sellingPriceId = bodyItem.selling_price_id || bodyItem.sellingPriceId;
+  if (sellingPriceId) {
+    const row = prices.find((p) => p.id === sellingPriceId && p.isActive);
+    if (!row || row.uomId !== uomId) {
+      throw httpError(400, `items[${index}].selling_price_id does not match the product and UoM`);
+    }
+    return Number(row.unitPrice);
   }
   const level = String(bodyItem.price_level || bodyItem.priceLevel || 'retail').toLowerCase();
-  const prices: any[] = product.sellingPrices || [];
   const match =
     prices.find((p) => p.uomId === uomId && p.priceLevel === level && p.isActive) ||
     prices.find((p) => p.uomId === uomId && p.isDefault && p.isActive) ||
@@ -95,6 +102,7 @@ function resolveUnitPrice(product: any, bodyItem: any, uomId: string) {
 
 async function buildInvoiceLines(user: AuthUser, itemsInput: any[]) {
   if (!itemsInput.length) throw httpError(400, 'At least one line item is required');
+  const canChangePrice = await userHasAnyPermission(user.id, ['sales.change_price']);
   const lines: {
     productId: string;
     variantId: string | null;
@@ -139,7 +147,24 @@ async function buildInvoiceLines(user: AuthUser, itemsInput: any[]) {
 
     const qty = Number(item.quantity);
     if (!qty || qty <= 0) throw httpError(400, `items[${i}].quantity must be > 0`);
-    const unitPrice = resolveUnitPrice(product, item, uomId);
+    const listPrice = listUnitPrice(product, item, uomId, i);
+    const requested = item.unit_price ?? item.unitPrice;
+    let unitPrice = listPrice;
+    if (requested != null && requested !== '') {
+      const requestedPrice = Number(requested);
+      if (!Number.isFinite(requestedPrice)) {
+        throw httpError(400, `items[${i}].unit_price is invalid`);
+      }
+      if (Math.abs(requestedPrice - listPrice) > 0.0001) {
+        if (!canChangePrice) {
+          throw httpError(
+            403,
+            `items[${i}]: you do not have permission to change the selling price (sales.change_price)`
+          );
+        }
+        unitPrice = requestedPrice;
+      }
+    }
     if (unitPrice < 0) throw httpError(400, `items[${i}].unit_price cannot be negative`);
 
     lines.push({

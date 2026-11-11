@@ -402,6 +402,12 @@ a {
   box-shadow: 0 0 0 3px rgba(15, 92, 76, 0.14);
 }
 
+.line-items__table input:read-only {
+  background: #f5f6f7;
+  color: var(--ink-muted);
+  cursor: not-allowed;
+}
+
 .line-items__table select:disabled {
   background: #f5f6f7;
   color: var(--ink-muted);

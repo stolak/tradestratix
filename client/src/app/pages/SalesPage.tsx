@@ -98,7 +98,8 @@ function lineSubtotal(line: LineItem) {
 }
 
 export const SalesPage: React.FC = () => {
-  const { activeBranchId, user } = useAuth();
+  const { activeBranchId, user, can } = useAuth();
+  const canChangePrice = can('sales.change_price');
   const [mySalesRep, setMySalesRep] = useState<{ id: string } | null>(
     () => (user?.sales_rep?.id ? { id: user.sales_rep.id } : null)
   );
@@ -315,6 +316,7 @@ export const SalesPage: React.FC = () => {
       .map((l) => ({
         product_id: l.product_id,
         uom_id: l.uom_id,
+        selling_price_id: l.selling_price_id || undefined,
         quantity: Number(l.quantity),
         unit_price: Number(l.unit_price)
       }));
@@ -577,6 +579,12 @@ export const SalesPage: React.FC = () => {
                             className="line-items__qty"
                             value={line.unit_price}
                             onChange={(e) => updateLine(line.key, { unit_price: e.target.value })}
+                            readOnly={!canChangePrice}
+                            title={
+                              canChangePrice
+                                ? undefined
+                                : 'Price is set by the selected UoM. You need the "change price" privilege to edit it.'
+                            }
                             required
                           />
                         </td>

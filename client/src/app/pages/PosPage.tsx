@@ -23,7 +23,8 @@ function isWalkInCustomer(c: any) {
 }
 
 export const PosPage: React.FC = () => {
-  const { activeBranchId, user } = useAuth();
+  const { activeBranchId, user, can } = useAuth();
+  const canChangePrice = can('sales.change_price');
   const [mySalesRep, setMySalesRep] = useState<{ id: string } | null>(
     () => (user?.sales_rep?.id ? { id: user.sales_rep.id } : null)
   );
@@ -74,9 +75,11 @@ export const PosPage: React.FC = () => {
 
   const defaultPrice = (p: any, uom: string) => {
     if (!p) return '0';
-    const sp = (p.selling_prices || []).find(
-      (s: any) => (s.uom_id || s.uom?.id) === uom && (s.is_default || s.price_level === 'retail')
+    const rows = ((p.selling_prices || []) as any[]).filter(
+      (s) => (s.uom_id || s.uom?.id) === uom && s.is_active !== false
     );
+    const sp =
+      rows.find((s) => s.price_level === 'retail') || rows.find((s) => s.is_default) || rows[0];
     if (sp) return String(sp.unit_price ?? 0);
     return String(p.default_selling_price ?? 0);
   };
@@ -213,7 +216,7 @@ export const PosPage: React.FC = () => {
           product_id: l.product_id,
           uom_id: l.uom_id,
           quantity: Number(l.quantity),
-          unit_price: Number(l.unit_price)
+          ...(canChangePrice ? { unit_price: Number(l.unit_price) } : {})
         }))
       });
       await alertSuccess('Sale complete', `${sale.invoice_number} · ${Number(sale.total_amount).toLocaleString()}`);
@@ -334,6 +337,13 @@ export const PosPage: React.FC = () => {
                 step="any"
                 value={unitPrice}
                 onChange={(e) => setUnitPrice(e.target.value)}
+                readOnly={!canChangePrice}
+                title={
+                  canChangePrice
+                    ? undefined
+                    : 'Price is set by the selected UoM. You need the "change price" privilege to edit it.'
+                }
+                style={canChangePrice ? undefined : { background: '#f5f6f7', cursor: 'not-allowed' }}
               />
             </div>
             <div className="form-grid--actions">

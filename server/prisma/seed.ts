@@ -562,26 +562,38 @@ async function main() {
     }
   }
 
-  // One-off consolidated branch reporting permission
-  {
-    const code = 'branches.report_all';
+  // Special-purpose permissions outside the module × action grid
+  const EXTRA_PERMISSIONS = [
+    {
+      module: 'branches',
+      action: 'report_all',
+      description: 'Consolidate / report across all authorised branches'
+    },
+    {
+      module: 'sales',
+      action: 'change_price',
+      description: 'Override the unit price on sales and POS lines (otherwise the UoM selling price is used)'
+    }
+  ];
+  for (const p of EXTRA_PERMISSIONS) {
+    const code = `${p.module}.${p.action}`;
     const existing = await prisma.permission.findUnique({ where: { code } });
     if (existing) {
       permissionIds[code] = existing.id;
-    } else {
-      const row = await prisma.permission.create({
-        data: {
-          id: id('perm'),
-          code,
-          name: 'branches report_all',
-          description: 'Consolidate / report across all authorised branches',
-          module: 'branches',
-          action: 'report_all',
-          sortOrder: sort++
-        }
-      });
-      permissionIds[code] = row.id;
+      continue;
     }
+    const row = await prisma.permission.create({
+      data: {
+        id: id('perm'),
+        code,
+        name: `${p.module} ${p.action}`,
+        description: p.description,
+        module: p.module,
+        action: p.action,
+        sortOrder: sort++
+      }
+    });
+    permissionIds[code] = row.id;
   }
 
   // System roles (platform-wide templates, businessId null)
@@ -1406,13 +1418,17 @@ async function main() {
     });
   }
 
-  let salesRepEmployee = await prisma.employee.findFirst({
-    where: {
-      businessId: business.id,
-      OR: [{ userId: salesRepUser.id }, { code: 'REP-01' }, { code: 'EMP-REP-01' }]
-    },
-    orderBy: { updatedAt: 'desc' }
-  });
+  let salesRepEmployee =
+    (await prisma.employee.findFirst({
+      where: { businessId: business.id, userId: salesRepUser.id }
+    })) ||
+    (await prisma.employee.findFirst({
+      where: {
+        businessId: business.id,
+        userId: null,
+        OR: [{ code: 'REP-01' }, { code: 'EMP-REP-01' }]
+      }
+    }));
   if (!salesRepEmployee) {
     salesRepEmployee = await prisma.employee.create({
       data: {
