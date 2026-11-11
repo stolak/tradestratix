@@ -1,5 +1,5 @@
 import { prisma } from '../utils/prisma.js';
-import { roundMoney, serialize } from '../utils/helpers.js';
+import { httpError, roundMoney, serialize } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import * as branchAccess from './branch-access.service.js';
 
@@ -161,6 +161,186 @@ export async function apAging(user: AuthUser, asOf?: string | Date, opts?: Branc
     suppliers: [...bySupplier.values()].sort((a, b) =>
       a.supplier_name.localeCompare(b.supplier_name)
     )
+  };
+}
+
+/**
+ * Stock on hand by product variant × warehouse, as of now.
+ * Empty branchIds = every branch the user may see; empty warehouseIds = every warehouse in those branches.
+ */
+export async function stockBalance(
+  user: AuthUser,
+  filters: {
+    branchIds?: string[];
+    warehouseIds?: string[];
+    q?: string | null;
+    includeZero?: boolean;
+  } = {}
+) {
+  const authorisedBranches = await branchAccess.listAuthorisedBranches(user);
+  const authorisedIds = new Set(authorisedBranches.map((b) => b.id));
+  const requestedBranches = [...new Set(filters.branchIds || [])];
+  const denied = requestedBranches.filter((id) => !authorisedIds.has(id));
+  if (denied.length) throw httpError(403, 'You do not have access to one or more selected branches');
+  const branchIds = requestedBranches.length ? requestedBranches : [...authorisedIds];
+
+  const availableWarehouses = await prisma.warehouse.findMany({
+    where: { businessId: user.businessId, branchId: { in: [...authorisedIds] } },
+    select: { id: true, code: true, name: true, branchId: true, isActive: true, category: true },
+    orderBy: [{ branchId: 'asc' }, { name: 'asc' }]
+  });
+  const inBranches = availableWarehouses.filter((w) => branchIds.includes(w.branchId));
+  const requestedWarehouses = [...new Set(filters.warehouseIds || [])];
+  const unknown = requestedWarehouses.filter((id) => !inBranches.some((w) => w.id === id));
+  if (unknown.length) {
+    throw httpError(400, 'One or more selected warehouses are not in the selected branches');
+  }
+  const warehouseIds = requestedWarehouses.length ? requestedWarehouses : inBranches.map((w) => w.id);
+
+  const q = filters.q?.trim();
+  const lots = warehouseIds.length
+    ? await prisma.stockLot.findMany({
+        where: {
+          businessId: user.businessId,
+          warehouseId: { in: warehouseIds },
+          ...(q
+            ? {
+                OR: [
+                  { product: { name: { contains: q } } },
+                  { product: { sku: { contains: q } } },
+                  { variant: { sku: { contains: q } } },
+                  { variant: { name: { contains: q } } }
+                ]
+              }
+            : {})
+        },
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              reorderLevel: true,
+              category: { select: { name: true } },
+              baseUom: { select: { code: true } }
+            }
+          },
+          variant: { select: { id: true, name: true, sku: true, isDefault: true } }
+        }
+      })
+    : [];
+
+  const today = new Date().toISOString().slice(0, 10);
+  const warehouseById = new Map(availableWarehouses.map((w) => [w.id, w]));
+  const branchById = new Map(authorisedBranches.map((b) => [b.id, b]));
+  type Row = {
+    product_id: string;
+    product_name: string;
+    product_sku: string | null;
+    variant_id: string;
+    variant_name: string | null;
+    variant_sku: string | null;
+    category: string | null;
+    uom: string | null;
+    reorder_level: number;
+    warehouse_id: string;
+    warehouse_code: string;
+    warehouse_name: string;
+    branch_id: string;
+    branch_name: string;
+    lots: number;
+    on_hand: number;
+    reserved: number;
+    available: number;
+    in_transit: number;
+    expired_qty: number;
+    stock_value: number;
+    avg_cost: number | null;
+  };
+  const rows = new Map<string, Row>();
+  for (const lot of lots) {
+    const key = `${lot.variantId}:${lot.warehouseId}`;
+    const wh = warehouseById.get(lot.warehouseId)!;
+    const row =
+      rows.get(key) ||
+      ({
+        product_id: lot.productId,
+        product_name: lot.product.name,
+        product_sku: lot.product.sku,
+        variant_id: lot.variantId,
+        variant_name: lot.variant.isDefault ? null : lot.variant.name,
+        variant_sku: lot.variant.sku,
+        category: lot.product.category?.name ?? null,
+        uom: lot.product.baseUom?.code ?? null,
+        reorder_level: Number(lot.product.reorderLevel || 0),
+        warehouse_id: wh.id,
+        warehouse_code: wh.code,
+        warehouse_name: wh.name,
+        branch_id: wh.branchId,
+        branch_name: branchById.get(wh.branchId)?.name ?? '',
+        lots: 0,
+        on_hand: 0,
+        reserved: 0,
+        available: 0,
+        in_transit: 0,
+        expired_qty: 0,
+        stock_value: 0,
+        avg_cost: null
+      } as Row);
+    const onHand = Number(lot.quantityOnHand);
+    if (onHand > 0) row.lots += 1;
+    row.on_hand += onHand;
+    row.reserved += Number(lot.quantityReserved);
+    row.in_transit += Number(lot.quantityInTransit);
+    if (lot.expiryDate && lot.expiryDate < today) row.expired_qty += onHand;
+    row.stock_value += onHand * Number(lot.unitCost || 0);
+    rows.set(key, row);
+  }
+
+  const qty = (n: number) => Math.round(n * 10000) / 10000;
+  const result = [...rows.values()]
+    .map((r) => ({
+      ...r,
+      on_hand: qty(r.on_hand),
+      reserved: qty(r.reserved),
+      available: qty(r.on_hand - r.reserved),
+      in_transit: qty(r.in_transit),
+      expired_qty: qty(r.expired_qty),
+      stock_value: roundMoney(r.stock_value),
+      avg_cost: r.on_hand > 0 ? roundMoney(r.stock_value / r.on_hand) : null
+    }))
+    .filter((r) => filters.includeZero || Math.abs(r.on_hand) > 1e-9 || Math.abs(r.in_transit) > 1e-9)
+    .sort(
+      (a, b) =>
+        a.product_name.localeCompare(b.product_name) ||
+        String(a.variant_name || '').localeCompare(String(b.variant_name || '')) ||
+        a.branch_name.localeCompare(b.branch_name) ||
+        a.warehouse_name.localeCompare(b.warehouse_name)
+    );
+
+  return {
+    as_of: new Date().toISOString(),
+    filter: {
+      branch_ids: requestedBranches,
+      warehouse_ids: requestedWarehouses
+    },
+    options: {
+      branches: authorisedBranches.map((b) => ({ id: b.id, code: b.code, name: b.name, is_active: b.isActive })),
+      warehouses: availableWarehouses.map((w) => ({
+        id: w.id,
+        code: w.code,
+        name: w.name,
+        branch_id: w.branchId,
+        is_active: w.isActive
+      }))
+    },
+    totals: {
+      products: new Set(result.map((r) => r.variant_id)).size,
+      warehouses: new Set(result.map((r) => r.warehouse_id)).size,
+      on_hand: qty(result.reduce((s, r) => s + r.on_hand, 0)),
+      stock_value: roundMoney(result.reduce((s, r) => s + r.stock_value, 0))
+    },
+    rows: result
   };
 }
 

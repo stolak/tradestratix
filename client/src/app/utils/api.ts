@@ -177,6 +177,17 @@ export const api = {
       request<any>(`/reports/ar-aging${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ''}`),
     apAging: (asOf?: string) =>
       request<any>(`/reports/ap-aging${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ''}`),
+    stockBalance: (
+      filter: { branch_ids?: string[]; warehouse_ids?: string[]; q?: string; include_zero?: boolean } = {}
+    ) => {
+      const params = new URLSearchParams();
+      if (filter.branch_ids?.length) params.set('branch_ids', filter.branch_ids.join(','));
+      if (filter.warehouse_ids?.length) params.set('warehouse_ids', filter.warehouse_ids.join(','));
+      if (filter.q) params.set('q', filter.q);
+      if (filter.include_zero) params.set('include_zero', '1');
+      const qs = params.toString();
+      return request<any>(`/reports/stock-balance${qs ? `?${qs}` : ''}`);
+    },
     customerStatement: (customerId: string) =>
       request<any>(`/reports/customers/${customerId}/statement`),
     supplierStatement: (supplierId: string) =>

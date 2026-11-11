@@ -27,6 +27,29 @@ export async function apAging(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+function idList(v: unknown): string[] {
+  const raw = Array.isArray(v) ? v.join(',') : typeof v === 'string' ? v : '';
+  return raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export async function stockBalance(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await reportsService.stockBalance(req.user!, {
+        branchIds: idList(req.query.branch_ids),
+        warehouseIds: idList(req.query.warehouse_ids),
+        q: typeof req.query.q === 'string' ? req.query.q : null,
+        includeZero: req.query.include_zero === '1' || req.query.include_zero === 'true'
+      })
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function customerStatement(req: Request, res: Response, next: NextFunction) {
   try {
     const data = await reportsService.customerStatement(

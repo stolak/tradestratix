@@ -100,7 +100,7 @@ const NAV = [
       { route: ROUTES.BANKING, label: 'Banking', icon: 'Landmark', perm: 'banking.view' },
       { route: ROUTES.EXPENSES, label: 'Expenses', icon: 'Receipt', perm: 'expenses.view' },
       { route: ROUTES.ASSETS, label: 'Assets', icon: 'Building2', perm: 'assets.view' },
-      { route: ROUTES.REPORTS, label: 'Statements', icon: 'BarChart3', perm: 'reports.view' }
+      { route: ROUTES.REPORTS, label: 'Reports', icon: 'BarChart3', perm: 'reports.view' }
     ]
   },
   {
