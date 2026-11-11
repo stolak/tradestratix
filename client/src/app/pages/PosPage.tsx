@@ -80,7 +80,7 @@ export const PosPage: React.FC = () => {
     );
     const sp =
       rows.find((s) => s.price_level === 'retail') || rows.find((s) => s.is_default) || rows[0];
-    if (sp) return String(sp.unit_price ?? 0);
+    if (sp) return String(sp.effective_unit_price ?? sp.unit_price ?? 0);
     return String(p.default_selling_price ?? 0);
   };
 

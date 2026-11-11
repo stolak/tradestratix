@@ -4,6 +4,7 @@ export const ROUTES = {
   POS: 'pos',
   PURCHASES: 'purchases',
   PRODUCTS: 'products',
+  BRANCH_PRICING: 'branch_pricing',
   INVENTORY: 'inventory',
   WAREHOUSES: 'warehouses',
   SUPPLIERS: 'suppliers',

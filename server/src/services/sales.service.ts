@@ -14,6 +14,11 @@ import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import * as branchAccess from './branch-access.service.js';
 import { assertSalesRepInBranch } from './sales-rep.service.js';
 import { userHasAnyPermission } from './permission.service.js';
+import {
+  applyDiscount,
+  getBranchDiscountMap,
+  getBranchPriceMap
+} from './branch-pricing.service.js';
 
 type BranchListOpts = {
   branchId?: string | null;
@@ -76,23 +81,34 @@ async function productAllowedUomIds(productId: string, baseUomId: string, sellin
   return ids;
 }
 
-/** Price attached to the selected UoM (selling-price row, then level/default fallbacks). */
-function listUnitPrice(product: any, bodyItem: any, uomId: string, index: number) {
+/**
+ * Price attached to the selected UoM (selling-price row, then level/default fallbacks).
+ * A branch override for the matched row wins over the global price.
+ */
+function listUnitPrice(
+  product: any,
+  bodyItem: any,
+  uomId: string,
+  index: number,
+  branchPrices: Map<string, number>
+) {
   const prices: any[] = product.sellingPrices || [];
+  const priceOf = (row: any) =>
+    branchPrices.has(row.id) ? branchPrices.get(row.id)! : Number(row.unitPrice);
   const sellingPriceId = bodyItem.selling_price_id || bodyItem.sellingPriceId;
   if (sellingPriceId) {
     const row = prices.find((p) => p.id === sellingPriceId && p.isActive);
     if (!row || row.uomId !== uomId) {
       throw httpError(400, `items[${index}].selling_price_id does not match the product and UoM`);
     }
-    return Number(row.unitPrice);
+    return priceOf(row);
   }
   const level = String(bodyItem.price_level || bodyItem.priceLevel || 'retail').toLowerCase();
   const match =
     prices.find((p) => p.uomId === uomId && p.priceLevel === level && p.isActive) ||
     prices.find((p) => p.uomId === uomId && p.isDefault && p.isActive) ||
     prices.find((p) => p.uomId === uomId && p.isActive);
-  if (match) return Number(match.unitPrice);
+  if (match) return priceOf(match);
   if (level === 'wholesale' && product.wholesalePrice != null) return Number(product.wholesalePrice);
   if (level === 'distributor' && product.distributorPrice != null) {
     return Number(product.distributorPrice);
@@ -100,15 +116,21 @@ function listUnitPrice(product: any, bodyItem: any, uomId: string, index: number
   return Number(product.defaultSellingPrice || product.retailPrice || 0);
 }
 
-async function buildInvoiceLines(user: AuthUser, itemsInput: any[]) {
+async function buildInvoiceLines(user: AuthUser, itemsInput: any[], branchId: string) {
   if (!itemsInput.length) throw httpError(400, 'At least one line item is required');
   const canChangePrice = await userHasAnyPermission(user.id, ['sales.change_price']);
+  const [branchPrices, branchDiscounts] = await Promise.all([
+    getBranchPriceMap(user.businessId, branchId),
+    getBranchDiscountMap(user.businessId, branchId)
+  ]);
   const lines: {
     productId: string;
     variantId: string | null;
     uomId: string;
     quantity: number;
     unitPrice: number;
+    grossUnitPrice: number | null;
+    discountPercent: number | null;
     lineTotal: number;
     priceLevel: string | null;
   }[] = [];
@@ -147,9 +169,12 @@ async function buildInvoiceLines(user: AuthUser, itemsInput: any[]) {
 
     const qty = Number(item.quantity);
     if (!qty || qty <= 0) throw httpError(400, `items[${i}].quantity must be > 0`);
-    const listPrice = listUnitPrice(product, item, uomId, i);
+    const grossPrice = listUnitPrice(product, item, uomId, i, branchPrices);
+    const discount = branchDiscounts.get(productId) ?? null;
+    const listPrice = applyDiscount(grossPrice, discount);
     const requested = item.unit_price ?? item.unitPrice;
     let unitPrice = listPrice;
+    let manualPrice = false;
     if (requested != null && requested !== '') {
       const requestedPrice = Number(requested);
       if (!Number.isFinite(requestedPrice)) {
@@ -163,9 +188,11 @@ async function buildInvoiceLines(user: AuthUser, itemsInput: any[]) {
           );
         }
         unitPrice = requestedPrice;
+        manualPrice = true;
       }
     }
     if (unitPrice < 0) throw httpError(400, `items[${i}].unit_price cannot be negative`);
+    const discounted = Boolean(discount) && !manualPrice;
 
     lines.push({
       productId,
@@ -173,6 +200,8 @@ async function buildInvoiceLines(user: AuthUser, itemsInput: any[]) {
       uomId,
       quantity: qty,
       unitPrice,
+      grossUnitPrice: discounted ? grossPrice : null,
+      discountPercent: discounted ? discount : null,
       lineTotal: roundMoney(qty * unitPrice),
       priceLevel: item.price_level || item.priceLevel || 'retail'
     });
@@ -266,7 +295,7 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
     await assertSalesRepInBranch(user.businessId, salesRepId, branchId);
   }
 
-  const lines = await buildInvoiceLines(user, itemsInput);
+  const lines = await buildInvoiceLines(user, itemsInput, branchId);
   const subtotal = roundMoney(lines.reduce((s, l) => s + l.lineTotal, 0));
   const taxAmount = roundMoney(Number(body.tax_amount ?? body.taxAmount ?? 0));
   const totalAmount = roundMoney(subtotal + taxAmount);
@@ -309,6 +338,8 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
           uomId: l.uomId,
           quantity: toDec(l.quantity),
           unitPrice: toDec(l.unitPrice),
+          grossUnitPrice: l.grossUnitPrice != null ? toDec(l.grossUnitPrice) : null,
+          discountPercent: l.discountPercent != null ? toDec(l.discountPercent) : null,
           lineTotal: toDec(l.lineTotal),
           priceLevel: l.priceLevel
         }))

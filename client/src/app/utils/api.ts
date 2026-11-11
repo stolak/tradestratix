@@ -193,6 +193,29 @@ export const api = {
     update: (id: string, body: Record<string, unknown>) =>
       request<any>(`/products/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     remove: (id: string) => request<{ ok: boolean; id: string }>(`/products/${id}`, { method: 'DELETE' }),
+    branchPrices: (branchId?: string, q?: string) => {
+      const params = new URLSearchParams();
+      if (branchId) params.set('branch_id', branchId);
+      if (q) params.set('q', q);
+      const qs = params.toString();
+      return request<{ branch: any; products: any[] }>(
+        `/products/branch-prices${qs ? `?${qs}` : ''}`
+      );
+    },
+    setBranchPrice: (body: { branch_id: string; selling_price_id: string; unit_price: number }) =>
+      request<any>('/products/branch-prices', { method: 'PUT', body: JSON.stringify(body) }),
+    setBranchDiscount: (body: { branch_id: string; product_id: string; discount_percent: number }) =>
+      request<any>('/products/branch-discounts', { method: 'PUT', body: JSON.stringify(body) }),
+    clearBranchDiscount: (branchId: string, productId: string) =>
+      request<{ ok: boolean }>(
+        `/products/branch-discounts/${encodeURIComponent(branchId)}/${encodeURIComponent(productId)}`,
+        { method: 'DELETE' }
+      ),
+    clearBranchPrice: (branchId: string, sellingPriceId: string) =>
+      request<{ ok: boolean }>(
+        `/products/branch-prices/${encodeURIComponent(branchId)}/${encodeURIComponent(sellingPriceId)}`,
+        { method: 'DELETE' }
+      ),
     categories: () => request<any[]>('/products/categories'),
     createCategory: (body: Record<string, unknown>) =>
       request<any>('/products/categories', { method: 'POST', body: JSON.stringify(body) }),

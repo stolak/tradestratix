@@ -76,6 +76,7 @@ const MENUS = [
   { code: 'pos', name: 'POS', route: 'pos', section: 'Commerce', sortOrder: 11, icon: 'Monitor' },
   { code: 'purchases', name: 'Purchases', route: 'purchases', section: 'Commerce', sortOrder: 12, icon: 'Truck' },
   { code: 'products', name: 'Products', route: 'products', section: 'Inventory', sortOrder: 20, icon: 'Package' },
+  { code: 'branch_pricing', name: 'Branch Pricing', route: 'branch_pricing', section: 'Inventory', sortOrder: 23, icon: 'Tags' },
   { code: 'inventory', name: 'Inventory', route: 'inventory', section: 'Inventory', sortOrder: 21, icon: 'Boxes' },
   { code: 'warehouses', name: 'Warehouses', route: 'warehouses', section: 'Inventory', sortOrder: 22, icon: 'Warehouse' },
   { code: 'suppliers', name: 'Suppliers', route: 'suppliers', section: 'Partners', sortOrder: 30, icon: 'Factory' },
@@ -138,6 +139,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'pos',
       'purchases',
       'products',
+      'branch_pricing',
       'inventory',
       'warehouses',
       'suppliers',
@@ -205,12 +207,14 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'distribution',
       'expenses',
       'hr',
-      'reports'
+      'reports',
+      'branch_pricing'
     ],
     permissions: [
       'dashboard.view',
       'sales.*',
       'pos.*',
+      'products.branch_price',
       'purchases.view',
       'purchases.create',
       'purchases.edit',
@@ -312,7 +316,8 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'products',
       'inventory',
       'distribution',
-      'reports'
+      'reports',
+      'branch_pricing'
     ],
     permissions: [
       'dashboard.view',
@@ -321,6 +326,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'customers.*',
       'sales_reps.*',
       'products.view',
+      'products.branch_price',
       'inventory.view',
       'distribution.view',
       'distribution.create',
@@ -573,6 +579,11 @@ async function main() {
       module: 'sales',
       action: 'change_price',
       description: 'Override the unit price on sales and POS lines (otherwise the UoM selling price is used)'
+    },
+    {
+      module: 'products',
+      action: 'branch_price',
+      description: 'Set or clear branch-specific selling prices (otherwise the global price applies)'
     }
   ];
   for (const p of EXTRA_PERMISSIONS) {

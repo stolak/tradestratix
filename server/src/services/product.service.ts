@@ -2,6 +2,7 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, serialize, shortId } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import { applyBranchPricing } from './branch-pricing.service.js';
 
 type TrackingFlags = {
   trackBatch: boolean;
@@ -130,7 +131,7 @@ async function productIsTransacted(productId: string, businessId: string) {
   return movements > 0 || lots > 0 || transfers > 0;
 }
 
-export async function listProducts(businessId: string, q?: string) {
+export async function listProducts(businessId: string, q?: string, branchId?: string | null) {
   const rows = await prisma.product.findMany({
     where: {
       businessId,
@@ -164,7 +165,8 @@ export async function listProducts(businessId: string, q?: string) {
     },
     orderBy: { name: 'asc' }
   });
-  return (serialize(rows) as any[]).map(withDeleteFlag);
+  const products = (serialize(rows) as any[]).map(withDeleteFlag);
+  return applyBranchPricing(businessId, branchId, products);
 }
 
 export async function getProduct(businessId: string, id: string) {

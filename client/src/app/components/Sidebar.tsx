@@ -25,12 +25,14 @@ import {
   ScrollText,
   Bell,
   CreditCard,
-  LineChart
+  LineChart,
+  Tags
 } from 'lucide-react';
 import { APP_NAME } from '../utils/env';
 import { ROUTES } from '../routes';
 
 const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
+  Tags,
   LayoutDashboard,
   ShoppingCart,
   Monitor,
@@ -73,6 +75,7 @@ const NAV = [
     section: 'Inventory',
     items: [
       { route: ROUTES.PRODUCTS, label: 'Products', icon: 'Package', perm: 'products.view' },
+      { route: ROUTES.BRANCH_PRICING, label: 'Branch pricing', icon: 'Tags', perm: 'products.branch_price' },
       { route: ROUTES.INVENTORY, label: 'Inventory', icon: 'Boxes', perm: 'inventory.view' },
       { route: 'uoms', label: 'Units', icon: 'Package', perm: 'products.view' },
       { route: ROUTES.WAREHOUSES, label: 'Warehouses', icon: 'Warehouse', perm: 'warehouses.view' }

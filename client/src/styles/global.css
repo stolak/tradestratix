@@ -495,6 +495,85 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
+/* ── Branch pricing ─────────────────────────────────────────────── */
+
+.branch-pricing__summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.branch-pricing__overridden td {
+  background: #f4faf7;
+}
+
+.branch-pricing__badge {
+  display: inline-block;
+  margin-left: 0.45rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand-deep);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  vertical-align: middle;
+}
+
+.line-items__discount-note {
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.branch-pricing__badge--discount {
+  background: #fdf0e8;
+  color: var(--accent);
+}
+
+.branch-pricing__was {
+  font-weight: 400;
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  text-decoration: line-through;
+}
+
+.branch-pricing__discount {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.branch-pricing__pct {
+  position: relative;
+  width: 92px;
+  flex-shrink: 0;
+}
+
+.line-items__table .branch-pricing__pct input {
+  padding-right: 1.6rem;
+}
+
+.branch-pricing__pct span {
+  position: absolute;
+  right: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+  pointer-events: none;
+}
+
+.line-items__remove.branch-pricing__save:hover:not(:disabled) {
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-color: #bfe0d6;
+}
+
 .table-wrap {
   width: 100%;
   max-width: 100%;

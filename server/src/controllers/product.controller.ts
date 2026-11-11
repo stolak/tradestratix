@@ -4,7 +4,9 @@ import * as productService from '../services/product.service.js';
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
-    return res.json(await productService.listProducts(req.user!.businessId, q));
+    return res.json(
+      await productService.listProducts(req.user!.businessId, q, req.user!.activeBranchId)
+    );
   } catch (err) {
     return next(err);
   }

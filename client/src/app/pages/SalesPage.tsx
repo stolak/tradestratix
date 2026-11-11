@@ -55,7 +55,7 @@ function sellPriceOptionsForProduct(p: any): SellPriceOption[] {
         name: sp.uom?.name || '',
         price_level: sp.price_level,
         label: sp.label,
-        unit_price: String(sp.unit_price ?? 0),
+        unit_price: String(sp.effective_unit_price ?? sp.unit_price ?? 0),
         is_default: Boolean(sp.is_default)
       } as SellPriceOption;
     })
@@ -587,6 +587,19 @@ export const SalesPage: React.FC = () => {
                             }
                             required
                           />
+                          {(() => {
+                            const pct = product?.branch_discount_percent;
+                            const sp = (product?.selling_prices || []).find(
+                              (s: any) => s.id === line.selling_price_id
+                            );
+                            if (!pct || !sp) return null;
+                            return (
+                              <div className="line-items__discount-note">
+                                −{Number(pct)}% branch discount · was{' '}
+                                {Number(sp.pre_discount_unit_price).toLocaleString()}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="num line-items__subtotal">
                           {lineSubtotal(line).toLocaleString(undefined, {

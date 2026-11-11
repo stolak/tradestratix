@@ -14,6 +14,7 @@ import { AuditPage } from './pages/AuditPage';
 import { ProductsPage } from './pages/ProductsPage';
 import { InventoryPage } from './pages/InventoryPage';
 import { UnitsOfMeasurePage } from './pages/UnitsOfMeasurePage';
+import { BranchPricingPage } from './pages/BranchPricingPage';
 import { SuppliersPage } from './pages/SuppliersPage';
 import { PurchasesPage } from './pages/PurchasesPage';
 import { CustomersPage } from './pages/CustomersPage';
@@ -125,6 +126,9 @@ export const App: React.FC = () => {
       break;
     case 'uoms':
       content = <UnitsOfMeasurePage />;
+      break;
+    case ROUTES.BRANCH_PRICING:
+      content = <BranchPricingPage />;
       break;
     case ROUTES.BANKING:
       content = <BankingPage />;

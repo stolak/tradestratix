@@ -102,6 +102,8 @@ model Business {
   stockTransfers         StockTransfer[]
   productUnitConversions ProductUnitConversion[]
   productSellingPrices   ProductSellingPrice[]
+  branchSellingPrices    BranchSellingPrice[]
+  branchProductDiscounts BranchProductDiscount[]
   suppliers              Supplier[]
   purchaseOrders         PurchaseOrder[]
   goodsReceiptNotes      GoodsReceiptNote[]
@@ -200,6 +202,8 @@ model Branch {
   payrollRuns      PayrollRun[]
   budgets          Budget[]
   auditLogs        AuditLog[]
+  sellingPriceOverrides BranchSellingPrice[]
+  productDiscounts      BranchProductDiscount[]
 
   @@unique([businessId, code])
   @@index([businessId])
@@ -716,6 +720,7 @@ model Product {
   variants           ProductVariant[]
   conversions        ProductUnitConversion[]
   sellingPrices      ProductSellingPrice[]
+  branchDiscounts    BranchProductDiscount[]
   stockLots          StockLot[]
   stockMovements     StockMovement[]
   transferItems      StockTransferItem[]
@@ -748,10 +753,55 @@ model ProductSellingPrice {
   business   Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
   product    Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
   uom        UnitOfMeasure @relation(fields: [uomId], references: [id])
+  branchOverrides BranchSellingPrice[]
 
   @@unique([productId, uomId, priceLevel])
   @@index([productId])
   @@map("product_selling_prices")
+}
+
+/// Branch-specific override of a global ProductSellingPrice row.
+/// When absent (or inactive) the branch sells at the global price.
+model BranchSellingPrice {
+  id             String              @id
+  businessId     String              @map("business_id")
+  branchId       String              @map("branch_id")
+  sellingPriceId String              @map("selling_price_id")
+  unitPrice      Decimal             @map("unit_price") @db.Decimal(18, 4)
+  isActive       Boolean             @default(true) @map("is_active")
+  createdById    String?             @map("created_by_id")
+  updatedById    String?             @map("updated_by_id")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+  business       Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch         Branch              @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  sellingPrice   ProductSellingPrice @relation(fields: [sellingPriceId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, sellingPriceId])
+  @@index([businessId, branchId])
+  @@map("branch_selling_prices")
+}
+
+/// Branch-specific % discount on a product, applied to every UoM / price level
+/// after any branch price override.
+model BranchProductDiscount {
+  id              String   @id
+  businessId      String   @map("business_id")
+  branchId        String   @map("branch_id")
+  productId       String   @map("product_id")
+  discountPercent Decimal  @map("discount_percent") @db.Decimal(8, 4)
+  isActive        Boolean  @default(true) @map("is_active")
+  createdById     String?  @map("created_by_id")
+  updatedById     String?  @map("updated_by_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  business        Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch          Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  product         Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([branchId, productId])
+  @@index([businessId, branchId])
+  @@map("branch_product_discounts")
 }
 
 model ProductVariant {
@@ -1287,7 +1337,11 @@ model SalesInvoiceItem {
   variantId       String? @map("variant_id")
   uomId           String? @map("uom_id")
   quantity        Decimal @db.Decimal(18, 4)
+  /// Net price charged (after any branch discount)
   unitPrice       Decimal @map("unit_price") @db.Decimal(18, 4)
+  /// List price before the branch discount (null when no discount applied)
+  grossUnitPrice  Decimal? @map("gross_unit_price") @db.Decimal(18, 4)
+  discountPercent Decimal? @map("discount_percent") @db.Decimal(8, 4)
   lineTotal       Decimal @map("line_total") @db.Decimal(18, 4)
   priceLevel      String? @map("price_level")
   stockMovementId String? @map("stock_movement_id")
