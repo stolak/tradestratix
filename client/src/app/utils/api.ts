@@ -78,7 +78,11 @@ export const api = {
     list: (branchId?: string) =>
       request<any[]>(`/warehouses${branchId ? `?branch_id=${branchId}` : ''}`),
     create: (body: Record<string, unknown>) =>
-      request<any>('/warehouses', { method: 'POST', body: JSON.stringify(body) })
+      request<any>('/warehouses', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/warehouses/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    remove: (id: string) =>
+      request<{ deleted: boolean; id: string }>(`/warehouses/${id}`, { method: 'DELETE' })
   },
   users: {
     list: () => request<any[]>('/users'),

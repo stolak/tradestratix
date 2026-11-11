@@ -28,3 +28,11 @@ export async function update(req: Request, res: Response, next: NextFunction) {
     return next(err);
   }
 }
+
+export async function remove(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await warehouseService.deleteWarehouse(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
