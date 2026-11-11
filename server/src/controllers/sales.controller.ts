@@ -22,7 +22,7 @@ export async function listInvoices(req: Request, res: Response, next: NextFuncti
 
 export async function getInvoice(req: Request, res: Response, next: NextFunction) {
   try {
-    return res.json(await salesService.getInvoice(req.user!.businessId, req.params.id));
+    return res.json(await salesService.getInvoice(req.user!, req.params.id));
   } catch (err) {
     return next(err);
   }

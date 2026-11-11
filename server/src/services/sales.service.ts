@@ -230,15 +230,17 @@ export async function listInvoices(
   return serialize(rows.map(presentInvoiceSalesRep));
 }
 
-export async function getInvoice(businessId: string, id: string) {
+export async function getInvoice(user: AuthUser, id: string) {
   const row = await prisma.salesInvoice.findFirst({
-    where: { id, businessId },
+    where: { id, businessId: user.businessId },
     include: {
       ...invoiceInclude,
+      branch: { select: { id: true, name: true, code: true } },
       allocations: { include: { payment: true } }
     }
   });
   if (!row) throw httpError(404, 'Invoice not found');
+  if (row.branchId) await branchAccess.assertBranchMembership(user, row.branchId);
   return serialize(presentInvoiceSalesRep(row));
 }
 

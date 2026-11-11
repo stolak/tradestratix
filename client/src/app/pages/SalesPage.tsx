@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Info, Plus, Trash2 } from 'lucide-react';
+import { Eye, Info, Plus, Trash2 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
 import { SearchSelect } from '../components/SearchSelect';
+import { InvoiceViewModal } from '../components/InvoiceViewModal';
 
 type Tab = 'invoices' | 'payments';
 
@@ -100,6 +101,8 @@ function lineSubtotal(line: LineItem) {
 export const SalesPage: React.FC = () => {
   const { activeBranchId, user, can } = useAuth();
   const canChangePrice = can('sales.change_price');
+  const canPostInvoice = can('sales.post') || can('sales.approve');
+  const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
   const [mySalesRep, setMySalesRep] = useState<{ id: string } | null>(
     () => (user?.sales_rep?.id ? { id: user.sales_rep.id } : null)
   );
@@ -368,8 +371,10 @@ export const SalesPage: React.FC = () => {
       await api.sales.postInvoice(id);
       await alertSuccess('Invoice posted — stock + AR + COGS');
       await load();
+      return true;
     } catch (err: any) {
       await alertError('Post failed', err.message);
+      return false;
     }
   };
 
@@ -680,7 +685,15 @@ export const SalesPage: React.FC = () => {
                 <tbody>
                   {invoices.map((inv) => (
                     <tr key={inv.id}>
-                      <td>{inv.invoice_number}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="invoice-link"
+                          onClick={() => setViewInvoiceId(inv.id)}
+                        >
+                          {inv.invoice_number}
+                        </button>
+                      </td>
                       <td>{inv.customer?.name}</td>
                       <td>{(inv.items || []).length || '—'}</td>
                       <td>{inv.status}</td>
@@ -689,15 +702,24 @@ export const SalesPage: React.FC = () => {
                       <td>{Number(inv.balance).toLocaleString()}</td>
                       <td>{inv.sales_rep?.name || '—'}</td>
                       <td>
-                        {inv.status === 'draft' ? (
+                        <div style={{ display: 'flex', gap: 6 }}>
                           <button
                             type="button"
                             className="btn btn-ghost"
-                            onClick={() => void postInvoice(inv.id)}
+                            onClick={() => setViewInvoiceId(inv.id)}
                           >
-                            Post
+                            <Eye size={15} /> View
                           </button>
-                        ) : null}
+                          {inv.status === 'draft' && canPostInvoice ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => void postInvoice(inv.id)}
+                            >
+                              Post
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -800,6 +822,15 @@ export const SalesPage: React.FC = () => {
             </div>
           </div>
         </>
+      ) : null}
+
+      {viewInvoiceId ? (
+        <InvoiceViewModal
+          invoiceId={viewInvoiceId}
+          onClose={() => setViewInvoiceId(null)}
+          onPost={postInvoice}
+          canPost={canPostInvoice}
+        />
       ) : null}
     </div>
   );
