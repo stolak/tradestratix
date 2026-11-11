@@ -11,6 +11,7 @@ router.get('/:id', requirePermission('branches.view'), branchController.get);
 router.post('/', requirePermission('branches.create'), branchController.create);
 router.patch('/:id', requirePermission('branches.edit'), branchController.update);
 router.post('/:id/deactivate', requirePermission('branches.edit'), branchController.deactivate);
+router.post('/:id/activate', requirePermission('branches.edit'), branchController.activate);
 router.delete('/:id', requirePermission('branches.delete'), branchController.remove);
 
 router.get('/:id/members', requirePermission('branches.view'), branchController.listMembers);

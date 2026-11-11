@@ -57,8 +57,17 @@ export const api = {
       request<any>('/branches', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string, body: Record<string, unknown>) =>
       request<any>(`/branches/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    activate: (id: string) =>
+      request<any>(`/branches/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ is_active: true })
+      }),
     deactivate: (id: string) =>
-      request<any>(`/branches/${id}/deactivate`, { method: 'POST', body: '{}' }),
+      request<any>(`/branches/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ is_active: false })
+      }),
+    remove: (id: string) => request<{ deleted: boolean; id: string }>(`/branches/${id}`, { method: 'DELETE' }),
     members: (id: string) => request<any[]>(`/branches/${id}/members`),
     assignMember: (id: string, body: Record<string, unknown>) =>
       request<any>(`/branches/${id}/members`, { method: 'POST', body: JSON.stringify(body) }),

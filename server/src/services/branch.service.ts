@@ -91,6 +91,20 @@ export async function updateBranch(user: AuthUser, id: string, body: Record<stri
   });
   if (!existing) throw httpError(404, 'Branch not found');
 
+  const nextActive =
+    body.is_active !== undefined || body.isActive !== undefined
+      ? Boolean(body.is_active ?? body.isActive)
+      : undefined;
+
+  if (nextActive === false && existing.isActive) {
+    const activeCount = await prisma.branch.count({
+      where: { businessId: user.businessId, isActive: true }
+    });
+    if (activeCount <= 1) {
+      throw httpError(409, 'Cannot deactivate the only active branch');
+    }
+  }
+
   const updated = await prisma.branch.update({
     where: { id },
     data: {
@@ -107,9 +121,7 @@ export async function updateBranch(user: AuthUser, id: string, body: Record<stri
       ...(body.manager_user_id !== undefined || body.managerUserId !== undefined
         ? { managerUserId: body.manager_user_id || body.managerUserId || null }
         : {}),
-      ...(body.is_active !== undefined || body.isActive !== undefined
-        ? { isActive: body.is_active ?? body.isActive }
-        : {}),
+      ...(nextActive !== undefined ? { isActive: nextActive } : {}),
       ...(body.sales_target !== undefined || body.salesTarget !== undefined
         ? { salesTarget: body.sales_target ?? body.salesTarget }
         : {}),
@@ -166,60 +178,109 @@ export async function deactivateBranch(user: AuthUser, id: string) {
   return serialize(updated);
 }
 
+/** Operational / transactional usage — empty warehouses alone do not block delete. */
 async function countBranchDependents(businessId: string, branchId: string) {
   const [
     purchaseOrders,
     salesInvoices,
     journalEntries,
-    warehouses,
     stockLots,
+    stockMovements,
+    stockTransfers,
     goodsReceipts,
     supplierBills,
     expenseBills,
     bankAccounts,
+    bankTransactions,
     payrollRuns,
-    budgets
+    budgets,
+    deliveryOrders,
+    fixedAssets,
+    employees
   ] = await Promise.all([
     prisma.purchaseOrder.count({ where: { businessId, branchId } }),
     prisma.salesInvoice.count({ where: { businessId, branchId } }),
     prisma.journalEntry.count({ where: { businessId, branchId } }),
-    prisma.warehouse.count({ where: { businessId, branchId } }),
     prisma.stockLot.count({
       where: { businessId, warehouse: { branchId } }
+    }),
+    prisma.stockMovement.count({ where: { businessId, branchId } }),
+    prisma.stockTransfer.count({
+      where: {
+        businessId,
+        OR: [{ fromBranchId: branchId }, { toBranchId: branchId }]
+      }
     }),
     prisma.goodsReceiptNote.count({ where: { businessId, branchId } }),
     prisma.supplierBill.count({ where: { businessId, branchId } }),
     prisma.expenseBill.count({ where: { businessId, branchId } }),
     prisma.bankAccount.count({ where: { businessId, branchId } }),
+    prisma.bankTransaction.count({ where: { businessId, branchId } }),
     prisma.payrollRun.count({ where: { businessId, branchId } }),
-    prisma.budget.count({ where: { businessId, branchId } })
+    prisma.budget.count({ where: { businessId, branchId } }),
+    prisma.deliveryOrder.count({ where: { businessId, branchId } }),
+    prisma.fixedAsset.count({ where: { businessId, branchId } }),
+    prisma.employee.count({ where: { businessId, branchId } })
   ]);
 
   return {
     purchaseOrders,
     salesInvoices,
     journalEntries,
-    warehouses,
     stockLots,
+    stockMovements,
+    stockTransfers,
     goodsReceipts,
     supplierBills,
     expenseBills,
     bankAccounts,
+    bankTransactions,
     payrollRuns,
     budgets,
+    deliveryOrders,
+    fixedAssets,
+    employees,
     total:
       purchaseOrders +
       salesInvoices +
       journalEntries +
-      warehouses +
       stockLots +
+      stockMovements +
+      stockTransfers +
       goodsReceipts +
       supplierBills +
       expenseBills +
       bankAccounts +
+      bankTransactions +
       payrollRuns +
-      budgets
+      budgets +
+      deliveryOrders +
+      fixedAssets +
+      employees
   };
+}
+
+export async function activateBranch(user: AuthUser, id: string) {
+  const existing = await prisma.branch.findFirst({
+    where: { id, businessId: user.businessId }
+  });
+  if (!existing) throw httpError(404, 'Branch not found');
+  if (existing.isActive) return serialize(existing);
+
+  const updated = await prisma.branch.update({
+    where: { id },
+    data: { isActive: true, updatedById: user.id }
+  });
+
+  await writeAudit({
+    user,
+    action: 'activate',
+    module: 'branches',
+    entityType: 'Branch',
+    entityId: id,
+    summary: `Activated branch ${updated.code}`
+  });
+  return serialize(updated);
 }
 
 export async function deleteBranch(user: AuthUser, id: string) {
@@ -228,17 +289,31 @@ export async function deleteBranch(user: AuthUser, id: string) {
   });
   if (!existing) throw httpError(404, 'Branch not found');
 
+  const activeCount = await prisma.branch.count({
+    where: { businessId: user.businessId, isActive: true }
+  });
+  if (existing.isActive && activeCount <= 1) {
+    throw httpError(409, 'Cannot delete the only active branch');
+  }
+
   const deps = await countBranchDependents(user.businessId, id);
   if (deps.total > 0) {
     throw httpError(
       409,
-      'Branch has historical or linked records; deactivate instead of deleting',
+      'Branch has transactions or linked records; disable it instead of deleting',
       { dependents: deps }
     );
   }
 
-  await prisma.userBranch.deleteMany({ where: { branchId: id } });
-  await prisma.branch.delete({ where: { id } });
+  await prisma.$transaction(async (tx) => {
+    await tx.userBranch.deleteMany({ where: { branchId: id, businessId: user.businessId } });
+    await tx.user.updateMany({
+      where: { businessId: user.businessId, defaultBranchId: id },
+      data: { defaultBranchId: null }
+    });
+    await tx.warehouse.deleteMany({ where: { branchId: id, businessId: user.businessId } });
+    await tx.branch.delete({ where: { id } });
+  });
 
   await writeAudit({
     user,
@@ -294,7 +369,7 @@ export async function assignMember(
 
   const roleCode =
     body.role_code != null || body.roleCode != null
-      ? String(body.role_code ?? body.roleCode ?? '').trim() || null
+      ? (String(body.role_code ?? body.roleCode ?? '').trim() || null)
       : undefined;
 
   const existing = await prisma.userBranch.findUnique({

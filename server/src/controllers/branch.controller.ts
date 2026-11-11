@@ -42,6 +42,14 @@ export async function deactivate(req: Request, res: Response, next: NextFunction
   }
 }
 
+export async function activate(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await branchService.activateBranch(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function remove(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(await branchService.deleteBranch(req.user!, req.params.id));
