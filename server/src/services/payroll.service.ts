@@ -1,5 +1,5 @@
 import { prisma } from '../utils/prisma.js';
-import { httpError, roundMoney, serialize, shortId, toDec } from '../utils/helpers.js';
+import { httpError, nextDocNumber, roundMoney, serialize, shortId, toDec } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
@@ -19,8 +19,7 @@ const PENSION_EMPLOYEE_RATE = 0.08;
 const PENSION_EMPLOYER_RATE = 0.1;
 
 async function nextRunNumber(businessId: string) {
-  const count = await prisma.payrollRun.count({ where: { businessId } });
-  return `PAY-${String(count + 1).padStart(5, '0')}`;
+  return nextDocNumber(prisma.payrollRun, businessId, 'runNumber', 'PAY', 5);
 }
 
 export async function listRuns(user: AuthUser, status?: string, opts?: BranchListOpts) {

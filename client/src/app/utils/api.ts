@@ -269,13 +269,21 @@ export const api = {
       request<any>('/purchases/payments', { method: 'POST', body: JSON.stringify(body) })
   },
   customers: {
-    list: (q?: string) =>
-      request<any[]>(`/customers${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+    list: (q?: string, status?: 'active' | 'inactive') => {
+      const params = new URLSearchParams();
+      if (q) params.set('q', q);
+      if (status) params.set('status', status);
+      const qs = params.toString();
+      return request<any[]>(`/customers${qs ? `?${qs}` : ''}`);
+    },
     get: (id: string) => request<any>(`/customers/${id}`),
     create: (body: Record<string, unknown>) =>
       request<any>('/customers', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string, body: Record<string, unknown>) =>
       request<any>(`/customers/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    activate: (id: string) => request<any>(`/customers/${id}/activate`, { method: 'POST' }),
+    deactivate: (id: string) => request<any>(`/customers/${id}/deactivate`, { method: 'POST' }),
+    remove: (id: string) => request<any>(`/customers/${id}`, { method: 'DELETE' }),
     addNote: (id: string, body: Record<string, unknown>) =>
       request<any>(`/customers/${id}/notes`, { method: 'POST', body: JSON.stringify(body) })
   },

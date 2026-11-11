@@ -1,5 +1,13 @@
 import { prisma } from '../utils/prisma.js';
-import { httpError, requireString, roundMoney, serialize, shortId, toDec } from '../utils/helpers.js';
+import {
+  httpError,
+  nextDocNumber,
+  requireString,
+  roundMoney,
+  serialize,
+  shortId,
+  toDec
+} from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
@@ -11,8 +19,7 @@ type BranchListOpts = {
 };
 
 async function nextTxnNumber(businessId: string) {
-  const count = await prisma.bankTransaction.count({ where: { businessId } });
-  return `BTX-${String(count + 1).padStart(5, '0')}`;
+  return nextDocNumber(prisma.bankTransaction, businessId, 'txnNumber', 'BTX', 5);
 }
 
 export async function listBankAccounts(user: AuthUser, opts?: BranchListOpts) {

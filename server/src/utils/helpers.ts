@@ -35,6 +35,36 @@ export function toDec(n: number | string): Prisma.Decimal {
   return new Prisma.Decimal(typeof n === 'number' ? roundMoney(n) : n);
 }
 
+/**
+ * Next `PREFIX-000123` document number, continuing from the highest existing one
+ * (not a row count, which collides once any record is deleted).
+ * `delegate` is a Prisma model delegate (e.g. `tx.journalEntry`) scoped by `businessId`.
+ */
+export async function nextDocNumber(
+  delegate: any,
+  businessId: string,
+  field: string,
+  prefix: string,
+  width: number
+): Promise<string> {
+  const stem = `${prefix}-`;
+  const last = await delegate.findFirst({
+    where: { businessId, [field]: { startsWith: stem } },
+    orderBy: { [field]: 'desc' },
+    select: { [field]: true }
+  });
+  let n = last ? parseInt(String(last[field]).slice(stem.length), 10) || 0 : 0;
+  for (;;) {
+    n += 1;
+    const candidate = `${stem}${String(n).padStart(width, '0')}`;
+    const taken = await delegate.findFirst({
+      where: { businessId, [field]: candidate },
+      select: { [field]: true }
+    });
+    if (!taken) return candidate;
+  }
+}
+
 export function shortId(prefix: string): string {
   return `${prefix}-${uuidv4().slice(0, 8)}`;
 }

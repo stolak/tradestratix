@@ -1,6 +1,7 @@
 import { prisma } from '../utils/prisma.js';
 import {
   httpError,
+  nextDocNumber,
   requireString,
   roundMoney,
   serialize,
@@ -14,6 +15,7 @@ import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import * as branchAccess from './branch-access.service.js';
 import { assertSalesRepInBranch } from './sales-rep.service.js';
 import { userHasAnyPermission } from './permission.service.js';
+import { getCustomerOutstanding } from './customer.service.js';
 import {
   applyDiscount,
   getBranchDiscountMap,
@@ -54,14 +56,12 @@ function presentInvoiceSalesRep<T extends { salesRep?: any }>(row: T) {
 }
 
 async function nextInvoiceNumber(businessId: string, channel: string) {
-  const count = await prisma.salesInvoice.count({ where: { businessId } });
   const prefix = channel === 'pos' ? 'POS' : 'INV';
-  return `${prefix}-${String(count + 1).padStart(5, '0')}`;
+  return nextDocNumber(prisma.salesInvoice, businessId, 'invoiceNumber', prefix, 5);
 }
 
 async function nextPaymentNumber(businessId: string) {
-  const count = await prisma.customerPayment.count({ where: { businessId } });
-  return `CPAY-${String(count + 1).padStart(5, '0')}`;
+  return nextDocNumber(prisma.customerPayment, businessId, 'paymentNumber', 'CPAY', 5);
 }
 
 function addDays(date: Date, days: number) {
@@ -299,8 +299,11 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
 
   const lines = await buildInvoiceLines(user, itemsInput, branchId);
   const subtotal = roundMoney(lines.reduce((s, l) => s + l.lineTotal, 0));
+  const customerDiscountPct = Number(customer.discountPercent || 0);
+  const discountAmount =
+    customerDiscountPct > 0 ? roundMoney((subtotal * customerDiscountPct) / 100) : 0;
   const taxAmount = roundMoney(Number(body.tax_amount ?? body.taxAmount ?? 0));
-  const totalAmount = roundMoney(subtotal + taxAmount);
+  const totalAmount = roundMoney(subtotal - discountAmount + taxAmount);
   const invoiceNumber =
     body.invoice_number || body.invoiceNumber || (await nextInvoiceNumber(user.businessId, channel));
 
@@ -327,6 +330,8 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
             : null,
       notes: body.notes || null,
       subtotal: toDec(subtotal),
+      discountPercent: customerDiscountPct > 0 ? toDec(customerDiscountPct) : null,
+      discountAmount: toDec(discountAmount),
       taxAmount: toDec(taxAmount),
       totalAmount: toDec(totalAmount),
       amountPaid: toDec(0),
@@ -406,6 +411,24 @@ export async function postInvoice(
   }
 
   const totalAmount = Number(invoice.totalAmount);
+
+  if (invoice.customer.status !== 'active') {
+    throw httpError(400, `Customer ${invoice.customer.name} is disabled; enable it before posting`);
+  }
+
+  if (!payNow && invoice.customer.creditLimit != null) {
+    const limit = Number(invoice.customer.creditLimit);
+    const outstanding = await getCustomerOutstanding(user.businessId, invoice.customerId);
+    if (roundMoney(outstanding + totalAmount) > limit) {
+      const available = Math.max(0, roundMoney(limit - outstanding));
+      throw httpError(
+        400,
+        `Credit limit exceeded for ${invoice.customer.name}: limit ${limit.toLocaleString()}, ` +
+          `outstanding ${outstanding.toLocaleString()}, available ${available.toLocaleString()}, ` +
+          `this invoice ${totalAmount.toLocaleString()}. Collect a payment on older invoices first, or reduce this invoice.`
+      );
+    }
+  }
 
   const result = await prisma.$transaction(async (tx) => {
     let totalCogs = 0;
@@ -562,8 +585,13 @@ export async function postInvoice(
     let paymentId: string | null = null;
     if (payNow) {
       paymentId = shortId('cpay');
-      const payCount = await tx.customerPayment.count({ where: { businessId: user.businessId } });
-      const paymentNumber = `CPAY-${String(payCount + 1).padStart(5, '0')}`;
+      const paymentNumber = await nextDocNumber(
+        tx.customerPayment,
+        user.businessId,
+        'paymentNumber',
+        'CPAY',
+        5
+      );
       // Cash already booked in revenue journal — record payment allocation without second cash journal
       await tx.customerPayment.create({
         data: {

@@ -47,7 +47,10 @@ export const PosPage: React.FC = () => {
   const [busy, setBusy] = useState(false);
 
   const selectableCustomers = useMemo(
-    () => (isSalesRep ? customers : customers.filter((c) => !isWalkInCustomer(c))),
+    () =>
+      customers.filter(
+        (c) => (c.status || 'active') === 'active' && (isSalesRep || !isWalkInCustomer(c))
+      ),
     [customers, isSalesRep]
   );
   const selectedCustomer = useMemo(
@@ -98,6 +101,11 @@ export const PosPage: React.FC = () => {
       ),
     [cart]
   );
+  const customerDiscountPct = Number(selectedCustomer?.discount_percent || 0);
+  const tender =
+    customerDiscountPct > 0
+      ? total - Math.round(total * customerDiscountPct) / 100
+      : total;
 
   const load = async () => {
     const settled = await Promise.allSettled([
@@ -445,8 +453,14 @@ export const PosPage: React.FC = () => {
           <div style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
             Tender
           </div>
+          {customerDiscountPct > 0 && total > 0 ? (
+            <div style={{ fontSize: '0.85rem', color: 'var(--accent)', fontWeight: 600 }}>
+              Subtotal {total.toLocaleString(undefined, { minimumFractionDigits: 2 })} · −
+              {customerDiscountPct}% customer discount
+            </div>
+          ) : null}
           <div className="display" style={{ fontSize: '2.5rem', margin: 0 }}>
-            {total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            {tender.toLocaleString(undefined, { minimumFractionDigits: 2 })}
           </div>
           <button
             type="button"

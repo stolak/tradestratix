@@ -1,5 +1,5 @@
 import { prisma } from '../utils/prisma.js';
-import { httpError, requireString, serialize, shortId } from '../utils/helpers.js';
+import { httpError, nextDocNumber, requireString, serialize, shortId } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { createStockMovement } from './inventory.service.js';
 import { writeAudit } from './audit.service.js';
@@ -11,8 +11,7 @@ type BranchListOpts = {
 };
 
 async function nextTransferNumber(businessId: string) {
-  const count = await prisma.stockTransfer.count({ where: { businessId } });
-  return `TR-${String(count + 1).padStart(6, '0')}`;
+  return nextDocNumber(prisma.stockTransfer, businessId, 'transferNumber', 'TR', 6);
 }
 
 export async function listTransfers(

@@ -1541,6 +1541,109 @@ body.modal-open {
   color: var(--danger);
 }
 
+.invoice-chip--active {
+  background: var(--brand-soft);
+  color: var(--ok);
+}
+
+.invoice-chip--inactive {
+  background: #eef1f4;
+  color: var(--ink-muted);
+}
+
+/* ---- Customers ---- */
+.field-label-with-info {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.info-tip {
+  display: inline-flex;
+  color: var(--ink-muted);
+  cursor: help;
+}
+
+.customers__row--inactive td {
+  color: var(--ink-muted);
+}
+
+.customers__row--inactive td:nth-child(2) {
+  text-decoration: line-through;
+}
+
+.customers__credit {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 140px;
+}
+
+.customers__credit-main {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.customers__credit-main--over {
+  color: var(--danger);
+}
+
+.customers__credit-sub {
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.customers__credit-bar {
+  display: block;
+  height: 4px;
+  border-radius: 999px;
+  background: #eef1f4;
+  overflow: hidden;
+}
+
+.customers__credit-bar span {
+  display: block;
+  height: 100%;
+  background: var(--brand);
+}
+
+.customers__credit-bar span.is-high {
+  background: var(--danger);
+}
+
+.customers__delete:hover:not(:disabled) {
+  background: #fdecea;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.line-items__totals {
+  display: grid;
+  gap: 0.2rem;
+  justify-items: end;
+}
+
+.customer-terms {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+}
+
+.customer-terms__over {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.line-items__total--muted .line-items__total-label,
+.line-items__total--muted .line-items__total-value {
+  font-size: 0.9rem;
+  color: var(--accent);
+}
+
 .invoice-view__meta {
   display: grid;
   grid-template-columns: 1fr auto;

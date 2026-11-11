@@ -429,6 +429,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'payroll.approve',
       'payroll.post',
       'customers.view',
+      'customers.credit',
       'reports.*',
       'branches.view',
       'branches.report_all',
@@ -583,7 +584,12 @@ async function main() {
     {
       module: 'products',
       action: 'branch_price',
-      description: 'Set or clear branch-specific selling prices (otherwise the global price applies)'
+      description: 'Set or clear branch-specific selling prices and % discounts (otherwise the global price applies)'
+    },
+    {
+      module: 'customers',
+      action: 'credit',
+      description: 'Set a customer credit limit and customer-wide discount %'
     }
   ];
   for (const p of EXTRA_PERMISSIONS) {

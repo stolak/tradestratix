@@ -1,5 +1,5 @@
 import { prisma } from '../utils/prisma.js';
-import { httpError, requireString, serialize, shortId, toDec } from '../utils/helpers.js';
+import { httpError, nextDocNumber, requireString, serialize, shortId, toDec } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
@@ -23,8 +23,7 @@ const deliveryInclude = {
 };
 
 async function nextDeliveryNumber(businessId: string) {
-  const count = await prisma.deliveryOrder.count({ where: { businessId } });
-  return `DEL-${String(count + 1).padStart(5, '0')}`;
+  return nextDocNumber(prisma.deliveryOrder, businessId, 'deliveryNumber', 'DEL', 5);
 }
 
 async function getDeliveryOrThrow(businessId: string, id: string) {

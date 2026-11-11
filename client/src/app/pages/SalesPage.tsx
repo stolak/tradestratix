@@ -36,6 +36,10 @@ function isWalkInCustomer(c: any) {
   );
 }
 
+function fmtMoney(v: number) {
+  return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
 function newLineKey() {
   return `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -133,7 +137,10 @@ export const SalesPage: React.FC = () => {
   });
 
   const selectableCustomers = useMemo(
-    () => (isSalesRep ? customers : customers.filter((c) => !isWalkInCustomer(c))),
+    () =>
+      customers.filter(
+        (c) => (c.status || 'active') === 'active' && (isSalesRep || !isWalkInCustomer(c))
+      ),
     [customers, isSalesRep]
   );
 
@@ -169,6 +176,17 @@ export const SalesPage: React.FC = () => {
     () => lines.reduce((sum, line) => sum + lineSubtotal(line), 0),
     [lines]
   );
+  const customerDiscountPct = Number(selectedCustomer?.discount_percent || 0);
+  const customerDiscountAmount =
+    customerDiscountPct > 0 ? Math.round(invoiceSubtotal * customerDiscountPct) / 100 : 0;
+  const invoiceTotal = invoiceSubtotal - customerDiscountAmount;
+  const customerCreditLimit =
+    selectedCustomer?.credit_limit != null ? Number(selectedCustomer.credit_limit) : null;
+  const customerAvailableCredit =
+    customerCreditLimit != null
+      ? customerCreditLimit - Number(selectedCustomer?.outstanding_balance || 0)
+      : null;
+  const overCredit = customerAvailableCredit != null && invoiceTotal > customerAvailableCredit;
 
   const updateLine = (key: string, patch: Partial<LineItem>) => {
     setLines((rows) => rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
@@ -453,6 +471,22 @@ export const SalesPage: React.FC = () => {
                     });
                   }}
                 />
+                {selectedCustomer &&
+                (customerDiscountPct > 0 || customerCreditLimit != null) ? (
+                  <div className="customer-terms">
+                    {customerDiscountPct > 0 ? (
+                      <span className="branch-pricing__badge branch-pricing__badge--discount">
+                        −{customerDiscountPct}% customer discount
+                      </span>
+                    ) : null}
+                    {customerAvailableCredit != null ? (
+                      <span className={overCredit ? 'customer-terms__over' : undefined}>
+                        Credit available {fmtMoney(Math.max(0, customerAvailableCredit))}
+                        {overCredit ? ' — this invoice exceeds it, so posting on credit will be blocked' : ''}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
               <div className="field">
                 <label>Warehouse</label>
@@ -635,14 +669,29 @@ export const SalesPage: React.FC = () => {
                   <Plus size={16} />
                   Add line
                 </button>
-                <div className="line-items__total">
-                  <span className="line-items__total-label">Invoice subtotal</span>
-                  <span className="line-items__total-value">
-                    {invoiceSubtotal.toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2
-                    })}
-                  </span>
+                <div className="line-items__totals">
+                  {customerDiscountPct > 0 ? (
+                    <>
+                      <div className="line-items__total line-items__total--muted">
+                        <span className="line-items__total-label">Subtotal</span>
+                        <span className="line-items__total-value">{fmtMoney(invoiceSubtotal)}</span>
+                      </div>
+                      <div className="line-items__total line-items__total--muted">
+                        <span className="line-items__total-label">
+                          Customer discount −{customerDiscountPct}%
+                        </span>
+                        <span className="line-items__total-value">
+                          −{fmtMoney(customerDiscountAmount)}
+                        </span>
+                      </div>
+                    </>
+                  ) : null}
+                  <div className="line-items__total">
+                    <span className="line-items__total-label">
+                      {customerDiscountPct > 0 ? 'Invoice total' : 'Invoice subtotal'}
+                    </span>
+                    <span className="line-items__total-value">{fmtMoney(invoiceTotal)}</span>
+                  </div>
                 </div>
               </div>
             </div>

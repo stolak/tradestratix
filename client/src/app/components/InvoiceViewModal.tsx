@@ -207,12 +207,18 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                 <dl className="invoice-view__totals">
                   {discountTotal > 0 ? (
                     <>
-                      <dt>Branch discount</dt>
+                      <dt>Branch discount (in prices)</dt>
                       <dd>−{money(discountTotal)}</dd>
                     </>
                   ) : null}
                   <dt>Subtotal</dt>
                   <dd>{money(invoice.subtotal)}</dd>
+                  {Number(invoice.discount_amount) > 0 ? (
+                    <>
+                      <dt>Customer discount −{Number(invoice.discount_percent)}%</dt>
+                      <dd>−{money(invoice.discount_amount)}</dd>
+                    </>
+                  ) : null}
                   {Number(invoice.tax_amount) ? (
                     <>
                       <dt>Tax</dt>

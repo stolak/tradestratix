@@ -1223,7 +1223,10 @@ model Customer {
   country          String?  @default("NG")
   taxId            String?  @map("tax_id")
   paymentTermsDays Int      @default(0) @map("payment_terms_days")
+  /// null = unlimited credit; 0 = cash only
   creditLimit      Decimal? @map("credit_limit") @db.Decimal(18, 2)
+  /// Invoice-level discount applied to every purchase (null/0 = none)
+  discountPercent  Decimal? @map("discount_percent") @db.Decimal(8, 4)
   /// retail | wholesale | distributor | walk_in
   customerType     String   @default("retail") @map("customer_type")
   notes            String?  @db.Text
@@ -1302,6 +1305,9 @@ model SalesInvoice {
   dueDate            DateTime? @map("due_date")
   notes              String?   @db.Text
   subtotal           Decimal   @default(0) @db.Decimal(18, 4)
+  /// Customer discount % captured when the invoice was created
+  discountPercent    Decimal?  @map("discount_percent") @db.Decimal(8, 4)
+  discountAmount     Decimal   @default(0) @map("discount_amount") @db.Decimal(18, 4)
   taxAmount          Decimal   @default(0) @map("tax_amount") @db.Decimal(18, 4)
   totalAmount        Decimal   @default(0) @map("total_amount") @db.Decimal(18, 4)
   amountPaid         Decimal   @default(0) @map("amount_paid") @db.Decimal(18, 4)

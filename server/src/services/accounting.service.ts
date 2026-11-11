@@ -1,6 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../utils/prisma.js';
-import { httpError, requireString, roundMoney, serialize, shortId, toDec } from '../utils/helpers.js';
+import {
+  httpError,
+  nextDocNumber,
+  requireString,
+  roundMoney,
+  serialize,
+  shortId,
+  toDec
+} from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
@@ -133,8 +141,7 @@ type JournalLineInput = {
 };
 
 async function nextEntryNumber(businessId: string, tx: Prisma.TransactionClient) {
-  const count = await tx.journalEntry.count({ where: { businessId } });
-  return `JE-${String(count + 1).padStart(6, '0')}`;
+  return nextDocNumber(tx.journalEntry, businessId, 'entryNumber', 'JE', 6);
 }
 
 /** Reject posts into locked accounting periods or closed financial years. */

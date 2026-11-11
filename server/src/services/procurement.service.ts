@@ -1,6 +1,7 @@
 import { prisma } from '../utils/prisma.js';
 import {
   httpError,
+  nextDocNumber,
   requireString,
   roundMoney,
   serialize,
@@ -56,23 +57,19 @@ const grnInclude = {
 };
 
 async function nextPoNumber(businessId: string) {
-  const count = await prisma.purchaseOrder.count({ where: { businessId } });
-  return `PO-${String(count + 1).padStart(5, '0')}`;
+  return nextDocNumber(prisma.purchaseOrder, businessId, 'poNumber', 'PO', 5);
 }
 
 async function nextGrnNumber(businessId: string) {
-  const count = await prisma.goodsReceiptNote.count({ where: { businessId } });
-  return `GRN-${String(count + 1).padStart(5, '0')}`;
+  return nextDocNumber(prisma.goodsReceiptNote, businessId, 'grnNumber', 'GRN', 5);
 }
 
 async function nextBillNumber(businessId: string) {
-  const count = await prisma.supplierBill.count({ where: { businessId } });
-  return `BILL-${String(count + 1).padStart(5, '0')}`;
+  return nextDocNumber(prisma.supplierBill, businessId, 'billNumber', 'BILL', 5);
 }
 
 async function nextPaymentNumber(businessId: string) {
-  const count = await prisma.supplierPayment.count({ where: { businessId } });
-  return `SPAY-${String(count + 1).padStart(5, '0')}`;
+  return nextDocNumber(prisma.supplierPayment, businessId, 'paymentNumber', 'SPAY', 5);
 }
 
 function addDays(date: Date, days: number) {
