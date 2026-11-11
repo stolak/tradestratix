@@ -125,12 +125,15 @@ async function buildInvoiceLines(user: AuthUser, itemsInput: any[]) {
       product.baseUomId,
       product.sellingUomId
     );
+    for (const sp of product.sellingPrices || []) {
+      if (sp.isActive !== false && sp.uomId) allowed.add(sp.uomId);
+    }
     const uomId =
       item.uom_id || item.uomId || product.sellingUomId || product.baseUomId;
     if (!uomId || !allowed.has(uomId)) {
       throw httpError(
         400,
-        `items[${i}].uom_id must be the product base, selling, or packaging UoM`
+        `items[${i}].uom_id must be a product selling-price, base, selling, or packaging UoM`
       );
     }
 

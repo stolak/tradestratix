@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Info } from 'lucide-react';
+import { Info, Plus, Trash2 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
@@ -8,11 +8,93 @@ import { SearchSelect } from '../components/SearchSelect';
 
 type Tab = 'invoices' | 'payments';
 
+type SellPriceOption = {
+  id: string;
+  uom_id: string;
+  code: string;
+  name: string;
+  price_level?: string;
+  label?: string | null;
+  unit_price: string;
+  is_default?: boolean;
+};
+
+type LineItem = {
+  key: string;
+  product_id: string;
+  selling_price_id: string;
+  uom_id: string;
+  quantity: string;
+  unit_price: string;
+};
+
 function isWalkInCustomer(c: any) {
   return (
     c?.customer_type === 'walk_in' ||
     String(c?.code || '').toUpperCase() === 'WALK-IN'
   );
+}
+
+function newLineKey() {
+  return `line-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function sellingPricesForProduct(p: any) {
+  return ((p?.selling_prices || []) as any[]).filter((s) => s && s.is_active !== false);
+}
+
+function sellPriceOptionsForProduct(p: any): SellPriceOption[] {
+  return sellingPricesForProduct(p)
+    .map((sp) => {
+      const uomId = sp.uom_id || sp.uom?.id || '';
+      if (!uomId || !sp.id) return null;
+      return {
+        id: sp.id,
+        uom_id: uomId,
+        code: sp.uom?.code || '',
+        name: sp.uom?.name || '',
+        price_level: sp.price_level,
+        label: sp.label,
+        unit_price: String(sp.unit_price ?? 0),
+        is_default: Boolean(sp.is_default)
+      } as SellPriceOption;
+    })
+    .filter(Boolean) as SellPriceOption[];
+}
+
+function defaultSellPrice(p: any): SellPriceOption | null {
+  const rows = sellPriceOptionsForProduct(p);
+  if (!rows.length) return null;
+  return (
+    rows.find((s) => s.is_default) ||
+    rows.find((s) => s.uom_id === (p?.selling_uom_id || p?.selling_uom?.id)) ||
+    rows[0]
+  );
+}
+
+function priceFieldsFromProduct(p: any) {
+  const sp = defaultSellPrice(p);
+  return {
+    selling_price_id: sp?.id || '',
+    uom_id: sp?.uom_id || '',
+    unit_price: sp?.unit_price || '0'
+  };
+}
+
+function makeLine(product?: any): LineItem {
+  return {
+    key: newLineKey(),
+    product_id: product?.id || '',
+    quantity: '1',
+    ...priceFieldsFromProduct(product)
+  };
+}
+
+function lineSubtotal(line: LineItem) {
+  const qty = Number(line.quantity);
+  const price = Number(line.unit_price);
+  if (!Number.isFinite(qty) || !Number.isFinite(price)) return 0;
+  return Math.round(qty * price * 10000) / 10000;
 }
 
 export const SalesPage: React.FC = () => {
@@ -29,18 +111,15 @@ export const SalesPage: React.FC = () => {
   const [reps, setReps] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
+  const [busy, setBusy] = useState(false);
 
   const [form, setForm] = useState({
     customer_id: '',
     warehouse_id: '',
     sales_rep_id: '',
-    product_id: '',
-    selling_price_id: '',
-    uom_id: '',
-    quantity: '1',
-    unit_price: '',
     notes: ''
   });
+  const [lines, setLines] = useState<LineItem[]>([makeLine()]);
 
   const [payForm, setPayForm] = useState({
     customer_id: '',
@@ -82,66 +161,44 @@ export const SalesPage: React.FC = () => {
     [products]
   );
 
-  const sellingPricesForProduct = (p: any) =>
-    ((p?.selling_prices || []) as any[]).filter((s) => s && s.is_active !== false);
+  const invoiceSubtotal = useMemo(
+    () => lines.reduce((sum, line) => sum + lineSubtotal(line), 0),
+    [lines]
+  );
 
-  type SellPriceOption = {
-    id: string;
-    uom_id: string;
-    code: string;
-    name: string;
-    price_level?: string;
-    label?: string | null;
-    unit_price: string;
-    is_default?: boolean;
+  const updateLine = (key: string, patch: Partial<LineItem>) => {
+    setLines((rows) => rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
   };
 
-  /** Selling UoM choices come from ProductSellingPrice for the selected product. */
-  const sellPriceOptionsForProduct = (p: any): SellPriceOption[] =>
-    sellingPricesForProduct(p)
-      .map((sp) => {
-        const uomId = sp.uom_id || sp.uom?.id || '';
-        if (!uomId || !sp.id) return null;
-        return {
-          id: sp.id,
-          uom_id: uomId,
-          code: sp.uom?.code || '',
-          name: sp.uom?.name || '',
-          price_level: sp.price_level,
-          label: sp.label,
-          unit_price: String(sp.unit_price ?? 0),
-          is_default: Boolean(sp.is_default)
-        } as SellPriceOption;
-      })
-      .filter(Boolean) as SellPriceOption[];
-
-  const defaultSellPrice = (p: any): SellPriceOption | null => {
-    const rows = sellPriceOptionsForProduct(p);
-    if (!rows.length) return null;
-    return (
-      rows.find((s) => s.is_default) ||
-      rows.find((s) => s.uom_id === (p?.selling_uom_id || p?.selling_uom?.id)) ||
-      rows[0]
-    );
+  const setLineProduct = (key: string, productId: string) => {
+    const product = products.find((p) => p.id === productId);
+    updateLine(key, {
+      product_id: productId,
+      ...priceFieldsFromProduct(product)
+    });
   };
 
-  const priceFieldsFromProduct = (p: any) => {
-    const sp = defaultSellPrice(p);
-    return {
-      selling_price_id: sp?.id || '',
+  const setLineSellingPrice = (key: string, sellingPriceId: string, productId: string) => {
+    const product = products.find((p) => p.id === productId);
+    const sp = sellPriceOptionsForProduct(product).find((s) => s.id === sellingPriceId);
+    updateLine(key, {
+      selling_price_id: sellingPriceId,
       uom_id: sp?.uom_id || '',
       unit_price: sp?.unit_price || '0'
-    };
+    });
   };
 
-  const selectedProduct = useMemo(
-    () => products.find((p) => p.id === form.product_id),
-    [products, form.product_id]
-  );
-  const sellPriceOptions = useMemo(
-    () => sellPriceOptionsForProduct(selectedProduct),
-    [selectedProduct]
-  );
+  const addLine = () => {
+    setLines((rows) => [...rows, makeLine(products[0])]);
+  };
+
+  const removeLine = (key: string) => {
+    setLines((rows) => (rows.length <= 1 ? rows : rows.filter((r) => r.key !== key)));
+  };
+
+  const resetLines = (productList: any[]) => {
+    setLines([makeLine(productList[0])]);
+  };
 
   const load = async () => {
     const settled = await Promise.allSettled([
@@ -191,8 +248,6 @@ export const SalesPage: React.FC = () => {
       console.warn('Sales partial load failures:', failed);
     }
 
-    const product = p[0];
-    const priced = priceFieldsFromProduct(product);
     setForm((f) => {
       const nextCustomer =
         visibleCustomers.some((x) => x.id === f.customer_id)
@@ -202,12 +257,6 @@ export const SalesPage: React.FC = () => {
             '';
       const nextCustomerRow = visibleCustomers.find((x) => x.id === nextCustomer);
       const lockRep = isWalkInCustomer(nextCustomerRow) && resolvedIsRep && resolvedRepId;
-      const keepProduct = f.product_id || product?.id || '';
-      const keepProductRow = p.find((x) => x.id === keepProduct) || product;
-      const keepPriced = priceFieldsFromProduct(keepProductRow);
-      const keepPrice =
-        f.selling_price_id &&
-        sellPriceOptionsForProduct(keepProductRow).some((s) => s.id === f.selling_price_id);
       return {
         ...f,
         customer_id: nextCustomer,
@@ -216,15 +265,27 @@ export const SalesPage: React.FC = () => {
           ? resolvedRepId
           : r.some((x) => x.id === f.sales_rep_id)
             ? f.sales_rep_id
-            : '',
-        product_id: keepProduct,
-        selling_price_id: keepPrice ? f.selling_price_id : keepPriced.selling_price_id || priced.selling_price_id,
-        uom_id: keepPrice ? f.uom_id : keepPriced.uom_id || priced.uom_id,
-        unit_price: keepPrice
-          ? f.unit_price || keepPriced.unit_price
-          : keepPriced.unit_price || priced.unit_price
+            : ''
       };
     });
+
+    setLines((rows) => {
+      if (!rows.length) return [makeLine(p[0])];
+      return rows.map((row) => {
+        const product =
+          p.find((x) => x.id === row.product_id) || p[0] || null;
+        if (!product) return row;
+        const options = sellPriceOptionsForProduct(product);
+        const keepPrice = options.some((s) => s.id === row.selling_price_id);
+        if (keepPrice && row.product_id === product.id) return row;
+        return {
+          ...row,
+          product_id: product.id,
+          ...priceFieldsFromProduct(product)
+        };
+      });
+    });
+
     setPayForm((f) => ({
       ...f,
       customer_id:
@@ -243,39 +304,60 @@ export const SalesPage: React.FC = () => {
     setForm((f) => (f.sales_rep_id === mySalesRepId ? f : { ...f, sales_rep_id: mySalesRepId }));
   }, [salesRepLocked, mySalesRepId]);
 
-  useEffect(() => {
-    if (!selectedProduct) return;
-    const allowed = new Set(sellPriceOptions.map((s) => s.id));
-    if (!form.selling_price_id || !allowed.has(form.selling_price_id)) {
-      const priced = priceFieldsFromProduct(selectedProduct);
-      setForm((f) => ({
-        ...f,
-        ...priced
-      }));
-    }
-  }, [selectedProduct, sellPriceOptions.map((s) => s.id).join('|')]);
-
   const createDraft = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!form.customer_id || !form.warehouse_id) {
+      await alertError('Create failed', 'Customer and warehouse are required');
+      return;
+    }
+    const payloadItems = lines
+      .filter((l) => l.product_id && l.uom_id && Number(l.quantity) > 0)
+      .map((l) => ({
+        product_id: l.product_id,
+        uom_id: l.uom_id,
+        quantity: Number(l.quantity),
+        unit_price: Number(l.unit_price)
+      }));
+    if (!payloadItems.length) {
+      await alertError('Create failed', 'Add at least one valid line item');
+      return;
+    }
+    for (const [i, line] of lines.entries()) {
+      if (!line.product_id) {
+        await alertError('Create failed', `Line ${i + 1}: product is required`);
+        return;
+      }
+      if (!line.uom_id || !line.selling_price_id) {
+        await alertError('Create failed', `Line ${i + 1}: selling UoM is required`);
+        return;
+      }
+      if (!(Number(line.quantity) > 0)) {
+        await alertError('Create failed', `Line ${i + 1}: quantity must be greater than 0`);
+        return;
+      }
+      if (!(Number(line.unit_price) >= 0)) {
+        await alertError('Create failed', `Line ${i + 1}: unit price is invalid`);
+        return;
+      }
+    }
+
+    setBusy(true);
     try {
       await api.sales.createInvoice({
         customer_id: form.customer_id,
         warehouse_id: form.warehouse_id,
         sales_rep_id: form.sales_rep_id || undefined,
         notes: form.notes || undefined,
-        items: [
-          {
-            product_id: form.product_id,
-            uom_id: form.uom_id,
-            quantity: Number(form.quantity),
-            unit_price: Number(form.unit_price)
-          }
-        ]
+        items: payloadItems
       });
       await alertSuccess('Draft invoice created');
+      setForm((f) => ({ ...f, notes: '' }));
+      resetLines(products);
       await load();
     } catch (err: any) {
       await alertError('Create failed', err.message);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -345,6 +427,7 @@ export const SalesPage: React.FC = () => {
             style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
           >
             <div style={{ fontWeight: 700 }}>New credit / account invoice</div>
+
             <div className="form-grid">
               <div className="field">
                 <label>Customer</label>
@@ -421,128 +504,189 @@ export const SalesPage: React.FC = () => {
                   onChange={(sales_rep_id) => setForm({ ...form, sales_rep_id })}
                 />
               </div>
-              <div className="field">
-                <label>Product</label>
-                <SearchSelect
-                  value={form.product_id}
-                  options={productOptions}
-                  required
-                  placeholder="Search product…"
-                  onChange={(product_id) => {
-                    const p = products.find((x) => x.id === product_id);
-                    setForm({
-                      ...form,
-                      product_id,
-                      ...priceFieldsFromProduct(p)
-                    });
-                  }}
-                />
-              </div>
-              <div className="field">
-                <label>Selling UoM</label>
-                <select
-                  value={form.selling_price_id}
-                  onChange={(e) => {
-                    const sp = sellPriceOptions.find((s) => s.id === e.target.value);
-                    setForm({
-                      ...form,
-                      selling_price_id: e.target.value,
-                      uom_id: sp?.uom_id || '',
-                      unit_price: sp?.unit_price || '0'
-                    });
-                  }}
-                  required
-                  disabled={!selectedProduct || sellPriceOptions.length === 0}
-                >
-                  {sellPriceOptions.length === 0 ? (
-                    <option value="">No selling prices for product</option>
-                  ) : null}
-                  {sellPriceOptions.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.code}
-                      {s.name ? ` — ${s.name}` : ''}
-                      {s.price_level ? ` · ${s.price_level}` : ''}
-                      {s.label ? ` (${s.label})` : ''}
-                      {` · ${s.unit_price}`}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Quantity</label>
-                <input
-                  type="number"
-                  min="0.0001"
-                  step="any"
-                  value={form.quantity}
-                  onChange={(e) => setForm({ ...form, quantity: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Unit price</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={form.unit_price}
-                  onChange={(e) => setForm({ ...form, unit_price: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Notes</label>
-                <input
-                  value={form.notes}
-                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
-                />
+            </div>
+
+            <div className="table-wrap" style={{ overflow: 'visible' }}>
+              <table className="table" style={{ minWidth: 920 }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: 40 }}>#</th>
+                    <th>Product</th>
+                    <th>Selling UoM</th>
+                    <th style={{ width: 110 }}>Qty</th>
+                    <th style={{ width: 130 }}>Unit price</th>
+                    <th style={{ width: 130 }}>Subtotal</th>
+                    <th style={{ width: 56 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {lines.map((line, index) => {
+                    const product = products.find((p) => p.id === line.product_id);
+                    const sellOptions = sellPriceOptionsForProduct(product);
+                    return (
+                      <tr key={line.key}>
+                        <td>{index + 1}</td>
+                        <td style={{ minWidth: 200 }}>
+                          <SearchSelect
+                            value={line.product_id}
+                            options={productOptions}
+                            required
+                            placeholder="Search product…"
+                            onChange={(productId) => setLineProduct(line.key, productId)}
+                          />
+                        </td>
+                        <td style={{ minWidth: 180 }}>
+                          <select
+                            value={line.selling_price_id}
+                            onChange={(e) =>
+                              setLineSellingPrice(line.key, e.target.value, line.product_id)
+                            }
+                            required
+                            disabled={!product || sellOptions.length === 0}
+                          >
+                            {sellOptions.length === 0 ? (
+                              <option value="">No selling prices</option>
+                            ) : null}
+                            {sellOptions.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.code}
+                                {s.name ? ` — ${s.name}` : ''}
+                                {s.price_level ? ` · ${s.price_level}` : ''}
+                                {` · ${s.unit_price}`}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min="0.0001"
+                            step="any"
+                            value={line.quantity}
+                            onChange={(e) => updateLine(line.key, { quantity: e.target.value })}
+                            required
+                            style={{ width: '100%' }}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            value={line.unit_price}
+                            onChange={(e) => updateLine(line.key, { unit_price: e.target.value })}
+                            required
+                            style={{ width: '100%' }}
+                          />
+                        </td>
+                        <td style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                          {lineSubtotal(line).toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 4
+                          })}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            aria-label={`Remove line ${index + 1}`}
+                            disabled={lines.length <= 1}
+                            onClick={() => removeLine(line.key)}
+                            style={{ padding: '0.4rem' }}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 12,
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}
+            >
+              <button type="button" className="btn btn-ghost" onClick={addLine}>
+                <Plus size={16} style={{ marginRight: 6 }} />
+                Add line
+              </button>
+              <div style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                Invoice subtotal:{' '}
+                {invoiceSubtotal.toLocaleString(undefined, {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 4
+                })}
               </div>
             </div>
-            <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-              Create draft invoice
+
+            <div className="field">
+              <label>Notes (optional)</label>
+              <input
+                value={form.notes}
+                onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                placeholder="One note for the whole invoice"
+              />
+            </div>
+
+            <button
+              className="btn btn-primary"
+              type="submit"
+              style={{ justifySelf: 'start' }}
+              disabled={busy}
+            >
+              {busy ? 'Creating…' : 'Create draft invoice'}
             </button>
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
             <div className="table-wrap">
               <table className="table">
-              <thead>
-                <tr>
-                  <th>Invoice #</th>
-                  <th>Customer</th>
-                  <th>Status</th>
-                  <th>Payment</th>
-                  <th>Total</th>
-                  <th>Balance</th>
-                  <th>Rep</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {invoices.map((inv) => (
-                  <tr key={inv.id}>
-                    <td>{inv.invoice_number}</td>
-                    <td>{inv.customer?.name}</td>
-                    <td>{inv.status}</td>
-                    <td>{inv.payment_status}</td>
-                    <td>{Number(inv.total_amount).toLocaleString()}</td>
-                    <td>{Number(inv.balance).toLocaleString()}</td>
-                    <td>{inv.sales_rep?.name || '—'}</td>
-                    <td>
-                      {inv.status === 'draft' ? (
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={() => void postInvoice(inv.id)}
-                        >
-                          Post
-                        </button>
-                      ) : null}
-                    </td>
+                <thead>
+                  <tr>
+                    <th>Invoice #</th>
+                    <th>Customer</th>
+                    <th>Lines</th>
+                    <th>Status</th>
+                    <th>Payment</th>
+                    <th>Total</th>
+                    <th>Balance</th>
+                    <th>Rep</th>
+                    <th>Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {invoices.map((inv) => (
+                    <tr key={inv.id}>
+                      <td>{inv.invoice_number}</td>
+                      <td>{inv.customer?.name}</td>
+                      <td>{(inv.items || []).length || '—'}</td>
+                      <td>{inv.status}</td>
+                      <td>{inv.payment_status}</td>
+                      <td>{Number(inv.total_amount).toLocaleString()}</td>
+                      <td>{Number(inv.balance).toLocaleString()}</td>
+                      <td>{inv.sales_rep?.name || '—'}</td>
+                      <td>
+                        {inv.status === 'draft' ? (
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => void postInvoice(inv.id)}
+                          >
+                            Post
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </>
@@ -609,34 +753,34 @@ export const SalesPage: React.FC = () => {
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
             <div className="table-wrap">
               <table className="table">
-              <thead>
-                <tr>
-                  <th>Payment #</th>
-                  <th>Customer</th>
-                  <th>Amount</th>
-                  <th>Method</th>
-                  <th>Allocations</th>
-                </tr>
-              </thead>
-              <tbody>
-                {payments.map((p) => (
-                  <tr key={p.id}>
-                    <td>{p.payment_number}</td>
-                    <td>{p.customer?.name}</td>
-                    <td>{Number(p.amount).toLocaleString()}</td>
-                    <td>{p.method}</td>
-                    <td>
-                      {(p.allocations || [])
-                        .map(
-                          (a: any) =>
-                            `${a.invoice?.invoice_number}: ${Number(a.amount).toLocaleString()}`
-                        )
-                        .join(' · ') || '—'}
-                    </td>
+                <thead>
+                  <tr>
+                    <th>Payment #</th>
+                    <th>Customer</th>
+                    <th>Amount</th>
+                    <th>Method</th>
+                    <th>Allocations</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {payments.map((p) => (
+                    <tr key={p.id}>
+                      <td>{p.payment_number}</td>
+                      <td>{p.customer?.name}</td>
+                      <td>{Number(p.amount).toLocaleString()}</td>
+                      <td>{p.method}</td>
+                      <td>
+                        {(p.allocations || [])
+                          .map(
+                            (a: any) =>
+                              `${a.invoice?.invoice_number}: ${Number(a.amount).toLocaleString()}`
+                          )
+                          .join(' · ') || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </>
