@@ -5,11 +5,11 @@ Updated: 2026-11-11
 ## Completed
 
 - **SalesRep ↔ Employee linkage**
-  - Every `SalesRep` references an `Employee` (`employeeId`, 1:1, Restrict)
-  - Creating a sales rep links an existing employee or auto-creates HR employee
-  - Identity fields sync both ways (HR ↔ sales-rep profile)
-  - Sales/journal attribution still uses `SalesRep.id`; payroll/attendance use `Employee.id`
-  - Backfill: `npm run backfill:sales-rep-employees`
+  - `SalesRep` is commercial-only (commission/status/code); name/phone/email come from `Employee`
+  - Employee must exist first; promote via Sales Reps page or `is_sales_rep` on HR create
+  - Every employee gets a User login; home branch required (HQ if omitted)
+  - `User.defaultBranchId` = employee home branch; session `X-Branch-Id` is transaction branch only
+  - Backfill: `npm run backfill:employee-users`
   - Tests: `npm run test:sales-rep-employees`
 - **Journal entity attribution + default account resolver**
   - `JournalEntry`: nullable `customerId`, `supplierId`, `salesRepresentativeId` (+ indexes)

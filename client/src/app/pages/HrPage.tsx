@@ -7,6 +7,7 @@ type Tab = 'employees' | 'attendance' | 'leave';
 export const HrPage: React.FC = () => {
   const [tab, setTab] = useState<Tab>('employees');
   const [employees, setEmployees] = useState<any[]>([]);
+  const [branches, setBranches] = useState<any[]>([]);
   const [attendance, setAttendance] = useState<any[]>([]);
   const [leave, setLeave] = useState<any[]>([]);
   const [empForm, setEmpForm] = useState({
@@ -17,6 +18,11 @@ export const HrPage: React.FC = () => {
     base_salary: '',
     phone: '',
     email: '',
+    branch_id: '',
+    username: '',
+    password: '',
+    is_sales_rep: false,
+    commission_percent: '5',
     hire_date: new Date().toISOString().slice(0, 10)
   });
   const [attForm, setAttForm] = useState({
@@ -35,14 +41,16 @@ export const HrPage: React.FC = () => {
 
   const load = async () => {
     try {
-      const [e, a, l] = await Promise.all([
+      const [e, a, l, b] = await Promise.all([
         api.hr.employees(),
         api.hr.attendance(),
-        api.hr.leave()
+        api.hr.leave(),
+        api.branches.list()
       ]);
       setEmployees(e);
       setAttendance(a);
       setLeave(l);
+      setBranches(b);
       setAttForm((f) => ({ ...f, employee_id: f.employee_id || e[0]?.id || '' }));
       setLeaveForm((f) => ({ ...f, employee_id: f.employee_id || e[0]?.id || '' }));
     } catch (err: any) {
@@ -57,7 +65,7 @@ export const HrPage: React.FC = () => {
   const createEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.hr.createEmployee({
+      const created = await api.hr.createEmployee({
         full_name: empForm.full_name,
         code: empForm.code || undefined,
         department: empForm.department || undefined,
@@ -65,9 +73,21 @@ export const HrPage: React.FC = () => {
         base_salary: Number(empForm.base_salary || 0),
         phone: empForm.phone || undefined,
         email: empForm.email || undefined,
-        hire_date: empForm.hire_date || undefined
+        hire_date: empForm.hire_date || undefined,
+        branch_id: empForm.branch_id || undefined,
+        username: empForm.username || undefined,
+        password: empForm.password || undefined,
+        is_sales_rep: empForm.is_sales_rep,
+        commission_percent: empForm.is_sales_rep
+          ? Number(empForm.commission_percent || 0)
+          : undefined
       });
-      await alertSuccess('Employee created');
+      const loginHint = created.login_username
+        ? ` Login: ${created.login_username}${
+            created.temporary_password ? ` / ${created.temporary_password}` : ''
+          }`
+        : '';
+      await alertSuccess(`Employee created.${loginHint}`);
       setEmpForm((f) => ({
         ...f,
         full_name: '',
@@ -76,11 +96,25 @@ export const HrPage: React.FC = () => {
         job_title: '',
         base_salary: '',
         phone: '',
-        email: ''
+        email: '',
+        username: '',
+        password: '',
+        is_sales_rep: false,
+        commission_percent: '5'
       }));
       await load();
     } catch (err: any) {
       await alertError('Create failed', err.message);
+    }
+  };
+
+  const makeSalesRep = async (employeeId: string) => {
+    try {
+      await api.salesReps.create({ employee_id: employeeId, commission_percent: 5 });
+      await alertSuccess('Employee promoted to sales rep');
+      await load();
+    } catch (err: any) {
+      await alertError('Promote failed', err.message);
     }
   };
 
@@ -235,6 +269,61 @@ export const HrPage: React.FC = () => {
                   onChange={(e) => setEmpForm({ ...empForm, email: e.target.value })}
                 />
               </div>
+              <div className="field">
+                <label>Home branch</label>
+                <select
+                  value={empForm.branch_id}
+                  onChange={(e) => setEmpForm({ ...empForm, branch_id: e.target.value })}
+                >
+                  <option value="">HQ (default)</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.code} — {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>Login username</label>
+                <input
+                  value={empForm.username}
+                  onChange={(e) => setEmpForm({ ...empForm, username: e.target.value })}
+                  placeholder="Auto from name if blank"
+                />
+              </div>
+              <div className="field">
+                <label>Login password</label>
+                <input
+                  type="text"
+                  value={empForm.password}
+                  onChange={(e) => setEmpForm({ ...empForm, password: e.target.value })}
+                  placeholder="Temporary password if blank"
+                />
+              </div>
+              <div className="field">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={empForm.is_sales_rep}
+                    onChange={(e) => setEmpForm({ ...empForm, is_sales_rep: e.target.checked })}
+                  />{' '}
+                  Also make sales rep
+                </label>
+              </div>
+              {empForm.is_sales_rep ? (
+                <div className="field">
+                  <label>Commission %</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={empForm.commission_percent}
+                    onChange={(e) =>
+                      setEmpForm({ ...empForm, commission_percent: e.target.value })
+                    }
+                  />
+                </div>
+              ) : null}
               <div className="form-grid--actions">
                 <button className="btn btn-primary" type="submit">
                   Create employee
@@ -250,11 +339,13 @@ export const HrPage: React.FC = () => {
                 <tr>
                   <th>Name</th>
                   <th>Code</th>
-                  <th>Department</th>
+                  <th>Branch</th>
+                  <th>Login</th>
                   <th>Title</th>
                   <th>Sales rep</th>
                   <th>Salary</th>
                   <th>Status</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -262,11 +353,23 @@ export const HrPage: React.FC = () => {
                   <tr key={r.id}>
                     <td>{r.full_name}</td>
                     <td>{r.code || '—'}</td>
-                    <td>{r.department || '—'}</td>
+                    <td>{r.branch?.code || '—'}</td>
+                    <td>{r.user?.username || '—'}</td>
                     <td>{r.job_title || '—'}</td>
-                    <td>{r.sales_rep ? r.sales_rep.code || r.sales_rep.name : '—'}</td>
+                    <td>{r.sales_rep ? r.sales_rep.code || 'Yes' : '—'}</td>
                     <td>{Number(r.base_salary).toLocaleString()}</td>
                     <td>{r.status}</td>
+                    <td>
+                      {!r.sales_rep ? (
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => void makeSalesRep(r.id)}
+                        >
+                          Make sales rep
+                        </button>
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -8,9 +8,7 @@ export const SalesRepsPage: React.FC = () => {
   const [employees, setEmployees] = useState<any[]>([]);
   const [form, setForm] = useState({
     employee_id: '',
-    name: '',
     code: '',
-    phone: '',
     commission_percent: '5'
   });
 
@@ -33,33 +31,20 @@ export const SalesRepsPage: React.FC = () => {
     void load();
   }, []);
 
-  const onEmployeePick = (employeeId: string) => {
-    const emp = employees.find((e) => e.id === employeeId);
-    setForm((prev) => ({
-      ...prev,
-      employee_id: employeeId,
-      name: emp?.full_name || prev.name,
-      code: emp?.code || prev.code,
-      phone: emp?.phone || prev.phone
-    }));
-  };
-
   const create = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!form.employee_id) {
+      await alertError('Create failed', 'Select an employee first');
+      return;
+    }
     try {
       await api.salesReps.create({
-        employee_id: form.employee_id || undefined,
-        name: form.name || undefined,
+        employee_id: form.employee_id,
         code: form.code || undefined,
-        phone: form.phone || undefined,
         commission_percent: Number(form.commission_percent) || 0
       });
-      await alertSuccess(
-        form.employee_id
-          ? 'Sales rep linked to employee'
-          : 'Sales rep created (employee record created automatically)'
-      );
-      setForm({ employee_id: '', name: '', code: '', phone: '', commission_percent: '5' });
+      await alertSuccess('Employee promoted to sales rep');
+      setForm({ employee_id: '', code: '', commission_percent: '5' });
       await load();
     } catch (err: any) {
       await alertError('Create failed', err.message);
@@ -73,7 +58,7 @@ export const SalesRepsPage: React.FC = () => {
           Sales reps
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Every sales rep is also an employee. Link an existing HR employee or create both together.
+          Promote an existing employee. Identity comes from HR; commission lives here.
         </p>
       </header>
 
@@ -84,38 +69,25 @@ export const SalesRepsPage: React.FC = () => {
       >
         <div className="form-grid">
           <div className="field">
-            <label>Existing employee (optional)</label>
+            <label>Employee</label>
             <select
               value={form.employee_id}
-              onChange={(e) => onEmployeePick(e.target.value)}
+              onChange={(e) => setForm({ ...form, employee_id: e.target.value })}
+              required
             >
-              <option value="">Create new employee from details below</option>
+              <option value="">Select employee…</option>
               {employees.map((emp) => (
                 <option key={emp.id} value={emp.id}>
                   {emp.code ? `${emp.code} — ` : ''}
                   {emp.full_name}
+                  {emp.branch?.code ? ` (${emp.branch.code})` : ''}
                 </option>
               ))}
             </select>
           </div>
           <div className="field">
-            <label>Name</label>
-            <input
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              required={!form.employee_id}
-            />
-          </div>
-          <div className="field">
-            <label>Code</label>
+            <label>Sales rep code (optional)</label>
             <input value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} />
-          </div>
-          <div className="field">
-            <label>Phone</label>
-            <input
-              value={form.phone}
-              onChange={(e) => setForm({ ...form, phone: e.target.value })}
-            />
           </div>
           <div className="field">
             <label>Commission %</label>
@@ -129,7 +101,7 @@ export const SalesRepsPage: React.FC = () => {
           </div>
           <div className="form-grid--actions">
             <button className="btn btn-primary" type="submit">
-              Add sales rep
+              Make sales rep
             </button>
           </div>
         </div>
@@ -142,7 +114,8 @@ export const SalesRepsPage: React.FC = () => {
               <tr>
                 <th>Code</th>
                 <th>Name</th>
-                <th>Employee</th>
+                <th>Home branch</th>
+                <th>Login</th>
                 <th>Commission %</th>
                 <th>Invoices</th>
                 <th>Status</th>
@@ -151,13 +124,10 @@ export const SalesRepsPage: React.FC = () => {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td>{r.code || '—'}</td>
-                  <td>{r.name}</td>
-                  <td>
-                    {r.employee
-                      ? `${r.employee.code || r.employee.id} — ${r.employee.full_name}`
-                      : '—'}
-                  </td>
+                  <td>{r.code || r.employee?.code || '—'}</td>
+                  <td>{r.name || r.employee?.full_name}</td>
+                  <td>{r.branch?.code || r.employee?.branch?.code || '—'}</td>
+                  <td>{r.employee?.user?.username || '—'}</td>
                   <td>{Number(r.commission_percent)}%</td>
                   <td>{r._count?.invoices ?? 0}</td>
                   <td>{r.status}</td>
@@ -185,7 +155,7 @@ export const SalesRepsPage: React.FC = () => {
             <tbody>
               {commissions.map((c) => (
                 <tr key={c.id}>
-                  <td>{c.sales_rep?.name}</td>
+                  <td>{c.sales_rep?.name || c.sales_rep?.employee?.full_name}</td>
                   <td>{c.invoice?.invoice_number}</td>
                   <td>{Number(c.base_amount).toLocaleString()}</td>
                   <td>{Number(c.commission_percent)}%</td>

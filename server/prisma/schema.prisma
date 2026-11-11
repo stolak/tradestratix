@@ -181,7 +181,6 @@ model Branch {
   userBranches     UserBranch[]
   usersDefault     User[]             @relation("UserDefaultBranch")
   journalEntries   JournalEntry[]
-  salesReps        SalesRep[]
   salesInvoices    SalesInvoice[]
   fixedAssets      FixedAsset[]
   employees        Employee[]
@@ -271,7 +270,6 @@ model User {
   userWarehouses      UserWarehouse[]
   loginHistory        LoginHistory[]
   refreshTokens       RefreshToken[]
-  salesReps           SalesRep[]
   employees           Employee[]
   notifications       AppNotification[]
 
@@ -1210,19 +1208,15 @@ model CustomerNote {
   @@map("customer_notes")
 }
 
-/// Commercial sales-rep profile. Every sales rep is also an Employee (HR record).
-/// Journal/sales attribution continues to use SalesRep.id; payroll/attendance use Employee.id.
+/// Commercial sales-rep profile only (commission / attribution).
+/// Identity (name/phone/email), home branch, and login live on Employee (+ User).
+/// Journal/sales attribution uses SalesRep.id; transaction branch comes from active session (X-Branch-Id), not employee.home branch.
 model SalesRep {
   id                String   @id
   businessId        String   @map("business_id")
-  /// HR employee this sales-rep role belongs to (1:1). Required — every sales rep is an employee.
+  /// HR employee this sales-rep role belongs to (1:1). Employee must exist first.
   employeeId        String   @unique @map("employee_id")
-  userId            String?  @map("user_id")
-  branchId          String?  @map("branch_id")
   code              String?
-  name              String
-  phone             String?
-  email             String?
   commissionPercent Decimal  @default(0) @map("commission_percent") @db.Decimal(8, 4)
   status            String   @default("active")
   createdAt         DateTime @default(now()) @map("created_at")
@@ -1231,14 +1225,11 @@ model SalesRep {
 
   business       Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
   employee       Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  user           User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
-  branch         Branch?           @relation(fields: [branchId], references: [id], onDelete: SetNull)
   invoices       SalesInvoice[]
   commissions    SalesCommission[]
   journalEntries JournalEntry[]    @relation("JournalSalesRep")
 
   @@unique([businessId, code])
-  @@index([businessId, name])
   @@index([businessId, employeeId])
   @@map("sales_reps")
 }
@@ -1588,32 +1579,34 @@ model BudgetLine {
 // --- Phase 7: HR / Attendance / Payroll --------------------------------------
 
 model Employee {
-  id           String    @id
-  businessId   String    @map("business_id")
-  branchId     String?   @map("branch_id")
-  userId       String?   @map("user_id")
+  id           String   @id
+  businessId   String   @map("business_id")
+  /// Home / HR branch. Transaction branch for postings is session active branch, not this field.
+  branchId     String   @map("branch_id")
+  /// Login account for this employee (required).
+  userId       String   @unique @map("user_id")
   code         String?
-  fullName     String    @map("full_name")
+  fullName     String   @map("full_name")
   email        String?
   phone        String?
   department   String?
-  jobTitle     String?   @map("job_title")
+  jobTitle     String?  @map("job_title")
   hireDate     DateTime? @map("hire_date")
-  baseSalary   Decimal   @default(0) @map("base_salary") @db.Decimal(18, 4)
+  baseSalary   Decimal  @default(0) @map("base_salary") @db.Decimal(18, 4)
   /// monthly | biweekly | weekly
-  payFrequency String    @default("monthly") @map("pay_frequency")
-  bankName     String?   @map("bank_name")
-  bankAccount  String?   @map("bank_account")
-  taxId        String?   @map("tax_id")
-  pensionId    String?   @map("pension_id")
-  status       String    @default("active")
-  createdById  String?   @map("created_by_id")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
+  payFrequency String   @default("monthly") @map("pay_frequency")
+  bankName     String?  @map("bank_name")
+  bankAccount  String?  @map("bank_account")
+  taxId        String?  @map("tax_id")
+  pensionId    String?  @map("pension_id")
+  status       String   @default("active")
+  createdById  String?  @map("created_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
 
   business       Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  branch         Branch?            @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  user           User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  branch         Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  user           User               @relation(fields: [userId], references: [id], onDelete: Restrict)
   salesRep       SalesRep?
   attendance     AttendanceRecord[]
   leaveRequests  LeaveRequest[]
@@ -1622,6 +1615,7 @@ model Employee {
 
   @@unique([businessId, code])
   @@index([businessId, status])
+  @@index([businessId, branchId])
   @@map("employees")
 }
 

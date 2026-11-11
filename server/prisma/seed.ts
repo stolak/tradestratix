@@ -958,7 +958,44 @@ async function main() {
     });
   }
 
-  // Sales rep is always an employee (commercial profile + HR record)
+  // Sales rep = employee first + login; commercial SalesRep profile is separate
+  let salesRepUser = await prisma.user.findFirst({
+    where: { businessId: business.id, username: 'amaka' }
+  });
+  if (!salesRepUser) {
+    const salesRepRole = await prisma.role.findFirst({
+      where: {
+        code: 'sales_representative',
+        OR: [{ businessId: business.id }, { businessId: null }]
+      }
+    });
+    salesRepUser = await prisma.user.create({
+      data: {
+        id: id('usr'),
+        businessId: business.id,
+        username: 'amaka',
+        passwordHash: await bcrypt.hash('password123', 10),
+        fullName: 'Amaka Sales',
+        role: 'sales_representative',
+        phone: '+2348011122233',
+        department: 'Sales',
+        defaultBranchId: branch.id,
+        createdById: owner.id,
+        ...(salesRepRole ? { userRoles: { create: [{ roleId: salesRepRole.id }] } } : {}),
+        userBranches: {
+          create: [
+            {
+              branchId: branch.id,
+              businessId: business.id,
+              status: 'active',
+              assignedById: owner.id
+            }
+          ]
+        }
+      }
+    });
+  }
+
   let salesRepEmployee = await prisma.employee.findFirst({
     where: { businessId: business.id, code: 'EMP-REP-01' }
   });
@@ -968,6 +1005,7 @@ async function main() {
         id: id('emp'),
         businessId: business.id,
         branchId: branch.id,
+        userId: salesRepUser.id,
         code: 'EMP-REP-01',
         fullName: 'Amaka Sales',
         phone: '+2348011122233',
@@ -978,6 +1016,11 @@ async function main() {
         status: 'active',
         createdById: owner.id
       }
+    });
+  } else if (!salesRepEmployee.userId) {
+    salesRepEmployee = await prisma.employee.update({
+      where: { id: salesRepEmployee.id },
+      data: { userId: salesRepUser.id, branchId: salesRepEmployee.branchId || branch.id }
     });
   }
 
@@ -990,10 +1033,7 @@ async function main() {
         id: id('rep'),
         businessId: business.id,
         employeeId: salesRepEmployee.id,
-        branchId: branch.id,
         code: 'REP-01',
-        name: salesRepEmployee.fullName,
-        phone: salesRepEmployee.phone,
         commissionPercent: 5,
         createdById: owner.id
       }
@@ -1098,7 +1138,43 @@ async function main() {
     });
   }
 
-  // Phase 7 — sample employee
+  // Phase 7 — sample employee (+ login)
+  let warehouseUser = await prisma.user.findFirst({
+    where: { businessId: business.id, username: 'tunde' }
+  });
+  if (!warehouseUser) {
+    const invRole = await prisma.role.findFirst({
+      where: {
+        code: 'inventory_officer',
+        OR: [{ businessId: business.id }, { businessId: null }]
+      }
+    });
+    warehouseUser = await prisma.user.create({
+      data: {
+        id: id('usr'),
+        businessId: business.id,
+        username: 'tunde',
+        passwordHash: await bcrypt.hash('password123', 10),
+        fullName: 'Tunde Warehouse',
+        role: 'inventory_officer',
+        department: 'Operations',
+        defaultBranchId: branch.id,
+        createdById: owner.id,
+        ...(invRole ? { userRoles: { create: [{ roleId: invRole.id }] } } : {}),
+        userBranches: {
+          create: [
+            {
+              branchId: branch.id,
+              businessId: business.id,
+              status: 'active',
+              assignedById: owner.id
+            }
+          ]
+        }
+      }
+    });
+  }
+
   let employee = await prisma.employee.findFirst({
     where: { businessId: business.id, code: 'EMP-01' }
   });
@@ -1108,6 +1184,7 @@ async function main() {
         id: id('emp'),
         businessId: business.id,
         branchId: branch.id,
+        userId: warehouseUser.id,
         code: 'EMP-01',
         fullName: 'Tunde Warehouse',
         department: 'Operations',
@@ -1117,6 +1194,11 @@ async function main() {
         status: 'active',
         createdById: owner.id
       }
+    });
+  } else if (!employee.userId) {
+    employee = await prisma.employee.update({
+      where: { id: employee.id },
+      data: { userId: warehouseUser.id, branchId: employee.branchId || branch.id }
     });
   }
 

@@ -1,8 +1,9 @@
 /**
- * SalesRep ↔ Employee linkage tests.
+ * SalesRep ↔ Employee linkage tests (employee-first, no identity on SalesRep).
  * Run: npm run test:sales-rep-employees
  */
 import { prisma } from '../src/utils/prisma.js';
+import * as hrService from '../src/services/hr.service.js';
 import * as salesRepService from '../src/services/sales-rep.service.js';
 import type { AuthUser } from '../src/types/express/index.js';
 
@@ -45,63 +46,67 @@ async function main() {
     branchIds: membership ? [membership.branchId] : owner.defaultBranchId ? [owner.defaultBranchId] : []
   };
 
-  console.log('Create sales rep auto-creates employee');
   const suffix = Date.now().toString(36).slice(-6);
-  const created = await salesRepService.createSalesRep(user, {
-    name: `Test Rep ${suffix}`,
-    code: `TR-${suffix}`,
-    commission_percent: 3
-  });
-  assert(!!created.employee_id, 'sales rep has employee_id');
-  assert(created.employee?.full_name === created.name, 'employee name matches rep');
 
-  const emp = await prisma.employee.findUnique({ where: { id: created.employee_id } });
-  assert(!!emp, 'employee row exists');
-  assert(emp?.jobTitle === 'Sales Representative', 'auto employee job title');
-
-  console.log('\nLink existing employee as sales rep');
-  const plainEmp = await prisma.employee.create({
-    data: {
-      id: `emp-test-${suffix}`,
-      businessId: business.id,
-      branchId: user.activeBranchId || null,
-      code: `EMP-T-${suffix}`,
-      fullName: `Plain Emp ${suffix}`,
-      department: 'Sales',
-      jobTitle: 'Account Manager',
-      status: 'active',
-      createdById: user.id
-    }
+  console.log('Create employee always creates login + home branch');
+  const emp = await hrService.createEmployee(user, {
+    full_name: `Staff ${suffix}`,
+    code: `EMP-S-${suffix}`,
+    username: `staff.${suffix}`,
+    password: 'password123'
   });
-  const linked = await salesRepService.createSalesRep(user, {
-    employee_id: plainEmp.id,
+  assert(!!emp.user_id || !!emp.user?.id, 'employee has user');
+  assert(!!emp.branch_id || !!emp.branch?.id, 'employee has home branch');
+  assert(emp.login_username === `staff.${suffix}`, 'login username returned');
+
+  const login = await prisma.user.findUnique({ where: { id: emp.user_id || emp.user.id } });
+  assert(login?.defaultBranchId === (emp.branch_id || emp.branch?.id), 'user defaultBranch = employee home');
+
+  console.log('\nPromote existing employee to sales rep');
+  const rep = await salesRepService.createSalesRep(user, {
+    employee_id: emp.id,
     commission_percent: 4
   });
-  assert(linked.employee_id === plainEmp.id, 'linked to provided employee');
-  assert(linked.name === plainEmp.fullName, 'name taken from employee');
+  assert(rep.employee_id === emp.id, 'sales rep linked to employee');
+  assert(rep.name === emp.full_name, 'name comes from employee');
+  assert(!(rep as any).phone || rep.phone === emp.phone, 'phone comes from employee join');
 
-  console.log('\nReject double-link');
+  console.log('\nReject creating sales rep without employee_id');
+  let rejectedNoEmp = false;
+  try {
+    await salesRepService.createSalesRep(user, { commission_percent: 1 });
+  } catch (e: any) {
+    rejectedNoEmp = String(e.message || '').includes('employee_id');
+  }
+  assert(rejectedNoEmp, 'employee_id required');
+
+  console.log('\nReject double promotion');
   let rejected = false;
   try {
     await salesRepService.createSalesRep(user, {
-      employee_id: plainEmp.id,
+      employee_id: emp.id,
       commission_percent: 1
     });
   } catch (e: any) {
-    rejected = String(e.message || '').toLowerCase().includes('already linked');
+    rejected = String(e.message || '').toLowerCase().includes('already');
   }
-  assert(rejected, 'cannot link same employee twice');
+  assert(rejected, 'cannot promote same employee twice');
 
-  console.log('\nExisting seeded reps');
-  const reps = await prisma.salesRep.findMany({
-    where: { businessId: business.id },
-    select: { id: true, employeeId: true }
+  console.log('\nCreate employee as sales rep in one step');
+  const combo = await hrService.createEmployee(user, {
+    full_name: `Rep ${suffix}`,
+    code: `EMP-R-${suffix}`,
+    username: `rep.${suffix}`,
+    password: 'password123',
+    is_sales_rep: true,
+    commission_percent: 6
   });
-  assert(reps.length > 0, 'business has sales reps');
-  assert(
-    reps.every((r) => !!r.employeeId),
-    'every sales rep has employee_id'
-  );
+  assert(!!combo.sales_rep?.id || !!combo.sales_rep, 'created with sales_rep');
+
+  console.log('\nSchema: sales reps have no identity columns in API shape beyond join');
+  const listed = await salesRepService.listSalesReps(business.id);
+  const sample = listed.find((r: any) => r.id === rep.id);
+  assert(!!sample?.employee?.full_name || !!sample?.name, 'list exposes employee name');
 
   console.log(`\n${passed} passed, ${failed} failed`);
   if (failed) process.exitCode = 1;

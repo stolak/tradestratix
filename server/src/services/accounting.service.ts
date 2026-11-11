@@ -411,13 +411,29 @@ export async function listJournals(
       lines: { include: { account: true } },
       customer: { select: { id: true, code: true, name: true } },
       supplier: { select: { id: true, code: true, name: true } },
-      salesRepresentative: { select: { id: true, code: true, name: true } },
+      salesRepresentative: {
+        select: {
+          id: true,
+          code: true,
+          employee: { select: { id: true, fullName: true, code: true } }
+        }
+      },
       branch: { select: { id: true, code: true, name: true } }
     },
     orderBy: { entryDate: 'desc' },
     take: opts?.limit ?? 50
   });
-  return serialize(rows);
+  return serialize(
+    rows.map((r) => ({
+      ...r,
+      salesRepresentative: r.salesRepresentative
+        ? {
+            ...r.salesRepresentative,
+            name: r.salesRepresentative.employee?.fullName ?? null
+          }
+        : null
+    }))
+  );
 }
 
 /** Entity ledger: posted journals for a customer, supplier, or sales rep. */

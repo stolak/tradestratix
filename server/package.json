@@ -16,6 +16,7 @@
     "backfill:branches": "tsx scripts/backfill-branches.ts",
     "backfill:journal-entities": "tsx scripts/backfill-journal-entities.ts",
     "backfill:sales-rep-employees": "tsx scripts/backfill-sales-rep-employees.ts",
+    "backfill:employee-users": "tsx scripts/backfill-employee-users.ts",
     "test:branches": "tsx scripts/test-multi-branch.ts",
     "test:journal-entities": "tsx scripts/test-journal-entities.ts",
     "test:sales-rep-employees": "tsx scripts/test-sales-rep-employees.ts",

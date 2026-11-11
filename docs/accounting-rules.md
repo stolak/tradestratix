@@ -14,7 +14,7 @@ Journal headers may optionally reference:
 
 - `customerId` — customer-facing AR / sales / payments / advances
 - `supplierId` — supplier-facing AP / receipts / payments
-- `salesRepresentativeId` — commercial sales representative responsible (distinct from `createdById` / `postedById`). Every sales rep is also an `Employee` via `SalesRep.employeeId`; journals keep using the sales-rep id, not the employee id.
+- `salesRepresentativeId` — commercial sales representative responsible (distinct from `createdById` / `postedById`). Every sales rep is an `Employee` (`SalesRep.employeeId`); identity is joined from Employee. Journals use the sales-rep id. Employee home branch ≠ transaction branch (active session / `X-Branch-Id`).
 
 Rules:
 

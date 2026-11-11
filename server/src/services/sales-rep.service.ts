@@ -4,24 +4,39 @@ import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
 
+const employeeSelect = {
+  id: true,
+  code: true,
+  fullName: true,
+  email: true,
+  phone: true,
+  department: true,
+  jobTitle: true,
+  status: true,
+  branchId: true,
+  userId: true,
+  branch: { select: { id: true, code: true, name: true } },
+  user: { select: { id: true, username: true, defaultBranchId: true, role: true, status: true } }
+} as const;
+
 const repInclude = {
-  branch: true,
-  employee: {
-    select: {
-      id: true,
-      code: true,
-      fullName: true,
-      email: true,
-      phone: true,
-      department: true,
-      jobTitle: true,
-      status: true,
-      branchId: true,
-      userId: true
-    }
-  },
+  employee: { select: employeeSelect },
   _count: { select: { invoices: true, commissions: true } }
 } as const;
+
+/** Flatten employee identity onto the sales-rep DTO for UI compatibility. */
+function presentRep<T extends { employee?: any }>(row: T) {
+  const emp = row.employee;
+  return {
+    ...row,
+    name: emp?.fullName ?? null,
+    phone: emp?.phone ?? null,
+    email: emp?.email ?? null,
+    branch_id: emp?.branchId ?? null,
+    user_id: emp?.userId ?? null,
+    branch: emp?.branch ?? null
+  };
+}
 
 async function assertEmployeeAvailable(
   businessId: string,
@@ -30,119 +45,123 @@ async function assertEmployeeAvailable(
 ) {
   const employee = await prisma.employee.findFirst({
     where: { id: employeeId, businessId },
-    include: { salesRep: { select: { id: true } } }
+    include: {
+      salesRep: { select: { id: true } },
+      user: true,
+      branch: true
+    }
   });
   if (!employee) throw httpError(400, 'employee_id is invalid for this business');
+  if (!employee.userId) throw httpError(400, 'Employee must have a user login before becoming a sales rep');
+  if (!employee.branchId) throw httpError(400, 'Employee must have a home branch before becoming a sales rep');
   if (employee.salesRep && employee.salesRep.id !== excludeSalesRepId) {
-    throw httpError(409, 'Employee is already linked to another sales rep');
+    throw httpError(409, 'Employee is already a sales rep');
   }
   return employee;
 }
 
-/** Ensure HR employee exists for a sales-rep create/update. */
-async function resolveEmployeeForRep(
+/** Align login default branch with employee home branch; keep multi-branch membership. */
+async function syncRepUserDefaultBranch(
+  tx: typeof prisma,
+  opts: { userId: string; businessId: string; homeBranchId: string; actorId?: string | null }
+) {
+  await tx.user.update({
+    where: { id: opts.userId },
+    data: { defaultBranchId: opts.homeBranchId }
+  });
+  await branchAccess.ensureUserMembership(
+    opts.businessId,
+    opts.userId,
+    opts.homeBranchId,
+    opts.actorId || undefined
+  );
+}
+
+export async function promoteEmployeeToSalesRep(
   user: AuthUser,
-  body: Record<string, any>,
   opts: {
-    name: string;
+    employeeId: string;
     code?: string | null;
-    phone?: string | null;
-    email?: string | null;
-    branchId?: string | null;
-    userId?: string | null;
+    commissionPercent?: number;
     status?: string;
   }
 ) {
-  const employeeId = body.employee_id || body.employeeId || null;
-  if (employeeId) {
-    return assertEmployeeAvailable(user.businessId, String(employeeId));
-  }
+  const employee = await assertEmployeeAvailable(user.businessId, opts.employeeId);
+  const code = opts.code ? String(opts.code).trim() : employee.code;
 
-  // Auto-create HR employee so every sales rep is also an employee
-  const branchId =
-    opts.branchId || (await branchAccess.resolveWriteBranchId(user, user.activeBranchId));
-
-  try {
-    return await prisma.employee.create({
+  const row = await prisma.$transaction(async (tx) => {
+    const rep = await tx.salesRep.create({
       data: {
-        id: shortId('emp'),
+        id: shortId('rep'),
         businessId: user.businessId,
-        branchId,
-        userId: opts.userId || null,
-        code: opts.code || null,
-        fullName: opts.name,
-        phone: opts.phone || null,
-        email: opts.email || null,
-        department: body.department || 'Sales',
-        jobTitle: body.job_title || body.jobTitle || 'Sales Representative',
-        status: opts.status === 'inactive' ? 'inactive' : 'active',
+        employeeId: employee.id,
+        code,
+        commissionPercent: Number(opts.commissionPercent ?? 0),
+        status: opts.status || 'active',
         createdById: user.id
+      },
+      include: repInclude
+    });
+
+    await syncRepUserDefaultBranch(tx as any, {
+      userId: employee.userId,
+      businessId: user.businessId,
+      homeBranchId: employee.branchId,
+      actorId: user.id
+    });
+
+    // Prefer sales_representative role for the linked login
+    const roleRow = await tx.role.findFirst({
+      where: {
+        code: 'sales_representative',
+        OR: [{ businessId: user.businessId }, { businessId: null }]
       }
     });
-  } catch (err: any) {
-    if (err?.code === 'P2002') {
-      throw httpError(
-        409,
-        'Employee code already exists — pass employee_id to link an existing employee'
-      );
+    if (roleRow) {
+      await tx.user.update({
+        where: { id: employee.userId },
+        data: { role: 'sales_representative' }
+      });
+      const existingRole = await tx.userRole.findFirst({
+        where: { userId: employee.userId, roleId: roleRow.id }
+      });
+      if (!existingRole) {
+        await tx.userRole.create({
+          data: { userId: employee.userId, roleId: roleRow.id }
+        });
+      }
     }
-    throw err;
-  }
+
+    return rep;
+  });
+
+  return presentRep(row);
 }
 
 export async function listSalesReps(businessId: string) {
   const rows = await prisma.salesRep.findMany({
     where: { businessId },
     include: repInclude,
-    orderBy: { name: 'asc' }
+    orderBy: { employee: { fullName: 'asc' } }
   });
-  return serialize(rows);
+  return serialize(rows.map(presentRep));
 }
 
 export async function createSalesRep(user: AuthUser, body: Record<string, any>) {
-  const employeeIdHint = body.employee_id || body.employeeId || null;
-  const rawName = body.name || body.full_name || body.fullName;
-  if (!employeeIdHint && !rawName) {
-    throw httpError(400, 'name is required when employee_id is not provided');
+  const employeeId = body.employee_id || body.employeeId;
+  if (!employeeId) {
+    throw httpError(
+      400,
+      'employee_id is required — register the person as an employee first, then make them a sales rep'
+    );
   }
 
-  const code = body.code ? String(body.code).trim() : null;
-  const phone = body.phone || null;
-  const email = body.email || null;
-  const userId = body.user_id || body.userId || null;
-  const branchId = body.branch_id || body.branchId || user.defaultBranchId || null;
-  const status = body.status || 'active';
-  const commissionPercent = Number(body.commission_percent ?? body.commissionPercent ?? 0);
-
-  const employee = await resolveEmployeeForRep(user, body, {
-    name: String(rawName || '').trim() || 'Sales Representative',
-    code,
-    phone,
-    email,
-    branchId,
-    userId,
-    status
-  });
-
-  const name = String(rawName || employee.fullName).trim();
-
   try {
-    const row = await prisma.salesRep.create({
-      data: {
-        id: shortId('rep'),
-        businessId: user.businessId,
-        employeeId: employee.id,
-        name,
-        code: code || employee.code,
-        phone: phone || employee.phone,
-        email: email || employee.email,
-        userId: userId || employee.userId,
-        branchId: branchId || employee.branchId,
-        commissionPercent,
-        status,
-        createdById: user.id
-      },
-      include: repInclude
+    const row = await promoteEmployeeToSalesRep(user, {
+      employeeId: String(employeeId),
+      code: body.code ?? null,
+      commissionPercent: Number(body.commission_percent ?? body.commissionPercent ?? 0),
+      status: body.status || 'active'
     });
     await writeAudit({
       user,
@@ -150,7 +169,7 @@ export async function createSalesRep(user: AuthUser, body: Record<string, any>) 
       module: 'sales_reps',
       entityType: 'SalesRep',
       entityId: row.id,
-      summary: `Created sales rep ${row.name} (employee ${employee.id})`
+      summary: `Promoted employee ${employeeId} to sales rep`
     });
     return serialize(row);
   } catch (err: any) {
@@ -167,34 +186,14 @@ export async function updateSalesRep(user: AuthUser, id: string, body: Record<st
   if (!existing) throw httpError(404, 'Sales rep not found');
 
   const data: Record<string, unknown> = {};
-  const map: Record<string, string> = {
-    name: 'name',
-    code: 'code',
-    phone: 'phone',
-    email: 'email',
-    user_id: 'userId',
-    userId: 'userId',
-    branch_id: 'branchId',
-    branchId: 'branchId',
-    commission_percent: 'commissionPercent',
-    commissionPercent: 'commissionPercent',
-    status: 'status'
-  };
-  for (const [k, field] of Object.entries(map)) {
-    if (body[k] !== undefined) data[field] = body[k];
+  if (body.code !== undefined) data.code = body.code ? String(body.code).trim() : null;
+  if (body.commission_percent !== undefined || body.commissionPercent !== undefined) {
+    data.commissionPercent = Number(body.commission_percent ?? body.commissionPercent);
   }
+  if (body.status !== undefined) data.status = body.status;
 
   if (body.employee_id !== undefined || body.employeeId !== undefined) {
-    const nextEmployeeId = body.employee_id ?? body.employeeId;
-    if (!nextEmployeeId) throw httpError(400, 'employee_id cannot be cleared; every sales rep must be an employee');
-    const employee = await assertEmployeeAvailable(user.businessId, String(nextEmployeeId), id);
-    data.employeeId = employee.id;
-    if (data.name === undefined) data.name = employee.fullName;
-    if (data.phone === undefined) data.phone = employee.phone;
-    if (data.email === undefined) data.email = employee.email;
-    if (data.userId === undefined) data.userId = employee.userId;
-    if (data.branchId === undefined) data.branchId = employee.branchId;
-    if (data.code === undefined && employee.code) data.code = employee.code;
+    throw httpError(400, 'Cannot reassign employee_id on a sales rep; create a new sales-rep profile instead');
   }
 
   try {
@@ -205,21 +204,21 @@ export async function updateSalesRep(user: AuthUser, id: string, body: Record<st
         include: repInclude
       });
 
-      // Keep linked employee identity fields in sync when commercial profile changes
-      if (rep.employeeId) {
-        const empPatch: Record<string, unknown> = {};
-        if (data.name !== undefined) empPatch.fullName = data.name;
-        if (data.phone !== undefined) empPatch.phone = data.phone;
-        if (data.email !== undefined) empPatch.email = data.email;
-        if (data.userId !== undefined) empPatch.userId = data.userId;
-        if (data.branchId !== undefined) empPatch.branchId = data.branchId;
-        if (data.code !== undefined) empPatch.code = data.code;
-        if (data.status !== undefined) {
-          empPatch.status = data.status === 'inactive' ? 'inactive' : 'active';
-        }
-        if (Object.keys(empPatch).length) {
-          await tx.employee.update({ where: { id: rep.employeeId }, data: empPatch as any });
-        }
+      if (data.status !== undefined && rep.employeeId) {
+        await tx.employee.update({
+          where: { id: rep.employeeId },
+          data: { status: data.status === 'inactive' ? 'inactive' : 'active' }
+        });
+      }
+
+      // Keep linked user default branch = employee home branch
+      if (rep.employee?.userId && rep.employee.branchId) {
+        await syncRepUserDefaultBranch(tx as any, {
+          userId: rep.employee.userId,
+          businessId: user.businessId,
+          homeBranchId: rep.employee.branchId,
+          actorId: user.id
+        });
       }
 
       return rep;
@@ -231,9 +230,9 @@ export async function updateSalesRep(user: AuthUser, id: string, body: Record<st
       module: 'sales_reps',
       entityType: 'SalesRep',
       entityId: id,
-      summary: `Updated sales rep ${updated.name}`
+      summary: `Updated sales rep ${updated.employee?.fullName || id}`
     });
-    return serialize(updated);
+    return serialize(presentRep(updated));
   } catch (err: any) {
     if (err?.code === 'P2002') throw httpError(409, 'Sales rep code already exists');
     throw err;
@@ -246,8 +245,16 @@ export async function listCommissions(businessId: string, salesRepId?: string) {
       businessId,
       ...(salesRepId ? { salesRepId } : {})
     },
-    include: { salesRep: true, invoice: true },
+    include: {
+      salesRep: { include: { employee: { select: { id: true, fullName: true, code: true } } } },
+      invoice: true
+    },
     orderBy: { createdAt: 'desc' }
   });
-  return serialize(rows);
+  return serialize(
+    rows.map((r) => ({
+      ...r,
+      salesRep: r.salesRep ? presentRep(r.salesRep) : r.salesRep
+    }))
+  );
 }

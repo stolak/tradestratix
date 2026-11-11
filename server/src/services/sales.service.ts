@@ -21,13 +21,30 @@ type BranchListOpts = {
 const invoiceInclude = {
   customer: true,
   warehouse: true,
-  salesRep: true,
+  salesRep: {
+    include: {
+      employee: { select: { id: true, fullName: true, code: true, phone: true, email: true } }
+    }
+  },
   items: {
     include: { product: true, variant: true, uom: true },
     orderBy: { id: 'asc' as const }
   },
   commissions: true
 };
+
+function presentInvoiceSalesRep<T extends { salesRep?: any }>(row: T) {
+  if (!row.salesRep) return row;
+  return {
+    ...row,
+    salesRep: {
+      ...row.salesRep,
+      name: row.salesRep.employee?.fullName ?? null,
+      phone: row.salesRep.employee?.phone ?? null,
+      email: row.salesRep.employee?.email ?? null
+    }
+  };
+}
 
 async function nextInvoiceNumber(businessId: string, channel: string) {
   const count = await prisma.salesInvoice.count({ where: { businessId } });
@@ -152,7 +169,7 @@ export async function listInvoices(
     include: invoiceInclude,
     orderBy: { createdAt: 'desc' }
   });
-  return serialize(rows);
+  return serialize(rows.map(presentInvoiceSalesRep));
 }
 
 export async function getInvoice(businessId: string, id: string) {
@@ -164,7 +181,7 @@ export async function getInvoice(businessId: string, id: string) {
     }
   });
   if (!row) throw httpError(404, 'Invoice not found');
-  return serialize(row);
+  return serialize(presentInvoiceSalesRep(row));
 }
 
 export async function createInvoice(user: AuthUser, body: Record<string, any>) {
@@ -265,7 +282,7 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
     });
   }
 
-  return serialize(created);
+  return serialize(presentInvoiceSalesRep(created));
 }
 
 /**
@@ -515,7 +532,7 @@ export async function postInvoice(
     summary: `Posted ${invoice.invoiceNumber}${payNow ? ' (paid)' : ''}`
   });
 
-  return serialize(result);
+  return serialize(presentInvoiceSalesRep(result));
 }
 
 export async function listCustomerPayments(

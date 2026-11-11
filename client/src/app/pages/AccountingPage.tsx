@@ -204,7 +204,11 @@ export const AccountingPage: React.FC = () => {
                   <td>{j.status}</td>
                   <td>{j.customer?.name || '—'}</td>
                   <td>{j.supplier?.name || '—'}</td>
-                  <td>{j.sales_representative?.name || '—'}</td>
+                  <td>
+                    {j.sales_representative?.name ||
+                      j.sales_representative?.employee?.full_name ||
+                      '—'}
+                  </td>
                   <td>
                     {j.source_type || '—'}
                     {j.source_id ? ` / ${j.source_id}` : ''}
