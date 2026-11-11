@@ -35,6 +35,7 @@ export const SalesPage: React.FC = () => {
     warehouse_id: '',
     sales_rep_id: '',
     product_id: '',
+    selling_price_id: '',
     uom_id: '',
     quantity: '1',
     unit_price: '',
@@ -81,38 +82,66 @@ export const SalesPage: React.FC = () => {
     [products]
   );
 
-  const uomsForProduct = (p: any) => {
-    if (!p) return [] as { id: string; code: string; name: string }[];
-    const map = new Map<string, { id: string; code: string; name: string }>();
-    const add = (u?: any) => {
-      if (!u?.id) return;
-      map.set(u.id, { id: u.id, code: u.code, name: u.name });
-    };
-    add(p.base_uom);
-    add(p.selling_uom);
-    for (const c of p.conversions || []) add(c.from_uom);
-    return [...map.values()];
+  const sellingPricesForProduct = (p: any) =>
+    ((p?.selling_prices || []) as any[]).filter((s) => s && s.is_active !== false);
+
+  type SellPriceOption = {
+    id: string;
+    uom_id: string;
+    code: string;
+    name: string;
+    price_level?: string;
+    label?: string | null;
+    unit_price: string;
+    is_default?: boolean;
   };
 
-  const defaultSellUomId = (p: any) =>
-    p?.selling_uom_id || p?.selling_uom?.id || p?.base_uom_id || p?.base_uom?.id || '';
+  /** Selling UoM choices come from ProductSellingPrice for the selected product. */
+  const sellPriceOptionsForProduct = (p: any): SellPriceOption[] =>
+    sellingPricesForProduct(p)
+      .map((sp) => {
+        const uomId = sp.uom_id || sp.uom?.id || '';
+        if (!uomId || !sp.id) return null;
+        return {
+          id: sp.id,
+          uom_id: uomId,
+          code: sp.uom?.code || '',
+          name: sp.uom?.name || '',
+          price_level: sp.price_level,
+          label: sp.label,
+          unit_price: String(sp.unit_price ?? 0),
+          is_default: Boolean(sp.is_default)
+        } as SellPriceOption;
+      })
+      .filter(Boolean) as SellPriceOption[];
+
+  const defaultSellPrice = (p: any): SellPriceOption | null => {
+    const rows = sellPriceOptionsForProduct(p);
+    if (!rows.length) return null;
+    return (
+      rows.find((s) => s.is_default) ||
+      rows.find((s) => s.uom_id === (p?.selling_uom_id || p?.selling_uom?.id)) ||
+      rows[0]
+    );
+  };
+
+  const priceFieldsFromProduct = (p: any) => {
+    const sp = defaultSellPrice(p);
+    return {
+      selling_price_id: sp?.id || '',
+      uom_id: sp?.uom_id || '',
+      unit_price: sp?.unit_price || '0'
+    };
+  };
 
   const selectedProduct = useMemo(
     () => products.find((p) => p.id === form.product_id),
     [products, form.product_id]
   );
-  const sellUoms = useMemo(() => uomsForProduct(selectedProduct), [selectedProduct]);
-
-  const defaultPrice = (p: any, uomId: string) => {
-    if (!p) return '0';
-    const sp = (p.selling_prices || []).find(
-      (s: any) => (s.uom_id || s.uom?.id) === uomId && s.is_default
-    );
-    if (sp) return String(sp.unit_price ?? 0);
-    const any = (p.selling_prices || []).find((s: any) => (s.uom_id || s.uom?.id) === uomId);
-    if (any) return String(any.unit_price ?? 0);
-    return String(p.default_selling_price ?? 0);
-  };
+  const sellPriceOptions = useMemo(
+    () => sellPriceOptionsForProduct(selectedProduct),
+    [selectedProduct]
+  );
 
   const load = async () => {
     const settled = await Promise.allSettled([
@@ -163,7 +192,7 @@ export const SalesPage: React.FC = () => {
     }
 
     const product = p[0];
-    const uom = defaultSellUomId(product);
+    const priced = priceFieldsFromProduct(product);
     setForm((f) => {
       const nextCustomer =
         visibleCustomers.some((x) => x.id === f.customer_id)
@@ -173,6 +202,12 @@ export const SalesPage: React.FC = () => {
             '';
       const nextCustomerRow = visibleCustomers.find((x) => x.id === nextCustomer);
       const lockRep = isWalkInCustomer(nextCustomerRow) && resolvedIsRep && resolvedRepId;
+      const keepProduct = f.product_id || product?.id || '';
+      const keepProductRow = p.find((x) => x.id === keepProduct) || product;
+      const keepPriced = priceFieldsFromProduct(keepProductRow);
+      const keepPrice =
+        f.selling_price_id &&
+        sellPriceOptionsForProduct(keepProductRow).some((s) => s.id === f.selling_price_id);
       return {
         ...f,
         customer_id: nextCustomer,
@@ -182,9 +217,12 @@ export const SalesPage: React.FC = () => {
           : r.some((x) => x.id === f.sales_rep_id)
             ? f.sales_rep_id
             : '',
-        product_id: f.product_id || product?.id || '',
-        uom_id: f.uom_id || uom,
-        unit_price: f.unit_price || defaultPrice(product, uom)
+        product_id: keepProduct,
+        selling_price_id: keepPrice ? f.selling_price_id : keepPriced.selling_price_id || priced.selling_price_id,
+        uom_id: keepPrice ? f.uom_id : keepPriced.uom_id || priced.uom_id,
+        unit_price: keepPrice
+          ? f.unit_price || keepPriced.unit_price
+          : keepPriced.unit_price || priced.unit_price
       };
     });
     setPayForm((f) => ({
@@ -207,16 +245,15 @@ export const SalesPage: React.FC = () => {
 
   useEffect(() => {
     if (!selectedProduct) return;
-    const allowed = new Set(sellUoms.map((u) => u.id));
-    if (!form.uom_id || !allowed.has(form.uom_id)) {
-      const uom = defaultSellUomId(selectedProduct);
+    const allowed = new Set(sellPriceOptions.map((s) => s.id));
+    if (!form.selling_price_id || !allowed.has(form.selling_price_id)) {
+      const priced = priceFieldsFromProduct(selectedProduct);
       setForm((f) => ({
         ...f,
-        uom_id: uom,
-        unit_price: defaultPrice(selectedProduct, uom)
+        ...priced
       }));
     }
-  }, [selectedProduct, sellUoms.map((u) => u.id).join('|')]);
+  }, [selectedProduct, sellPriceOptions.map((s) => s.id).join('|')]);
 
   const createDraft = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -393,12 +430,10 @@ export const SalesPage: React.FC = () => {
                   placeholder="Search product…"
                   onChange={(product_id) => {
                     const p = products.find((x) => x.id === product_id);
-                    const uom = defaultSellUomId(p);
                     setForm({
                       ...form,
                       product_id,
-                      uom_id: uom,
-                      unit_price: defaultPrice(p, uom)
+                      ...priceFieldsFromProduct(p)
                     });
                   }}
                 />
@@ -406,20 +441,29 @@ export const SalesPage: React.FC = () => {
               <div className="field">
                 <label>Selling UoM</label>
                 <select
-                  value={form.uom_id}
+                  value={form.selling_price_id}
                   onChange={(e) => {
-                    const uom = e.target.value;
+                    const sp = sellPriceOptions.find((s) => s.id === e.target.value);
                     setForm({
                       ...form,
-                      uom_id: uom,
-                      unit_price: defaultPrice(selectedProduct, uom)
+                      selling_price_id: e.target.value,
+                      uom_id: sp?.uom_id || '',
+                      unit_price: sp?.unit_price || '0'
                     });
                   }}
                   required
+                  disabled={!selectedProduct || sellPriceOptions.length === 0}
                 >
-                  {sellUoms.map((u) => (
-                    <option key={u.id} value={u.id}>
-                      {u.code} — {u.name}
+                  {sellPriceOptions.length === 0 ? (
+                    <option value="">No selling prices for product</option>
+                  ) : null}
+                  {sellPriceOptions.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.code}
+                      {s.name ? ` — ${s.name}` : ''}
+                      {s.price_level ? ` · ${s.price_level}` : ''}
+                      {s.label ? ` (${s.label})` : ''}
+                      {` · ${s.unit_price}`}
                     </option>
                   ))}
                 </select>
