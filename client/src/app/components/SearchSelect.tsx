@@ -1,4 +1,5 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ChevronDown, X } from 'lucide-react';
 
 export type SearchSelectOption = {
@@ -32,7 +33,11 @@ export const SearchSelect: React.FC<Props> = ({
   const listId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   const [open, setOpen] = useState(false);
+  const [menuRect, setMenuRect] = useState<{ top: number; left: number; width: number } | null>(
+    null
+  );
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
 
@@ -69,10 +74,27 @@ export const SearchSelect: React.FC<Props> = ({
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (rootRef.current?.contains(target) || listRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const update = () => {
+      const r = rootRef.current?.getBoundingClientRect();
+      if (r) setMenuRect({ top: r.bottom + 4, left: r.left, width: r.width });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
   }, [open]);
 
   const pick = (next: string) => {
@@ -90,6 +112,7 @@ export const SearchSelect: React.FC<Props> = ({
         <input
           ref={inputRef}
           id={id}
+          className="search-select__input"
           type="text"
           role="combobox"
           aria-expanded={open}
@@ -165,16 +188,17 @@ export const SearchSelect: React.FC<Props> = ({
         </span>
       </div>
 
-      {open && !disabled ? (
+      {open && !disabled && menuRect ? createPortal(
         <ul
+          ref={listRef}
           id={listId}
           role="listbox"
           style={{
-            position: 'absolute',
-            zIndex: 40,
-            top: 'calc(100% + 4px)',
-            left: 0,
-            right: 0,
+            position: 'fixed',
+            zIndex: 1000,
+            top: menuRect.top,
+            left: menuRect.left,
+            width: menuRect.width,
             margin: 0,
             padding: '0.35rem',
             listStyle: 'none',
@@ -223,7 +247,8 @@ export const SearchSelect: React.FC<Props> = ({
               );
             })
           )}
-        </ul>
+        </ul>,
+        document.body
       ) : null}
     </div>
   );

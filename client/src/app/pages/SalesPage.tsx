@@ -506,17 +506,18 @@ export const SalesPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="table-wrap" style={{ overflow: 'visible' }}>
-              <table className="table" style={{ minWidth: 920 }}>
+            <div className="line-items">
+             <div className="line-items__scroll">
+              <table className="line-items__table">
                 <thead>
                   <tr>
-                    <th style={{ width: 40 }}>#</th>
-                    <th>Product</th>
-                    <th>Selling UoM</th>
-                    <th style={{ width: 110 }}>Qty</th>
-                    <th style={{ width: 130 }}>Unit price</th>
-                    <th style={{ width: 130 }}>Subtotal</th>
-                    <th style={{ width: 56 }} />
+                    <th className="line-items__index">#</th>
+                    <th style={{ width: '32%' }}>Product</th>
+                    <th style={{ width: '26%' }}>Selling UoM</th>
+                    <th style={{ width: 100, textAlign: 'center' }}>Qty</th>
+                    <th className="num" style={{ width: 130 }}>Unit price</th>
+                    <th className="num" style={{ width: 130 }}>Subtotal</th>
+                    <th style={{ width: 52 }} />
                   </tr>
                 </thead>
                 <tbody>
@@ -525,8 +526,8 @@ export const SalesPage: React.FC = () => {
                     const sellOptions = sellPriceOptionsForProduct(product);
                     return (
                       <tr key={line.key}>
-                        <td>{index + 1}</td>
-                        <td style={{ minWidth: 200 }}>
+                        <td className="line-items__index">{index + 1}</td>
+                        <td>
                           <SearchSelect
                             value={line.product_id}
                             options={productOptions}
@@ -535,7 +536,7 @@ export const SalesPage: React.FC = () => {
                             onChange={(productId) => setLineProduct(line.key, productId)}
                           />
                         </td>
-                        <td style={{ minWidth: 180 }}>
+                        <td>
                           <select
                             value={line.selling_price_id}
                             onChange={(e) =>
@@ -560,12 +561,12 @@ export const SalesPage: React.FC = () => {
                         <td>
                           <input
                             type="number"
-                            min="0.0001"
-                            step="any"
+                            min="0.00"
+                            step="1"
+                            className="line-items__qty"
                             value={line.quantity}
                             onChange={(e) => updateLine(line.key, { quantity: e.target.value })}
                             required
-                            style={{ width: '100%' }}
                           />
                         </td>
                         <td>
@@ -573,26 +574,26 @@ export const SalesPage: React.FC = () => {
                             type="number"
                             min="0"
                             step="any"
+                            className="line-items__qty"
                             value={line.unit_price}
                             onChange={(e) => updateLine(line.key, { unit_price: e.target.value })}
                             required
-                            style={{ width: '100%' }}
                           />
                         </td>
-                        <td style={{ fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                        <td className="num line-items__subtotal">
                           {lineSubtotal(line).toLocaleString(undefined, {
                             minimumFractionDigits: 2,
-                            maximumFractionDigits: 4
+                            maximumFractionDigits: 2
                           })}
                         </td>
-                        <td>
+                        <td style={{ textAlign: 'center' }}>
                           <button
                             type="button"
-                            className="btn btn-ghost"
+                            className="line-items__remove"
                             aria-label={`Remove line ${index + 1}`}
+                            title="Remove line"
                             disabled={lines.length <= 1}
                             onClick={() => removeLine(line.key)}
-                            style={{ padding: '0.4rem' }}
                           >
                             <Trash2 size={16} />
                           </button>
@@ -602,27 +603,21 @@ export const SalesPage: React.FC = () => {
                   })}
                 </tbody>
               </table>
-            </div>
-
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: 12,
-                alignItems: 'center',
-                justifyContent: 'space-between'
-              }}
-            >
-              <button type="button" className="btn btn-ghost" onClick={addLine}>
-                <Plus size={16} style={{ marginRight: 6 }} />
-                Add line
-              </button>
-              <div style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-                Invoice subtotal:{' '}
-                {invoiceSubtotal.toLocaleString(undefined, {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 4
-                })}
+             </div>
+              <div className="line-items__footer">
+                <button type="button" className="line-items__add" onClick={addLine}>
+                  <Plus size={16} />
+                  Add line
+                </button>
+                <div className="line-items__total">
+                  <span className="line-items__total-label">Invoice subtotal</span>
+                  <span className="line-items__total-value">
+                    {invoiceSubtotal.toLocaleString(undefined, {
+                      minimumFractionDigits: 2,
+                      maximumFractionDigits: 2
+                    })}
+                  </span>
+                </div>
               </div>
             </div>
 

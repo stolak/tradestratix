@@ -287,6 +287,208 @@ a {
   background: white;
 }
 
+.field input:focus,
+.field select:focus,
+.field textarea:focus,
+.search-select__input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(15, 92, 76, 0.14);
+}
+
+.search-select__input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+  background: white;
+  color: var(--ink);
+}
+
+.search-select__input:disabled {
+  background: #f5f6f7;
+  color: var(--ink-muted);
+  cursor: not-allowed;
+}
+
+/* ── Invoice line items ─────────────────────────────────────────── */
+
+.line-items {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: white;
+}
+
+.line-items__scroll {
+  overflow-x: auto;
+  border-radius: 14px 14px 0 0;
+}
+
+.line-items__table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.line-items__table th {
+  background: #f7f8f6;
+  color: var(--ink-muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 0.7rem 0.6rem;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.line-items__table td {
+  padding: 0.55rem 0.6rem;
+  border-bottom: 1px solid #edf0f2;
+  vertical-align: middle;
+}
+
+.line-items__table tbody tr:hover td {
+  background: #fbfcfb;
+}
+
+.line-items__table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.line-items__index {
+  width: 44px;
+  text-align: center !important;
+  color: var(--ink-muted);
+  font-weight: 600;
+}
+
+.line-items__table input,
+.line-items__table select {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 0.7rem;
+  background: white;
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.line-items__table .search-select__input {
+  height: 40px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.line-items__table input[type='number'] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.line-items__table input.line-items__qty {
+  text-align: center;
+}
+
+.line-items__table input:focus,
+.line-items__table select:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(15, 92, 76, 0.14);
+}
+
+.line-items__table select:disabled {
+  background: #f5f6f7;
+  color: var(--ink-muted);
+}
+
+.line-items__subtotal {
+  font-weight: 700;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.line-items__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition: 0.15s ease;
+}
+
+.line-items__remove:hover:not(:disabled) {
+  color: var(--danger);
+  background: #fdecea;
+  border-color: #f6c9c4;
+}
+
+.line-items__remove:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.line-items__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 0.9rem;
+  background: #f7f8f6;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 14px 14px;
+}
+
+.line-items__add {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  border: 1px dashed var(--brand);
+  border-radius: 9px;
+  background: white;
+  color: var(--brand);
+  font-weight: 600;
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+  transition: 0.15s ease;
+}
+
+.line-items__add:hover {
+  background: var(--brand-soft);
+}
+
+.line-items__total {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+}
+
+.line-items__total-label {
+  color: var(--ink-muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.line-items__total-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--brand-deep);
+  font-variant-numeric: tabular-nums;
+}
+
 .table-wrap {
   width: 100%;
   max-width: 100%;
