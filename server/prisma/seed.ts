@@ -401,6 +401,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'sales.view',
       'purchases.view',
       'customers.view',
+      'customers.balances',
       'suppliers.view',
       'notifications.view',
       'audit.view'
@@ -430,6 +431,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'payroll.post',
       'customers.view',
       'customers.credit',
+      'customers.balances',
       'reports.*',
       'branches.view',
       'branches.report_all',
@@ -475,6 +477,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       ...MODULES.map((m) => `${m}.view`),
       ...MODULES.map((m) => `${m}.export`),
       ...MODULES.map((m) => `${m}.print`),
+      'customers.balances',
       'branches.report_all',
       'audit.view',
       'audit.export'
@@ -590,6 +593,11 @@ async function main() {
       module: 'customers',
       action: 'credit',
       description: 'Set a customer credit limit and customer-wide discount %'
+    },
+    {
+      module: 'customers',
+      action: 'balances',
+      description: 'View customer balances, purchase totals and invoice history'
     }
   ];
   for (const p of EXTRA_PERMISSIONS) {

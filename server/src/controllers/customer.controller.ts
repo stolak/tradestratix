@@ -11,6 +11,34 @@ export async function list(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+function purchaseFilter(req: Request) {
+  const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  return {
+    branchId: str(req.query.branch_id),
+    from: str(req.query.from),
+    to: str(req.query.to),
+    q: str(req.query.q)
+  };
+}
+
+export async function balances(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await customerService.customerBalances(req.user!, purchaseFilter(req)));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function invoices(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await customerService.customerInvoices(req.user!, req.params.id, purchaseFilter(req))
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function get(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(await customerService.getCustomer(req.user!.businessId, req.params.id));

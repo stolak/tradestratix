@@ -8,6 +8,8 @@ router.use(authenticate);
 
 router.get('/', requirePermission('customers.view'), customerController.list);
 router.post('/', requirePermission('customers.create'), customerController.create);
+router.get('/balances', requirePermission('customers.balances'), customerController.balances);
+router.get('/:id/invoices', requirePermission('customers.balances'), customerController.invoices);
 router.get('/:id', requirePermission('customers.view'), customerController.get);
 router.patch('/:id', requirePermission('customers.edit'), customerController.update);
 router.post('/:id/activate', requirePermission('customers.edit'), customerController.activate);

@@ -281,6 +281,21 @@ export const api = {
       request<any>('/customers', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string, body: Record<string, unknown>) =>
       request<any>(`/customers/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    balances: (filter: { branch_id?: string; from?: string; to?: string; q?: string } = {}) => {
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(filter)) if (v) params.set(k, v);
+      const qs = params.toString();
+      return request<any>(`/customers/balances${qs ? `?${qs}` : ''}`);
+    },
+    invoices: (
+      id: string,
+      filter: { branch_id?: string; from?: string; to?: string } = {}
+    ) => {
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(filter)) if (v) params.set(k, v);
+      const qs = params.toString();
+      return request<any>(`/customers/${id}/invoices${qs ? `?${qs}` : ''}`);
+    },
     activate: (id: string) => request<any>(`/customers/${id}/activate`, { method: 'POST' }),
     deactivate: (id: string) => request<any>(`/customers/${id}/deactivate`, { method: 'POST' }),
     remove: (id: string) => request<any>(`/customers/${id}`, { method: 'DELETE' }),

@@ -1,8 +1,175 @@
+import { Prisma } from '@prisma/client';
 import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, roundMoney, serialize, shortId } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { userHasAnyPermission } from './permission.service.js';
+import { getDefaultAccountMap } from './accounting.service.js';
+import * as branchAccess from './branch-access.service.js';
+
+type PurchaseFilter = { branchId?: string | null; from?: string | null; to?: string | null };
+
+/** `YYYY-MM-DD` bounds; `to` is inclusive of the whole day. */
+function invoiceDateRange(from?: string | null, to?: string | null) {
+  const range: { gte?: Date; lt?: Date } = {};
+  if (from) {
+    const d = new Date(`${from}T00:00:00`);
+    if (Number.isNaN(d.getTime())) throw httpError(400, 'Invalid from date');
+    range.gte = d;
+  }
+  if (to) {
+    const d = new Date(`${to}T00:00:00`);
+    if (Number.isNaN(d.getTime())) throw httpError(400, 'Invalid to date');
+    d.setDate(d.getDate() + 1);
+    range.lt = d;
+  }
+  if (range.gte && range.lt && range.gte >= range.lt) throw httpError(400, 'from must be on or before to');
+  return range.gte || range.lt ? { invoiceDate: range } : {};
+}
+
+async function purchaseScope(user: AuthUser, filter: PurchaseFilter) {
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: filter.branchId || null,
+    allowConsolidated: !filter.branchId
+  });
+  return {
+    businessId: user.businessId,
+    status: 'posted',
+    ...scope,
+    ...invoiceDateRange(filter.from, filter.to)
+  };
+}
+
+/**
+ * Current AR balance per customer from the general ledger: every posted (or later reversed,
+ * whose reversal is also posted) journal tagged to the customer, across all branches and dates.
+ */
+async function ledgerBalances(businessId: string, customerId?: string) {
+  const accountMap = await getDefaultAccountMap(businessId);
+  const arAccountId = accountMap.accounts_receivable;
+  if (!arAccountId) return new Map<string, number>();
+  const rows = await prisma.$queryRaw<{ customer_id: string; balance: unknown }[]>`
+    SELECT je.customer_id AS customer_id, SUM(jl.debit) - SUM(jl.credit) AS balance
+    FROM journal_lines jl
+    JOIN journal_entries je ON je.id = jl.journal_entry_id
+    WHERE je.business_id = ${businessId}
+      AND je.customer_id IS NOT NULL
+      AND je.status IN ('posted', 'reversed')
+      AND jl.account_id = ${arAccountId}
+      ${customerId ? Prisma.sql`AND je.customer_id = ${customerId}` : Prisma.empty}
+    GROUP BY je.customer_id`;
+  return new Map(rows.map((r) => [r.customer_id, roundMoney(Number(r.balance || 0))]));
+}
+
+export async function customerBalances(
+  user: AuthUser,
+  filter: PurchaseFilter & { q?: string | null }
+) {
+  const where = await purchaseScope(user, filter);
+  const [customers, balances, purchases] = await Promise.all([
+    prisma.customer.findMany({
+      where: {
+        businessId: user.businessId,
+        ...(filter.q
+          ? {
+              OR: [
+                { name: { contains: filter.q } },
+                { code: { contains: filter.q } },
+                { phone: { contains: filter.q } }
+              ]
+            }
+          : {})
+      },
+      orderBy: { name: 'asc' }
+    }),
+    ledgerBalances(user.businessId),
+    prisma.salesInvoice.groupBy({
+      by: ['customerId'],
+      where,
+      _sum: { totalAmount: true },
+      _count: { _all: true },
+      _max: { invoiceDate: true }
+    })
+  ]);
+  const purchaseMap = new Map(purchases.map((p) => [p.customerId, p]));
+
+  const rows = customers.map((c) => {
+    const p = purchaseMap.get(c.id);
+    const balance = balances.get(c.id) ?? 0;
+    const limit = c.creditLimit == null ? null : Number(c.creditLimit);
+    return {
+      id: c.id,
+      code: c.code,
+      name: c.name,
+      customer_type: c.customerType,
+      status: c.status,
+      phone: c.phone,
+      credit_limit: limit,
+      available_credit: limit == null ? null : roundMoney(limit - balance),
+      balance,
+      purchases_total: roundMoney(Number(p?._sum.totalAmount || 0)),
+      purchases_count: p?._count._all ?? 0,
+      last_purchase_at: p?._max.invoiceDate ?? null
+    };
+  });
+
+  return serialize({
+    filter: {
+      branch_id: filter.branchId || null,
+      from: filter.from || null,
+      to: filter.to || null
+    },
+    totals: {
+      balance: roundMoney(rows.reduce((s, r) => s + r.balance, 0)),
+      purchases_total: roundMoney(rows.reduce((s, r) => s + r.purchases_total, 0)),
+      purchases_count: rows.reduce((s, r) => s + r.purchases_count, 0)
+    },
+    customers: rows
+  });
+}
+
+export async function customerInvoices(user: AuthUser, customerId: string, filter: PurchaseFilter) {
+  const customer = await prisma.customer.findFirst({
+    where: { id: customerId, businessId: user.businessId }
+  });
+  if (!customer) throw httpError(404, 'Customer not found');
+  const where = await purchaseScope(user, filter);
+  const [invoices, balances] = await Promise.all([
+    prisma.salesInvoice.findMany({
+      where: { ...where, customerId },
+      include: {
+        branch: { select: { id: true, code: true, name: true } },
+        salesRep: { include: { employee: { select: { fullName: true } } } },
+        _count: { select: { items: true } }
+      },
+      orderBy: { invoiceDate: 'desc' }
+    }),
+    ledgerBalances(user.businessId, customerId)
+  ]);
+  return serialize({
+    customer: {
+      id: customer.id,
+      code: customer.code,
+      name: customer.name,
+      credit_limit: customer.creditLimit == null ? null : Number(customer.creditLimit),
+      balance: balances.get(customerId) ?? 0
+    },
+    purchases_total: roundMoney(invoices.reduce((s, i) => s + Number(i.totalAmount), 0)),
+    invoices: invoices.map((i) => ({
+      id: i.id,
+      invoice_number: i.invoiceNumber,
+      invoice_date: i.invoiceDate,
+      channel: i.channel,
+      branch: i.branch,
+      sales_rep_name: i.salesRep?.employee?.fullName ?? null,
+      lines: i._count.items,
+      total_amount: i.totalAmount,
+      amount_paid: i.amountPaid,
+      balance: i.balance,
+      payment_status: i.paymentStatus
+    }))
+  });
+}
 
 const CUSTOMER_STATUSES = ['active', 'inactive'];
 

@@ -3,6 +3,7 @@ import { Info } from 'lucide-react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
+import { CustomerBalances } from '../components/CustomerBalances';
 
 const emptyForm = {
   name: '',
@@ -19,6 +20,7 @@ const emptyForm = {
 };
 
 type StatusFilter = 'all' | 'active' | 'inactive';
+type Tab = 'directory' | 'balances';
 
 function money(v: unknown) {
   return Number(v || 0).toLocaleString(undefined, {
@@ -37,6 +39,16 @@ export const CustomersPage: React.FC = () => {
   const canCredit = can('customers.credit');
   const canEdit = can('customers.edit');
   const canDelete = can('customers.delete');
+  const tabs = useMemo(
+    () =>
+      [
+        can('customers.view') ? { id: 'directory' as const, label: 'Customers' } : null,
+        can('customers.balances') ? { id: 'balances' as const, label: 'Balances & purchases' } : null
+      ].filter(Boolean) as { id: Tab; label: string }[],
+    [can]
+  );
+  const [tab, setTab] = useState<Tab>(() => (can('customers.view') ? 'directory' : 'balances'));
+  const activeTab = tabs.some((t) => t.id === tab) ? tab : tabs[0]?.id;
 
   const [rows, setRows] = useState<any[]>([]);
   const [q, setQ] = useState('');
@@ -164,9 +176,11 @@ export const CustomersPage: React.FC = () => {
             Customers
           </h1>
           <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-            CRM-lite customer master for credit sales and POS walk-ins.
+            Customers are shared across branches; invoices and journals belong to the branch that
+            made them.
           </p>
         </div>
+        {activeTab === 'directory' ? (
         <form
           style={{ display: 'flex', gap: 8, alignItems: 'end' }}
           onSubmit={(e) => {
@@ -193,8 +207,30 @@ export const CustomersPage: React.FC = () => {
             Search
           </button>
         </form>
+        ) : null}
       </header>
 
+      {tabs.length > 1 ? (
+        <div className="page-tabs" role="tablist">
+          {tabs.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === t.id}
+              className={`page-tabs__tab${activeTab === t.id ? ' is-active' : ''}`}
+              onClick={() => setTab(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {activeTab === 'balances' ? <CustomerBalances /> : null}
+
+      {activeTab === 'directory' ? (
+      <>
       <form
         onSubmit={save}
         className="card-surface"
@@ -448,6 +484,8 @@ export const CustomersPage: React.FC = () => {
           </table>
         </div>
       </div>
+      </>
+      ) : null}
     </div>
   );
 };
