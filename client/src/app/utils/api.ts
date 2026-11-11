@@ -260,6 +260,17 @@ export const api = {
       request<any>('/sales-reps', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string, body: Record<string, unknown>) =>
       request<any>(`/sales-reps/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    activate: (id: string) =>
+      request<any>(`/sales-reps/${id}/activate`, {
+        method: 'POST',
+        body: JSON.stringify({ active: true })
+      }),
+    deactivate: (id: string) =>
+      request<any>(`/sales-reps/${id}/deactivate`, {
+        method: 'POST',
+        body: JSON.stringify({ active: false })
+      }),
+    remove: (id: string) => request<any>(`/sales-reps/${id}`, { method: 'DELETE' }),
     commissions: (salesRepId?: string) =>
       request<any[]>(
         `/sales-reps/commissions/list${salesRepId ? `?sales_rep_id=${encodeURIComponent(salesRepId)}` : ''}`

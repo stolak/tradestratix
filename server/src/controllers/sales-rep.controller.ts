@@ -27,6 +27,23 @@ export async function update(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function setActive(req: Request, res: Response, next: NextFunction) {
+  try {
+    const active = Boolean(req.body?.active ?? req.body?.is_active ?? true);
+    return res.json(await salesRepService.setSalesRepActive(req.user!, req.params.id, active));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function remove(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await salesRepService.deleteSalesRep(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function listCommissions(req: Request, res: Response, next: NextFunction) {
   try {
     const salesRepId =

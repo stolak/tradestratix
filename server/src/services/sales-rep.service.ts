@@ -21,12 +21,23 @@ const employeeSelect = {
 
 const repInclude = {
   employee: { select: employeeSelect },
-  _count: { select: { invoices: true, commissions: true } }
+  _count: { select: { invoices: true, commissions: true, journalEntries: true } }
 } as const;
 
+function activityCount(row: {
+  _count?: { invoices?: number; commissions?: number; journalEntries?: number };
+}) {
+  return (
+    (row._count?.invoices || 0) +
+    (row._count?.commissions || 0) +
+    (row._count?.journalEntries || 0)
+  );
+}
+
 /** Flatten employee identity onto the sales-rep DTO for UI compatibility. */
-function presentRep<T extends { employee?: any }>(row: T) {
+function presentRep<T extends { employee?: any; _count?: any }>(row: T) {
   const emp = row.employee;
+  const activity = activityCount(row);
   return {
     ...row,
     name: emp?.fullName ?? null,
@@ -34,7 +45,9 @@ function presentRep<T extends { employee?: any }>(row: T) {
     email: emp?.email ?? null,
     branch_id: emp?.branchId ?? null,
     user_id: emp?.userId ?? null,
-    branch: emp?.branch ?? null
+    branch: emp?.branch ?? null,
+    can_delete: activity === 0,
+    activity_count: activity
   };
 }
 
@@ -204,23 +217,7 @@ export async function updateSalesRep(user: AuthUser, id: string, body: Record<st
         include: repInclude
       });
 
-      if (data.status !== undefined && rep.employeeId) {
-        await tx.employee.update({
-          where: { id: rep.employeeId },
-          data: { status: data.status === 'inactive' ? 'inactive' : 'active' }
-        });
-      }
-
-      // Keep linked user default branch = employee home branch
-      if (rep.employee?.userId && rep.employee.branchId) {
-        await syncRepUserDefaultBranch(tx as any, {
-          userId: rep.employee.userId,
-          businessId: user.businessId,
-          homeBranchId: rep.employee.branchId,
-          actorId: user.id
-        });
-      }
-
+      // Disabling a sales-rep profile does not deactivate the employee HR record.
       return rep;
     });
 
@@ -237,6 +234,41 @@ export async function updateSalesRep(user: AuthUser, id: string, body: Record<st
     if (err?.code === 'P2002') throw httpError(409, 'Sales rep code already exists');
     throw err;
   }
+}
+
+export async function setSalesRepActive(user: AuthUser, id: string, active: boolean) {
+  return updateSalesRep(user, id, { status: active ? 'active' : 'inactive' });
+}
+
+/** Remove sales-rep profile only when there is no commercial/accounting activity. Employee remains. */
+export async function deleteSalesRep(user: AuthUser, id: string) {
+  const existing = await prisma.salesRep.findFirst({
+    where: { id, businessId: user.businessId },
+    include: {
+      employee: { select: { id: true, fullName: true } },
+      _count: { select: { invoices: true, commissions: true, journalEntries: true } }
+    }
+  });
+  if (!existing) throw httpError(404, 'Sales rep not found');
+
+  const activity = activityCount(existing);
+  if (activity > 0) {
+    throw httpError(
+      400,
+      `Cannot remove sales rep with activity (${existing._count.invoices} invoices, ${existing._count.commissions} commissions, ${existing._count.journalEntries} journals). Disable instead.`
+    );
+  }
+
+  await prisma.salesRep.delete({ where: { id } });
+  await writeAudit({
+    user,
+    action: 'delete',
+    module: 'sales_reps',
+    entityType: 'SalesRep',
+    entityId: id,
+    summary: `Removed sales rep profile for ${existing.employee?.fullName || id}`
+  });
+  return { ok: true, id };
 }
 
 export async function listCommissions(businessId: string, salesRepId?: string) {

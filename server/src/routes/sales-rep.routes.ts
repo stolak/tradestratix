@@ -8,11 +8,17 @@ router.use(authenticate);
 
 router.get('/', requirePermission('sales_reps.view'), salesRepController.list);
 router.post('/', requirePermission('sales_reps.create'), salesRepController.create);
-router.patch('/:id', requirePermission('sales_reps.edit'), salesRepController.update);
 router.get(
   '/commissions/list',
   requirePermission('sales_reps.view', 'sales.view'),
   salesRepController.listCommissions
 );
+router.patch('/:id', requirePermission('sales_reps.edit'), salesRepController.update);
+router.post('/:id/activate', requirePermission('sales_reps.edit'), salesRepController.setActive);
+router.post('/:id/deactivate', requirePermission('sales_reps.edit'), (req, res, next) => {
+  req.body = { ...(req.body || {}), active: false };
+  return salesRepController.setActive(req, res, next);
+});
+router.delete('/:id', requirePermission('sales_reps.delete'), salesRepController.remove);
 
 export default router;
