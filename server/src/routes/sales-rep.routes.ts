@@ -6,7 +6,11 @@ const router = Router();
 
 router.use(authenticate);
 
-router.get('/', requirePermission('sales_reps.view'), salesRepController.list);
+router.get(
+  '/',
+  requirePermission('sales_reps.view', 'sales.view', 'pos.view'),
+  salesRepController.list
+);
 router.post('/', requirePermission('sales_reps.create'), salesRepController.create);
 router.get(
   '/commissions/list',

@@ -96,6 +96,397 @@ const MENUS = [
   { code: 'audit', name: 'Audit Log', route: 'audit', section: 'Settings', sortOrder: 84, icon: 'ScrollText' }
 ];
 
+/** Expand `module.*` / exact codes against the known permission catalog. */
+function resolvePermissionCodes(spec: string[] | '*', allCodes: string[]): string[] {
+  if (spec === '*') return [...allCodes];
+  const out = new Set<string>();
+  for (const item of spec) {
+    if (item === '*') {
+      for (const c of allCodes) out.add(c);
+      continue;
+    }
+    if (item.endsWith('.*')) {
+      const prefix = item.slice(0, -1); // keep trailing '.'
+      for (const c of allCodes) {
+        if (c.startsWith(prefix)) out.add(c);
+      }
+      continue;
+    }
+    if (allCodes.includes(item)) out.add(item);
+  }
+  return [...out];
+}
+
+/**
+ * Per-role menus + privileges.
+ * Permission entries may be exact (`sales.view`) or module wildcards (`sales.*`).
+ * Menus use menu codes from MENUS (`*` = all).
+ */
+const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[] | '*' }> = {
+  business_owner: {
+    menus: '*',
+    permissions: '*'
+  },
+  managing_director: {
+    menus: '*',
+    permissions: '*'
+  },
+  general_manager: {
+    menus: [
+      'dashboard',
+      'sales',
+      'pos',
+      'purchases',
+      'products',
+      'inventory',
+      'warehouses',
+      'suppliers',
+      'customers',
+      'sales_reps',
+      'distribution',
+      'accounting',
+      'banking',
+      'expenses',
+      'assets',
+      'hr',
+      'payroll',
+      'reports',
+      'branches',
+      'users',
+      'audit'
+    ],
+    permissions: [
+      'dashboard.*',
+      'sales.*',
+      'pos.*',
+      'purchases.*',
+      'products.*',
+      'inventory.*',
+      'warehouses.*',
+      'suppliers.*',
+      'customers.*',
+      'sales_reps.*',
+      'distribution.*',
+      'accounting.view',
+      'accounting.export',
+      'accounting.print',
+      'banking.view',
+      'banking.export',
+      'expenses.*',
+      'assets.view',
+      'hr.*',
+      'payroll.view',
+      'payroll.approve',
+      'reports.*',
+      'notifications.*',
+      'branches.view',
+      'branches.edit',
+      'branches.report_all',
+      'users.view',
+      'users.create',
+      'users.edit',
+      'audit.view',
+      'audit.export',
+      'settings.view'
+    ]
+  },
+  branch_manager: {
+    menus: [
+      'dashboard',
+      'sales',
+      'pos',
+      'purchases',
+      'products',
+      'inventory',
+      'warehouses',
+      'suppliers',
+      'customers',
+      'sales_reps',
+      'distribution',
+      'expenses',
+      'hr',
+      'reports'
+    ],
+    permissions: [
+      'dashboard.view',
+      'sales.*',
+      'pos.*',
+      'purchases.view',
+      'purchases.create',
+      'purchases.edit',
+      'purchases.approve',
+      'products.view',
+      'inventory.view',
+      'inventory.create',
+      'inventory.edit',
+      'warehouses.view',
+      'suppliers.view',
+      'customers.*',
+      'sales_reps.view',
+      'sales_reps.create',
+      'sales_reps.edit',
+      'distribution.*',
+      'expenses.view',
+      'expenses.create',
+      'expenses.edit',
+      'expenses.approve',
+      'hr.view',
+      'reports.view',
+      'reports.export',
+      'reports.print',
+      'notifications.view',
+      'branches.view'
+    ]
+  },
+  warehouse_manager: {
+    menus: [
+      'dashboard',
+      'products',
+      'inventory',
+      'warehouses',
+      'purchases',
+      'customers',
+      'distribution',
+      'reports'
+    ],
+    permissions: [
+      'dashboard.view',
+      'products.view',
+      'products.edit',
+      'inventory.*',
+      'warehouses.*',
+      'purchases.view',
+      'customers.view',
+      'distribution.view',
+      'distribution.edit',
+      'distribution.post',
+      'reports.view',
+      'reports.export',
+      'notifications.view'
+    ]
+  },
+  inventory_officer: {
+    menus: ['dashboard', 'products', 'inventory', 'warehouses', 'customers'],
+    permissions: [
+      'dashboard.view',
+      'products.view',
+      'inventory.view',
+      'inventory.create',
+      'inventory.edit',
+      'warehouses.view',
+      'customers.view',
+      'notifications.view'
+    ]
+  },
+  procurement_officer: {
+    menus: [
+      'dashboard',
+      'purchases',
+      'suppliers',
+      'customers',
+      'products',
+      'inventory',
+      'warehouses',
+      'reports'
+    ],
+    permissions: [
+      'dashboard.view',
+      'purchases.*',
+      'suppliers.*',
+      'customers.view',
+      'products.view',
+      'inventory.view',
+      'warehouses.view',
+      'reports.view',
+      'reports.export',
+      'notifications.view'
+    ]
+  },
+  sales_manager: {
+    menus: [
+      'dashboard',
+      'sales',
+      'pos',
+      'customers',
+      'sales_reps',
+      'products',
+      'inventory',
+      'distribution',
+      'reports'
+    ],
+    permissions: [
+      'dashboard.view',
+      'sales.*',
+      'pos.*',
+      'customers.*',
+      'sales_reps.*',
+      'products.view',
+      'inventory.view',
+      'distribution.view',
+      'distribution.create',
+      'distribution.edit',
+      'reports.view',
+      'reports.export',
+      'reports.print',
+      'notifications.view'
+    ]
+  },
+  sales_representative: {
+    menus: ['dashboard', 'sales', 'pos', 'customers', 'products', 'inventory'],
+    permissions: [
+      'dashboard.view',
+      'sales.view',
+      'sales.create',
+      'sales.edit',
+      'sales.print',
+      'pos.view',
+      'pos.create',
+      'pos.edit',
+      'pos.post',
+      'customers.view',
+      'customers.create',
+      'customers.edit',
+      'products.view',
+      'inventory.view',
+      'warehouses.view',
+      'sales_reps.view',
+      'notifications.view'
+    ]
+  },
+  cashier: {
+    menus: ['dashboard', 'pos', 'sales', 'customers', 'products'],
+    permissions: [
+      'dashboard.view',
+      'pos.*',
+      'sales.view',
+      'sales.create',
+      'sales.print',
+      'customers.view',
+      'products.view',
+      'warehouses.view',
+      'sales_reps.view',
+      'notifications.view'
+    ]
+  },
+  accountant: {
+    menus: [
+      'dashboard',
+      'accounting',
+      'banking',
+      'expenses',
+      'assets',
+      'reports',
+      'sales',
+      'purchases',
+      'customers',
+      'suppliers'
+    ],
+    permissions: [
+      'dashboard.view',
+      'accounting.*',
+      'banking.*',
+      'expenses.view',
+      'expenses.create',
+      'expenses.edit',
+      'expenses.post',
+      'assets.view',
+      'assets.edit',
+      'reports.*',
+      'sales.view',
+      'purchases.view',
+      'customers.view',
+      'suppliers.view',
+      'notifications.view',
+      'audit.view'
+    ]
+  },
+  finance_manager: {
+    menus: [
+      'dashboard',
+      'accounting',
+      'banking',
+      'expenses',
+      'assets',
+      'payroll',
+      'customers',
+      'reports',
+      'branches',
+      'audit'
+    ],
+    permissions: [
+      'dashboard.view',
+      'accounting.*',
+      'banking.*',
+      'expenses.*',
+      'assets.*',
+      'payroll.view',
+      'payroll.approve',
+      'payroll.post',
+      'customers.view',
+      'reports.*',
+      'branches.view',
+      'branches.report_all',
+      'audit.view',
+      'audit.export',
+      'notifications.view'
+    ]
+  },
+  hr_manager: {
+    menus: ['dashboard', 'hr', 'payroll', 'users', 'customers', 'reports'],
+    permissions: [
+      'dashboard.view',
+      'hr.*',
+      'payroll.view',
+      'payroll.create',
+      'payroll.edit',
+      'payroll.approve',
+      'users.view',
+      'users.create',
+      'users.edit',
+      'customers.view',
+      'reports.view',
+      'reports.export',
+      'notifications.view',
+      'sales_reps.view'
+    ]
+  },
+  payroll_officer: {
+    menus: ['dashboard', 'payroll', 'hr', 'customers', 'reports'],
+    permissions: [
+      'dashboard.view',
+      'payroll.*',
+      'hr.view',
+      'customers.view',
+      'reports.view',
+      'reports.export',
+      'notifications.view'
+    ]
+  },
+  auditor: {
+    menus: '*',
+    permissions: [
+      ...MODULES.map((m) => `${m}.view`),
+      ...MODULES.map((m) => `${m}.export`),
+      ...MODULES.map((m) => `${m}.print`),
+      'branches.report_all',
+      'audit.view',
+      'audit.export'
+    ]
+  },
+  delivery_officer: {
+    menus: ['dashboard', 'distribution', 'sales', 'customers'],
+    permissions: [
+      'dashboard.view',
+      'distribution.view',
+      'distribution.edit',
+      'distribution.post',
+      'sales.view',
+      'customers.view',
+      'notifications.view'
+    ]
+  }
+};
+
 const COA: { code: string; name: string; accountType: string; key?: string }[] = [
   { code: '1000', name: 'Assets', accountType: 'asset' },
   { code: '1100', name: 'Current Assets', accountType: 'asset' },
@@ -234,40 +625,55 @@ async function main() {
     menuIds[m.code] = menu.id;
   }
 
-  // Grant all permissions + menus to business_owner
-  const ownerRoleId = roleIds.business_owner;
-  for (const permId of Object.values(permissionIds)) {
-    await prisma.rolePermission.upsert({
-      where: { roleId_permissionId: { roleId: ownerRoleId, permissionId: permId } },
-      create: { roleId: ownerRoleId, permissionId: permId },
-      update: {}
-    });
-  }
-  for (const menuId of Object.values(menuIds)) {
-    await prisma.roleMenu.upsert({
-      where: { roleId_menuId: { roleId: ownerRoleId, menuId } },
-      create: { roleId: ownerRoleId, menuId },
-      update: {}
-    });
-  }
+  // Sync privileges + menus for every system role from ROLE_ACCESS
+  const allPermissionCodes = Object.keys(permissionIds);
+  for (const role of SYSTEM_ROLES) {
+    const roleId = roleIds[role.code];
+    const access = ROLE_ACCESS[role.code];
+    if (!roleId || !access) {
+      console.warn(`No ROLE_ACCESS defined for ${role.code}; skipping grants`);
+      continue;
+    }
 
-  // Auditor: view/export only
-  const auditorRoleId = roleIds.auditor;
-  for (const [code, permId] of Object.entries(permissionIds)) {
-    if (code.endsWith('.view') || code.endsWith('.export') || code.endsWith('.print')) {
-      await prisma.rolePermission.upsert({
-        where: { roleId_permissionId: { roleId: auditorRoleId, permissionId: permId } },
-        create: { roleId: auditorRoleId, permissionId: permId },
-        update: {}
+    // Every role can view the full customer list (business-wide, not branch-scoped).
+    const wantedPermCodes = Array.from(
+      new Set([...resolvePermissionCodes(access.permissions, allPermissionCodes), 'customers.view'])
+    );
+    const wantedMenuCodes = Array.from(
+      new Set(
+        access.menus === '*'
+          ? Object.keys(menuIds)
+          : [...access.menus.filter((c) => menuIds[c]), 'customers']
+      )
+    );
+
+    // Replace grants so re-seed corrects over/under-privileged roles
+    await prisma.rolePermission.deleteMany({ where: { roleId } });
+    await prisma.roleMenu.deleteMany({ where: { roleId } });
+
+    if (wantedPermCodes.length) {
+      await prisma.rolePermission.createMany({
+        data: wantedPermCodes
+          .map((code) => permissionIds[code])
+          .filter(Boolean)
+          .map((permissionId) => ({ roleId, permissionId })),
+        skipDuplicates: true
       });
     }
-  }
-  for (const menuId of Object.values(menuIds)) {
-    await prisma.roleMenu.upsert({
-      where: { roleId_menuId: { roleId: auditorRoleId, menuId } },
-      create: { roleId: auditorRoleId, menuId },
-      update: {}
-    });
+
+    if (wantedMenuCodes.length) {
+      await prisma.roleMenu.createMany({
+        data: wantedMenuCodes
+          .map((code) => menuIds[code])
+          .filter(Boolean)
+          .map((menuId) => ({ roleId, menuId })),
+        skipDuplicates: true
+      });
+    }
+
+    console.log(
+      `Role ${role.code}: ${wantedPermCodes.length} permissions, ${wantedMenuCodes.length} menus`
+    );
   }
 
   // Subscription plan

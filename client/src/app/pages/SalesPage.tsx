@@ -65,38 +65,59 @@ export const SalesPage: React.FC = () => {
   };
 
   const load = async () => {
-    try {
-      const [c, w, p, r, inv, pay] = await Promise.all([
-        api.customers.list(),
-        api.warehouses.list(),
-        api.products.list(),
-        api.salesReps.list(),
-        api.sales.invoices(),
-        api.sales.payments()
-      ]);
-      setCustomers(c);
-      setWarehouses(w);
-      setProducts(p);
-      setReps(r);
-      setInvoices(inv.filter((i: any) => i.channel !== 'pos'));
-      setPayments(pay);
-      const product = p[0];
-      const uom = defaultSellUomId(product);
-      setForm((f) => ({
-        ...f,
-        customer_id: f.customer_id || c.find((x: any) => x.customer_type !== 'walk_in')?.id || c[0]?.id || '',
-        warehouse_id: f.warehouse_id || w[0]?.id || '',
-        product_id: f.product_id || product?.id || '',
-        uom_id: f.uom_id || uom,
-        unit_price: f.unit_price || defaultPrice(product, uom)
-      }));
-      setPayForm((f) => ({
-        ...f,
-        customer_id: f.customer_id || c[0]?.id || ''
-      }));
-    } catch (e: any) {
-      await alertError('Sales', e.message);
+    const settled = await Promise.allSettled([
+      api.customers.list(),
+      api.warehouses.list(),
+      api.products.list(),
+      api.salesReps.list(),
+      api.sales.invoices(),
+      api.sales.payments()
+    ]);
+    const value = <T,>(i: number, fallback: T): T =>
+      settled[i].status === 'fulfilled' ? ((settled[i] as PromiseFulfilledResult<T>).value as T) : fallback;
+
+    const c = value<any[]>(0, []);
+    const w = value<any[]>(1, []);
+    const p = value<any[]>(2, []);
+    const r = value<any[]>(3, []);
+    const inv = value<any[]>(4, []);
+    const pay = value<any[]>(5, []);
+
+    setCustomers(c);
+    setWarehouses(w);
+    setProducts(p);
+    setReps(r);
+    setInvoices(inv.filter((i: any) => i.channel !== 'pos'));
+    setPayments(pay);
+
+    const failed = settled
+      .map((s, i) =>
+        s.status === 'rejected'
+          ? ['Customers', 'Warehouses', 'Products', 'Sales reps', 'Invoices', 'Payments'][i]
+          : null
+      )
+      .filter(Boolean);
+    if (failed.length && !c.length && !w.length && !p.length) {
+      await alertError('Sales', `Could not load: ${failed.join(', ')}`);
+    } else if (failed.length) {
+      console.warn('Sales partial load failures:', failed);
     }
+
+    const product = p[0];
+    const uom = defaultSellUomId(product);
+    setForm((f) => ({
+      ...f,
+      customer_id:
+        f.customer_id || c.find((x: any) => x.customer_type !== 'walk_in')?.id || c[0]?.id || '',
+      warehouse_id: f.warehouse_id || w[0]?.id || '',
+      product_id: f.product_id || product?.id || '',
+      uom_id: f.uom_id || uom,
+      unit_price: f.unit_price || defaultPrice(product, uom)
+    }));
+    setPayForm((f) => ({
+      ...f,
+      customer_id: f.customer_id || c[0]?.id || ''
+    }));
   };
 
   useEffect(() => {

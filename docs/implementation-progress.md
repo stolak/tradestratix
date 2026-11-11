@@ -4,6 +4,9 @@ Updated: 2026-11-11
 
 ## Completed
 
+- **System role privilege + menu seeding**
+  - `ROLE_ACCESS` matrix grants each system role appropriate permissions and menus
+  - Re-seed replaces role_permissions / role_menus for system roles (owner/MD full; auditor view/export; ops roles scoped)
 - **SalesRep ↔ Employee linkage**
   - `SalesRep` is commercial-only (commission/status/code); name/phone/email come from `Employee`
   - Employee must exist first; promote via Sales Reps page or `is_sales_rep` on HR create

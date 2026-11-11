@@ -70,31 +70,48 @@ export const PosPage: React.FC = () => {
   );
 
   const load = async () => {
-    try {
-      const [c, w, p, r, inv] = await Promise.all([
-        api.customers.list(),
-        api.warehouses.list(),
-        api.products.list(),
-        api.salesReps.list(),
-        api.sales.invoices('posted', 'pos')
-      ]);
-      setCustomers(c);
-      setWarehouses(w);
-      setProducts(p);
-      setReps(r);
-      setRecent(inv.slice(0, 15));
-      const walkIn = c.find((x: any) => x.customer_type === 'walk_in' || x.code === 'WALK-IN');
-      setCustomerId((id) => id || walkIn?.id || c[0]?.id || '');
-      setWarehouseId((id) => id || w[0]?.id || '');
-      const product = p[0];
-      if (product && !productId) {
-        const uom = defaultSellUomId(product);
-        setProductId(product.id);
-        setUomId(uom);
-        setUnitPrice(defaultPrice(product, uom));
-      }
-    } catch (e: any) {
-      await alertError('POS', e.message);
+    const settled = await Promise.allSettled([
+      api.customers.list(),
+      api.warehouses.list(),
+      api.products.list(),
+      api.salesReps.list(),
+      api.sales.invoices('posted', 'pos')
+    ]);
+    const value = <T,>(i: number, fallback: T): T =>
+      settled[i].status === 'fulfilled' ? ((settled[i] as PromiseFulfilledResult<T>).value as T) : fallback;
+
+    const c = value<any[]>(0, []);
+    const w = value<any[]>(1, []);
+    const p = value<any[]>(2, []);
+    const r = value<any[]>(3, []);
+    const inv = value<any[]>(4, []);
+
+    setCustomers(c);
+    setWarehouses(w);
+    setProducts(p);
+    setReps(r);
+    setRecent(inv.slice(0, 15));
+
+    const failed = settled
+      .map((s, i) =>
+        s.status === 'rejected'
+          ? ['Customers', 'Warehouses', 'Products', 'Sales reps', 'Invoices'][i]
+          : null
+      )
+      .filter(Boolean);
+    if (failed.length && !c.length && !w.length && !p.length) {
+      await alertError('POS', `Could not load: ${failed.join(', ')}`);
+    }
+
+    const walkIn = c.find((x: any) => x.customer_type === 'walk_in' || x.code === 'WALK-IN');
+    setCustomerId((id) => id || walkIn?.id || c[0]?.id || '');
+    setWarehouseId((id) => id || w[0]?.id || '');
+    const product = p[0];
+    if (product && !productId) {
+      const uom = defaultSellUomId(product);
+      setProductId(product.id);
+      setUomId(uom);
+      setUnitPrice(defaultPrice(product, uom));
     }
   };
 

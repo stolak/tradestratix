@@ -6,7 +6,11 @@ const router = Router();
 
 router.use(authenticate);
 
-router.get('/', requirePermission('warehouses.view'), warehouseController.list);
+router.get(
+  '/',
+  requirePermission('warehouses.view', 'sales.view', 'pos.view', 'inventory.view'),
+  warehouseController.list
+);
 router.post('/', requirePermission('warehouses.create'), warehouseController.create);
 router.patch('/:id', requirePermission('warehouses.edit'), warehouseController.update);
 router.delete('/:id', requirePermission('warehouses.delete'), warehouseController.remove);
