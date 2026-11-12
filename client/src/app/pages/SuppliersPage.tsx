@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
+import { useAuth } from '../context/AuthContext';
 
 const emptyForm = {
   name: '',
@@ -13,7 +14,16 @@ const emptyForm = {
   notes: ''
 };
 
+function money(v: unknown) {
+  return Number(v || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
 export const SuppliersPage: React.FC = () => {
+  const { can } = useAuth();
+  const canSeeBalances = can('suppliers.balances');
   const [rows, setRows] = useState<any[]>([]);
   const [q, setQ] = useState('');
   const [form, setForm] = useState(emptyForm);
@@ -21,7 +31,7 @@ export const SuppliersPage: React.FC = () => {
 
   const load = async () => {
     try {
-      setRows(await api.suppliers.list(q || undefined));
+      setRows(await api.suppliers.list(q || undefined, { withBalances: canSeeBalances }));
     } catch (e: any) {
       await alertError('Suppliers', e.message);
     }
@@ -29,7 +39,8 @@ export const SuppliersPage: React.FC = () => {
 
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canSeeBalances]);
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -179,36 +190,48 @@ export const SuppliersPage: React.FC = () => {
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
         <div className="table-wrap">
           <table className="table">
-          <thead>
-            <tr>
-              <th>Code</th>
-              <th>Name</th>
-              <th>Contact</th>
-              <th>Phone</th>
-              <th>Terms</th>
-              <th>POs</th>
-              <th>Bills</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((s) => (
-              <tr key={s.id}>
-                <td>{s.code || '—'}</td>
-                <td>{s.name}</td>
-                <td>{s.contact_person || '—'}</td>
-                <td>{s.phone || '—'}</td>
-                <td>{s.payment_terms_days}d</td>
-                <td>{s._count?.purchase_orders ?? 0}</td>
-                <td>{s._count?.bills ?? 0}</td>
-                <td>
-                  <button type="button" className="btn btn-ghost" onClick={() => startEdit(s)}>
-                    Edit
-                  </button>
-                </td>
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Name</th>
+                <th>Contact</th>
+                <th>Phone</th>
+                <th>Terms</th>
+                <th>POs</th>
+                <th>Bills</th>
+                {canSeeBalances ? <th className="num">Balance</th> : null}
+                <th />
               </tr>
-            ))}
-          </tbody>
+            </thead>
+            <tbody>
+              {rows.map((s) => {
+                const bal = Number(s.balance || 0);
+                return (
+                  <tr key={s.id}>
+                    <td>{s.code || '—'}</td>
+                    <td>{s.name}</td>
+                    <td>{s.contact_person || '—'}</td>
+                    <td>{s.phone || '—'}</td>
+                    <td>{s.payment_terms_days}d</td>
+                    <td>{s._count?.purchase_orders ?? 0}</td>
+                    <td>{s._count?.bills ?? 0}</td>
+                    {canSeeBalances ? (
+                      <td className="num" title={bal < 0 ? 'Prepaid on account' : bal > 0 ? 'Amount owed' : undefined}>
+                        {money(bal)}
+                        {bal < -0.005 ? (
+                          <div className="invoice-view__sub">prepaid</div>
+                        ) : null}
+                      </td>
+                    ) : null}
+                    <td>
+                      <button type="button" className="btn btn-ghost" onClick={() => startEdit(s)}>
+                        Edit
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
           </table>
         </div>
       </div>

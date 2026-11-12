@@ -294,8 +294,13 @@ export const api = {
       request<any>('/uoms', { method: 'POST', body: JSON.stringify(body) })
   },
   suppliers: {
-    list: (q?: string) =>
-      request<any[]>(`/suppliers${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+    list: (q?: string, opts?: { withBalances?: boolean }) => {
+      const params = new URLSearchParams();
+      if (q) params.set('q', q);
+      if (opts?.withBalances) params.set('with_balances', '1');
+      const qs = params.toString();
+      return request<any[]>(`/suppliers${qs ? `?${qs}` : ''}`);
+    },
     get: (id: string) => request<any>(`/suppliers/${id}`),
     create: (body: Record<string, unknown>) =>
       request<any>('/suppliers', { method: 'POST', body: JSON.stringify(body) }),

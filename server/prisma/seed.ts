@@ -426,6 +426,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'customers.view',
       'customers.balances',
       'suppliers.view',
+      'suppliers.balances',
       'notifications.view',
       'audit.view'
     ]
@@ -439,6 +440,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'assets',
       'payroll',
       'customers',
+      'suppliers',
       'reports',
       'branches',
       'audit'
@@ -455,6 +457,8 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'customers.view',
       'customers.credit',
       'customers.balances',
+      'suppliers.view',
+      'suppliers.balances',
       'reports.*',
       'branches.view',
       'branches.report_all',
@@ -501,6 +505,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       ...MODULES.map((m) => `${m}.export`),
       ...MODULES.map((m) => `${m}.print`),
       'customers.balances',
+      'suppliers.balances',
       'branches.report_all',
       'audit.view',
       'audit.export'
@@ -535,6 +540,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'dashboard.view',
       'purchases.view',
       'suppliers.view',
+      'suppliers.balances',
       'notifications.view'
     ]
   }
@@ -697,6 +703,11 @@ async function main() {
       module: 'customers',
       action: 'balances',
       description: 'View customer balances, purchase totals and invoice history'
+    },
+    {
+      module: 'suppliers',
+      action: 'balances',
+      description: 'View supplier AP balances (outstanding / prepaid) on the suppliers directory'
     }
   ];
   for (const p of EXTRA_PERMISSIONS) {

@@ -4,7 +4,13 @@ import * as supplierService from '../services/supplier.service.js';
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
-    return res.json(await supplierService.listSuppliers(req.user!.businessId, q));
+    const withBalances =
+      req.query.with_balances === '1' ||
+      req.query.with_balances === 'true' ||
+      req.query.balances === '1';
+    return res.json(
+      await supplierService.listSuppliers(req.user!, q, { withBalances })
+    );
   } catch (err) {
     return next(err);
   }

@@ -1,12 +1,18 @@
 import { prisma } from '../utils/prisma.js';
-import { httpError, requireString, serialize, shortId } from '../utils/helpers.js';
+import { httpError, requireString, roundMoney, serialize, shortId } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import { partnerLineBalances } from './accounting.service.js';
+import { userHasAnyPermission } from './permission.service.js';
 
-export async function listSuppliers(businessId: string, q?: string) {
+export async function listSuppliers(
+  user: AuthUser,
+  q?: string,
+  opts?: { withBalances?: boolean }
+) {
   const rows = await prisma.supplier.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
       ...(q
         ? {
             OR: [
@@ -23,7 +29,22 @@ export async function listSuppliers(businessId: string, q?: string) {
       _count: { select: { purchaseOrders: true, bills: true, payments: true } }
     }
   });
-  return serialize(rows);
+
+  const wantBalances = !!opts?.withBalances;
+  const canSeeBalances =
+    wantBalances &&
+    (user.role === 'business_owner' ||
+      (await userHasAnyPermission(user.id, ['suppliers.balances'])));
+
+  if (!canSeeBalances) return serialize(rows);
+
+  const balances = await partnerLineBalances(user.businessId, 'supplier');
+  return serialize(
+    rows.map((s) => ({
+      ...s,
+      balance: roundMoney(balances.get(s.id) ?? 0)
+    }))
+  );
 }
 
 export async function getSupplier(businessId: string, id: string) {
