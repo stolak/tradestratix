@@ -1,55 +1,103 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { PackageCheck, RefreshCw, Search, X } from 'lucide-react';
+import Swal from 'sweetalert2';
+import { ClipboardList, PackageCheck, RefreshCw, Search, Truck, X } from 'lucide-react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
 import { InvoiceViewModal } from '../components/InvoiceViewModal';
 
-type View = 'pending' | 'released';
+type Tab = 'to_pick' | 'picking' | 'ready' | 'delivery' | 'done' | 'issues';
 
-function fmtDate(v: unknown) {
+function fmtDate(v: unknown, withTime = false) {
   if (!v) return '—';
   const d = new Date(String(v));
-  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
+  if (Number.isNaN(d.getTime())) return '—';
+  return withTime ? d.toLocaleString() : d.toLocaleDateString();
 }
 
 function qty(v: unknown) {
   return Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
-const PAYMENT_LABELS: Record<string, string> = {
-  paid: 'paid',
-  partial: 'part paid',
-  open: 'unpaid'
+const PAYMENT_LABELS: Record<string, string> = { paid: 'paid', partial: 'part paid', open: 'unpaid', void: 'void' };
+
+const STATUS_LABELS: Record<string, string> = {
+  picking: 'Picking',
+  ready_for_collection: 'Ready for collection',
+  picked: 'Awaiting dispatch',
+  dispatched: 'Out for delivery',
+  released: 'Collected',
+  delivered: 'Delivered',
+  cancelled: 'Cancelled',
+  discrepancy: 'Discrepancy'
 };
+
+const STATUS_CHIP: Record<string, string> = {
+  picking: 'pending',
+  ready_for_collection: 'partial',
+  picked: 'pending',
+  dispatched: 'partial',
+  released: 'fulfilled',
+  delivered: 'fulfilled',
+  cancelled: 'cancelled',
+  discrepancy: 'void'
+};
+
+const ID_TYPES = [
+  ['', 'No ID checked'],
+  ['national_id', 'National ID'],
+  ['drivers_licence', "Driver's licence"],
+  ['passport', 'Passport'],
+  ['voters_card', "Voter's card"],
+  ['company_id', 'Company ID / waybill'],
+  ['other', 'Other']
+];
+
+function lineLabel(item: any) {
+  const ii = item.invoice_item || item;
+  return (
+    <>
+      <div className="invoice-view__strong">{ii.product?.name}</div>
+      <div className="invoice-view__sub">{[ii.product?.sku, ii.variant?.name].filter(Boolean).join(' · ')}</div>
+    </>
+  );
+}
 
 export const PickupsPage: React.FC = () => {
   const { activeBranchId, can } = useAuth();
   const canViewInvoice = can('sales.view', 'pos.view');
-  const [view, setView] = useState<View>('pending');
+  const canPick = can('fulfilment.pick');
+  const canRelease = can('sales.fulfil');
+  const canDispatch = can('fulfilment.dispatch');
+  const [tab, setTab] = useState<Tab>('to_pick');
   const [warehouseId, setWarehouseId] = useState('');
   const [q, setQ] = useState('');
   const [search, setSearch] = useState('');
-  const [warehouses, setWarehouses] = useState<any[]>([]);
-  const [rows, setRows] = useState<any[]>([]);
-  const [released, setReleased] = useState<any[]>([]);
+  const [data, setData] = useState<{ warehouses: any[]; summary: Record<string, number>; awaiting: any[]; tasks: any[] }>({
+    warehouses: [],
+    summary: {},
+    awaiting: [],
+    tasks: []
+  });
+  const [vehicles, setVehicles] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [releasing, setReleasing] = useState<any | null>(null);
+  const [modal, setModal] = useState<
+    | { kind: 'quick'; row: any }
+    | { kind: 'pick'; taskId: string }
+    | { kind: 'collect'; taskId: string }
+    | { kind: 'dispatch'; task: any }
+    | { kind: 'deliver'; taskId: string }
+    | null
+  >(null);
   const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [pending, history] = await Promise.all([
-        api.sales.pendingPickups({ warehouse_id: warehouseId || undefined, q: search || undefined }),
-        api.sales.fulfilments(warehouseId || undefined)
-      ]);
-      setWarehouses(pending.warehouses || []);
-      setRows(pending.rows || []);
-      setReleased(history || []);
+      setData(await api.sales.warehouseDashboard({ warehouse_id: warehouseId || undefined, q: search || undefined }));
     } catch (err: any) {
-      await alertError('Pickups', err.message);
+      await alertError('Warehouse fulfilment', err.message);
     } finally {
       setLoading(false);
     }
@@ -60,114 +108,242 @@ export const PickupsPage: React.FC = () => {
   }, [warehouseId, search, activeBranchId]);
 
   useEffect(() => {
+    if (!canDispatch) return;
+    api.distribution.vehicles().then(setVehicles).catch(() => setVehicles([]));
+  }, [canDispatch]);
+
+  useEffect(() => {
     const t = setTimeout(() => setSearch(q.trim()), 350);
     return () => clearTimeout(t);
   }, [q]);
 
-  const outstandingLines = useMemo(
-    () => rows.reduce((s, r) => s + (r.lines || []).length, 0),
-    [rows]
+  const tasksBy = useMemo(() => {
+    const t = data.tasks || [];
+    return {
+      picking: t.filter((x) => x.status === 'picking'),
+      ready: t.filter((x) => x.status === 'ready_for_collection'),
+      delivery: t.filter((x) => x.status === 'picked' || x.status === 'dispatched'),
+      done: t.filter((x) => x.status === 'released' || x.status === 'delivered'),
+      issues: t.filter((x) => x.has_discrepancy)
+    };
+  }, [data.tasks]);
+
+  const startPicking = async (row: any) => {
+    try {
+      const task = await api.sales.startPicking({ invoice_id: row.invoice_id, warehouse_id: row.warehouse?.id });
+      await load();
+      setModal({ kind: 'pick', taskId: task.id });
+    } catch (err: any) {
+      await alertError('Could not start picking', err.message);
+    }
+  };
+
+  const cancelTask = async (task: any) => {
+    const res = await Swal.fire({
+      title: `Cancel ${task.fulfilment_number}?`,
+      text: 'Picked goods go back on the shelf. The stock stays reserved for the order.',
+      input: 'text',
+      inputPlaceholder: 'Reason',
+      showCancelButton: true,
+      confirmButtonText: 'Cancel picking list',
+      confirmButtonColor: '#0f5c4c',
+      inputValidator: (v) => (!v?.trim() ? 'A reason is required' : undefined)
+    });
+    if (!res.isConfirmed) return;
+    try {
+      await api.sales.cancelFulfilment(task.id, String(res.value).trim());
+      await load();
+    } catch (err: any) {
+      await alertError('Cancel failed', err.message);
+    }
+  };
+
+  const s = data.summary || {};
+  const cards: { label: string; value: number; tab?: Tab; tone?: string }[] = [
+    { label: 'Awaiting picking', value: s.awaiting_picking || 0, tab: 'to_pick' },
+    { label: 'Picking in progress', value: s.picking || 0, tab: 'picking' },
+    { label: 'Ready for pickup', value: s.ready_for_collection || 0, tab: 'ready' },
+    { label: 'Awaiting dispatch', value: s.awaiting_dispatch || 0, tab: 'delivery' },
+    { label: 'Out for delivery', value: s.out_for_delivery || 0, tab: 'delivery' },
+    { label: 'Partially fulfilled', value: s.partially_fulfilled || 0 },
+    { label: 'Overdue collection', value: s.overdue_collection || 0, tab: 'ready', tone: 'warn' },
+    { label: 'Discrepancies (30 days)', value: s.discrepancies || 0, tab: 'issues', tone: 'warn' }
+  ];
+
+  const invoiceCell = (inv: any, invoiceId: string, number: string) =>
+    canViewInvoice ? (
+      <button type="button" className="invoice-link" onClick={() => setViewInvoiceId(invoiceId)}>
+        {number}
+      </button>
+    ) : (
+      number
+    );
+
+  const taskTable = (rows: any[], empty: string, actions: (t: any) => React.ReactNode) => (
+    <div className="table-wrap">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Fulfilment</th>
+            <th>Order</th>
+            <th>Customer</th>
+            <th>Warehouse</th>
+            <th>Goods</th>
+            <th>Status</th>
+            <th />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((t) => (
+            <tr key={t.id}>
+              <td>
+                {t.fulfilment_number}
+                <div className="line-items__discount-note">
+                  {t.fulfilment_type === 'delivery' ? 'Delivery' : 'Pickup'} · {fmtDate(t.created_at)}
+                </div>
+              </td>
+              <td>{invoiceCell(t.invoice, t.invoice?.id, t.invoice?.invoice_number)}</td>
+              <td>
+                <div style={{ fontWeight: 600 }}>{t.invoice?.customer?.name}</div>
+                {t.invoice?.customer?.phone ? <div className="line-items__discount-note">{t.invoice.customer.phone}</div> : null}
+              </td>
+              <td>
+                {t.warehouse?.name}
+                <div className="line-items__discount-note">{t.warehouse?.branch?.name}</div>
+              </td>
+              <td>
+                {(t.items || [])
+                  .slice(0, 3)
+                  .map((i: any) => {
+                    const n =
+                      t.status === 'picking'
+                        ? i.planned_quantity
+                        : ['released', 'delivered'].includes(t.status)
+                          ? i.quantity
+                          : i.picked_quantity;
+                    return `${qty(n)} ${i.invoice_item?.uom?.code || ''} ${i.invoice_item?.product?.name}`;
+                  })
+                  .join(', ')}
+                {(t.items || []).length > 3 ? ` +${t.items.length - 3} more` : ''}
+                {t.discrepancy_notes ? <div className="invoice-view__danger" style={{ fontSize: '0.78rem' }}>{t.discrepancy_notes}</div> : null}
+              </td>
+              <td>
+                <span className={`invoice-chip invoice-chip--${STATUS_CHIP[t.status] || 'pending'}`}>
+                  {STATUS_LABELS[t.status] || t.status}
+                </span>
+                {t.overdue ? <div className="invoice-view__danger" style={{ fontSize: '0.78rem' }}>hold expiring</div> : null}
+                {t.delivery_order ? <div className="line-items__discount-note">{t.delivery_order.delivery_number}</div> : null}
+              </td>
+              <td style={{ whiteSpace: 'nowrap' }}>{actions(t)}</td>
+            </tr>
+          ))}
+          {!rows.length ? (
+            <tr>
+              <td colSpan={7} style={{ textAlign: 'center', color: 'var(--ink-muted)', padding: '2rem' }}>
+                {loading ? 'Loading…' : empty}
+              </td>
+            </tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
   );
 
   return (
     <div className="page-stack">
       <header>
         <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
-          Pickups
+          Warehouse fulfilment
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Orders confirmed in any branch with stock reserved in your warehouses. Releasing issues the
-          reserved stock and invoices what was handed over — revenue, receivable and cost of goods post to
-          the order’s revenue branch, applying any deposit the customer paid.
+          Orders confirmed in any branch with stock reserved in your warehouses. Pick the goods, then hand them over
+          against the customer’s pickup code or dispatch them for delivery. Stock, revenue and cost of goods post only
+          when the goods are handed over or delivered.
         </p>
       </header>
+
+      <div className="cust-bal__cards">
+        {cards.map((c) => (
+          <button
+            key={c.label}
+            type="button"
+            className="card-surface cust-bal__card"
+            style={{ textAlign: 'left', cursor: c.tab ? 'pointer' : 'default', border: 'none' }}
+            onClick={() => c.tab && setTab(c.tab)}
+          >
+            <div className="cust-bal__card-label">{c.label}</div>
+            <div className="cust-bal__card-value" style={c.tone === 'warn' && c.value ? { color: 'var(--accent)' } : undefined}>
+              {c.value}
+            </div>
+          </button>
+        ))}
+      </div>
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
         <div className="cust-bal__toolbar">
           <div className="segmented" role="tablist">
-            <button
-              type="button"
-              className={`segmented__btn${view === 'pending' ? ' is-active' : ''}`}
-              onClick={() => setView('pending')}
-            >
-              To collect{rows.length ? ` (${rows.length})` : ''}
-            </button>
-            <button
-              type="button"
-              className={`segmented__btn${view === 'released' ? ' is-active' : ''}`}
-              onClick={() => setView('released')}
-            >
-              Released
-            </button>
+            {(
+              [
+                ['to_pick', `To pick${data.awaiting.length ? ` (${data.awaiting.length})` : ''}`],
+                ['picking', `Picking${tasksBy.picking.length ? ` (${tasksBy.picking.length})` : ''}`],
+                ['ready', `Ready${tasksBy.ready.length ? ` (${tasksBy.ready.length})` : ''}`],
+                ['delivery', `Delivery${tasksBy.delivery.length ? ` (${tasksBy.delivery.length})` : ''}`],
+                ['done', 'Completed'],
+                ['issues', 'Discrepancies']
+              ] as [Tab, string][]
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                className={`segmented__btn${tab === id ? ' is-active' : ''}`}
+                onClick={() => setTab(id)}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          <select
-            value={warehouseId}
-            onChange={(e) => setWarehouseId(e.target.value)}
-            aria-label="Warehouse"
-            style={{ maxWidth: 280 }}
-          >
+          <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} aria-label="Warehouse" style={{ maxWidth: 280 }}>
             <option value="">All my warehouses</option>
-            {warehouses.map((w) => (
+            {data.warehouses.map((w) => (
               <option key={w.id} value={w.id}>
                 {w.branch?.name} · {w.code} — {w.name}
               </option>
             ))}
           </select>
-          {view === 'pending' ? (
-            <label className="pickups__search">
-              <Search size={15} />
-              <input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                placeholder="Invoice #, customer or phone"
-              />
-            </label>
-          ) : null}
+          <label className="pickups__search">
+            <Search size={15} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Order #, FUL #, customer or phone" />
+          </label>
           <button type="button" className="btn btn-ghost" onClick={() => void load()} disabled={loading}>
             <RefreshCw size={15} /> Refresh
           </button>
         </div>
 
-        {view === 'pending' ? (
+        {tab === 'to_pick' ? (
           <div className="table-wrap">
             <table className="table">
               <thead>
                 <tr>
-                  <th>Invoice</th>
-                  <th>Date</th>
+                  <th>Order</th>
                   <th>Customer</th>
                   <th>Sold at</th>
-                  <th>Collect from</th>
-                  <th>Outstanding</th>
+                  <th>From</th>
+                  <th>To pick</th>
+                  <th>Hold until</th>
                   <th>Payment</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {data.awaiting.map((r) => (
                   <tr key={`${r.invoice_id}:${r.warehouse?.id}`}>
                     <td>
-                      {canViewInvoice ? (
-                        <button
-                          type="button"
-                          className="invoice-link"
-                          onClick={() => setViewInvoiceId(r.invoice_id)}
-                        >
-                          {r.invoice_number}
-                        </button>
-                      ) : (
-                        r.invoice_number
-                      )}
-                      {r.fulfilment_status === 'partial' ? (
-                        <div className="line-items__discount-note">part collected</div>
-                      ) : null}
+                      {invoiceCell(r, r.invoice_id, r.invoice_number)}
+                      {r.fulfilment_status === 'partial' ? <div className="line-items__discount-note">part fulfilled</div> : null}
                     </td>
-                    <td>{fmtDate(r.invoice_date)}</td>
                     <td>
                       <div style={{ fontWeight: 600 }}>{r.customer?.name}</div>
-                      {r.customer?.phone ? (
-                        <div className="line-items__discount-note">{r.customer.phone}</div>
-                      ) : null}
+                      {r.customer?.phone ? <div className="line-items__discount-note">{r.customer.phone}</div> : null}
                     </td>
                     <td>{r.selling_branch?.name || '—'}</td>
                     <td>
@@ -177,131 +353,132 @@ export const PickupsPage: React.FC = () => {
                     <td>
                       {(r.lines || [])
                         .slice(0, 3)
-                        .map((l: any) => `${qty(l.remaining)} ${l.uom?.code || ''} ${l.product?.name}`)
+                        .map((l: any) => `${qty(l.to_pick)} ${l.uom?.code || ''} ${l.product?.name}`)
                         .join(', ')}
                       {(r.lines || []).length > 3 ? ` +${r.lines.length - 3} more` : ''}
                     </td>
+                    <td>{fmtDate(r.reservation_expires_at)}</td>
                     <td>
                       <span className={`invoice-chip invoice-chip--${r.payment_status}`}>
                         {PAYMENT_LABELS[r.payment_status] || r.payment_status}
                       </span>
                     </td>
-                    <td>
-                      <button type="button" className="btn btn-primary" onClick={() => setReleasing(r)}>
-                        <PackageCheck size={15} /> Release
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!rows.length ? (
-                  <tr>
-                    <td colSpan={8} style={{ textAlign: 'center', color: 'var(--ink-muted)', padding: '2rem' }}>
-                      {loading ? 'Loading…' : 'Nothing waiting to be collected.'}
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-            {rows.length ? (
-              <div className="pickups__foot">
-                {rows.length} pickup{rows.length === 1 ? '' : 's'} · {outstandingLines} line
-                {outstandingLines === 1 ? '' : 's'} outstanding
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Release #</th>
-                  <th>Date</th>
-                  <th>Invoice</th>
-                  <th>Customer</th>
-                  <th>Warehouse</th>
-                  <th>Collected by</th>
-                  <th>Lines</th>
-                </tr>
-              </thead>
-              <tbody>
-                {released.map((f) => (
-                  <tr key={f.id}>
-                    <td>{f.fulfilment_number}</td>
-                    <td>{fmtDate(f.fulfilled_at)}</td>
-                    <td>
-                      {canViewInvoice ? (
-                        <button
-                          type="button"
-                          className="invoice-link"
-                          onClick={() => setViewInvoiceId(f.invoice?.id)}
-                        >
-                          {f.invoice?.invoice_number}
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {canPick ? (
+                        <button type="button" className="btn btn-primary" onClick={() => void startPicking(r)}>
+                          <ClipboardList size={15} /> Pick
                         </button>
-                      ) : (
-                        f.invoice?.invoice_number
-                      )}
-                    </td>
-                    <td>{f.invoice?.customer?.name}</td>
-                    <td>
-                      {f.warehouse?.name}
-                      <div className="line-items__discount-note">{f.branch?.name}</div>
-                    </td>
-                    <td>
-                      {f.collected_by || '—'}
-                      {f.collector_phone ? (
-                        <div className="line-items__discount-note">{f.collector_phone}</div>
+                      ) : null}{' '}
+                      {canRelease && r.fulfilment_mode !== 'delivery' ? (
+                        <button type="button" className="btn btn-ghost" onClick={() => setModal({ kind: 'quick', row: r })}>
+                          <PackageCheck size={15} /> Release now
+                        </button>
                       ) : null}
                     </td>
-                    <td>{(f.items || []).length}</td>
                   </tr>
                 ))}
-                {!released.length ? (
+                {!data.awaiting.length ? (
                   <tr>
-                    <td colSpan={7} style={{ textAlign: 'center', color: 'var(--ink-muted)', padding: '2rem' }}>
-                      {loading ? 'Loading…' : 'No releases yet.'}
+                    <td colSpan={8} style={{ textAlign: 'center', color: 'var(--ink-muted)', padding: '2rem' }}>
+                      {loading ? 'Loading…' : 'Nothing waiting to be picked.'}
                     </td>
                   </tr>
                 ) : null}
               </tbody>
             </table>
           </div>
-        )}
+        ) : null}
+
+        {tab === 'picking'
+          ? taskTable(tasksBy.picking, 'No picking in progress.', (t) => (
+              <>
+                {canPick ? (
+                  <button type="button" className="btn btn-primary" onClick={() => setModal({ kind: 'pick', taskId: t.id })}>
+                    Record picking
+                  </button>
+                ) : null}{' '}
+                {canPick ? (
+                  <button type="button" className="btn btn-ghost" onClick={() => void cancelTask(t)}>
+                    Cancel
+                  </button>
+                ) : null}
+              </>
+            ))
+          : null}
+
+        {tab === 'ready'
+          ? taskTable(tasksBy.ready, 'Nothing is waiting for collection.', (t) => (
+              <>
+                {canRelease ? (
+                  <button type="button" className="btn btn-primary" onClick={() => setModal({ kind: 'collect', taskId: t.id })}>
+                    <PackageCheck size={15} /> Hand over
+                  </button>
+                ) : null}{' '}
+                {canPick || canRelease ? (
+                  <button type="button" className="btn btn-ghost" onClick={() => void cancelTask(t)}>
+                    Put back
+                  </button>
+                ) : null}
+              </>
+            ))
+          : null}
+
+        {tab === 'delivery'
+          ? taskTable(tasksBy.delivery, 'No deliveries waiting or on the road.', (t) =>
+              canDispatch ? (
+                t.status === 'picked' ? (
+                  <>
+                    <button type="button" className="btn btn-primary" onClick={() => setModal({ kind: 'dispatch', task: t })}>
+                      <Truck size={15} /> Dispatch
+                    </button>{' '}
+                    <button type="button" className="btn btn-ghost" onClick={() => void cancelTask(t)}>
+                      Put back
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" className="btn btn-primary" onClick={() => setModal({ kind: 'deliver', taskId: t.id })}>
+                    Confirm delivery
+                  </button>
+                )
+              ) : null
+            )
+          : null}
+
+        {tab === 'done' ? taskTable(tasksBy.done, 'No completed hand-overs in the last 30 days.', () => null) : null}
+        {tab === 'issues' ? taskTable(tasksBy.issues, 'No discrepancies in the last 30 days.', () => null) : null}
       </div>
 
-      {releasing ? (
-        <ReleaseModal
-          pickup={releasing}
-          onClose={() => setReleasing(null)}
-          onDone={async () => {
-            setReleasing(null);
-            await load();
-          }}
-        />
+      {modal?.kind === 'quick' ? (
+        <QuickReleaseModal row={modal.row} onClose={() => setModal(null)} onDone={async () => { setModal(null); await load(); }} />
+      ) : null}
+      {modal?.kind === 'pick' ? (
+        <PickModal taskId={modal.taskId} onClose={() => setModal(null)} onDone={async () => { setModal(null); await load(); }} />
+      ) : null}
+      {modal?.kind === 'collect' ? (
+        <CollectModal taskId={modal.taskId} onClose={() => setModal(null)} onDone={async () => { setModal(null); await load(); }} />
+      ) : null}
+      {modal?.kind === 'dispatch' ? (
+        <DispatchModal task={modal.task} vehicles={vehicles} onClose={() => setModal(null)} onDone={async () => { setModal(null); await load(); }} />
+      ) : null}
+      {modal?.kind === 'deliver' ? (
+        <DeliverModal taskId={modal.taskId} onClose={() => setModal(null)} onDone={async () => { setModal(null); await load(); }} />
       ) : null}
 
-      {viewInvoiceId ? (
-        <InvoiceViewModal invoiceId={viewInvoiceId} onClose={() => setViewInvoiceId(null)} />
-      ) : null}
+      {viewInvoiceId ? <InvoiceViewModal invoiceId={viewInvoiceId} onClose={() => setViewInvoiceId(null)} /> : null}
     </div>
   );
 };
 
-const ReleaseModal: React.FC<{
-  pickup: any;
-  onClose: () => void;
-  onDone: () => Promise<void> | void;
-}> = ({ pickup, onClose, onDone }) => {
-  const [quantities, setQuantities] = useState<Record<string, string>>(() =>
-    Object.fromEntries((pickup.lines || []).map((l: any) => [l.invoice_item_id, String(l.remaining)]))
-  );
-  const [meta, setMeta] = useState({
-    collected_by: pickup.customer?.name || '',
-    collector_phone: pickup.customer?.phone || '',
-    id_reference: '',
-    notes: ''
-  });
-  const [busy, setBusy] = useState(false);
+// ─── shared modal shell ─────────────────────────────────────────────────────
 
+const ModalShell: React.FC<{
+  eyebrow: string;
+  title: string;
+  onClose: () => void;
+  onSubmit: (e: React.FormEvent) => void;
+  footer: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ eyebrow, title, onClose, onSubmit, footer, children }) => {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -313,14 +490,245 @@ const ReleaseModal: React.FC<{
       document.body.classList.remove('modal-open');
     };
   }, [onClose]);
+  return createPortal(
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <form className="modal invoice-view" role="dialog" aria-modal="true" onSubmit={onSubmit}>
+        <div className="modal__header">
+          <div>
+            <div className="invoice-view__eyebrow">{eyebrow}</div>
+            <h2 className="display invoice-view__number">{title}</h2>
+          </div>
+          <div className="modal__actions">
+            <button type="button" className="line-items__remove" onClick={onClose} aria-label="Close">
+              <X size={18} />
+            </button>
+          </div>
+        </div>
+        <div className="modal__body">{children}</div>
+        <div className="modal__footer">{footer}</div>
+      </form>
+    </div>,
+    document.body
+  );
+};
 
-  const lines: any[] = pickup.lines || [];
-  const invalid = lines.find((l) => {
+function useTask(taskId: string) {
+  const [task, setTask] = useState<any | null>(null);
+  useEffect(() => {
+    api.sales
+      .fulfilment(taskId)
+      .then(setTask)
+      .catch((err) => void alertError('Fulfilment', err.message));
+  }, [taskId]);
+  return task;
+}
+
+const Loading: React.FC<{ onClose: () => void }> = ({ onClose }) => (
+  <ModalShell eyebrow="Loading" title="…" onClose={onClose} onSubmit={(e) => e.preventDefault()} footer={null}>
+    <p style={{ color: 'var(--ink-muted)' }}>Loading…</p>
+  </ModalShell>
+);
+
+// ─── collector verification form (pickup code, collector, acknowledgement) ──
+
+type Collector = {
+  pickup_code: string;
+  override: boolean;
+  override_reason: string;
+  collected_by: string;
+  collector_relation: string;
+  collector_phone: string;
+  id_type: string;
+  id_reference: string;
+  signature_name: string;
+  proof_reference: string;
+  acknowledged: boolean;
+  notes: string;
+};
+
+function emptyCollector(customer: any): Collector {
+  return {
+    pickup_code: '',
+    override: false,
+    override_reason: '',
+    collected_by: customer?.name || '',
+    collector_relation: 'customer',
+    collector_phone: customer?.phone || '',
+    id_type: '',
+    id_reference: '',
+    signature_name: '',
+    proof_reference: '',
+    acknowledged: false,
+    notes: ''
+  };
+}
+
+function collectorPayload(c: Collector) {
+  return {
+    ...(c.override ? { override_reason: c.override_reason } : { pickup_code: c.pickup_code }),
+    collected_by: c.collected_by,
+    collector_relation: c.collector_relation,
+    collector_phone: c.collector_phone || undefined,
+    id_type: c.id_type || undefined,
+    id_reference: c.id_reference || undefined,
+    signature_name: c.signature_name || undefined,
+    proof_reference: c.proof_reference || undefined,
+    acknowledged: c.acknowledged,
+    notes: c.notes || undefined
+  };
+}
+
+const CollectorFields: React.FC<{
+  value: Collector;
+  onChange: (c: Collector) => void;
+  hasCode: boolean;
+  authorised: { name: string; phone?: string | null }[];
+}> = ({ value, onChange, hasCode, authorised }) => {
+  const { can } = useAuth();
+  const canOverride = can('fulfilment.override_pickup_code');
+  const set = (patch: Partial<Collector>) => onChange({ ...value, ...patch });
+  return (
+    <>
+      {hasCode ? (
+        <div className="form-grid">
+          <div className="field">
+            <label>Pickup code</label>
+            <input
+              value={value.pickup_code}
+              onChange={(e) => set({ pickup_code: e.target.value })}
+              placeholder="6-digit code from the customer"
+              inputMode="numeric"
+              autoComplete="off"
+              disabled={value.override}
+              required={!value.override}
+            />
+          </div>
+          {canOverride ? (
+            <div className="field">
+              <label>
+                <input
+                  type="checkbox"
+                  checked={value.override}
+                  onChange={(e) => set({ override: e.target.checked })}
+                  style={{ width: 'auto', marginRight: 6 }}
+                />
+                Release without the code (supervisor)
+              </label>
+              {value.override ? (
+                <input
+                  value={value.override_reason}
+                  onChange={(e) => set({ override_reason: e.target.value })}
+                  placeholder="Reason, e.g. code lost — identity checked"
+                  required
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {authorised.length ? (
+        <div className="line-items__discount-note" style={{ margin: '0.5rem 0' }}>
+          Authorised collectors: {authorised.map((a) => a.name + (a.phone ? ` (${a.phone})` : '')).join(', ')}
+        </div>
+      ) : null}
+
+      <div className="form-grid">
+        <div className="field">
+          <label>Collected by</label>
+          <input value={value.collected_by} onChange={(e) => set({ collected_by: e.target.value })} required />
+        </div>
+        <div className="field">
+          <label>Collector is</label>
+          <select value={value.collector_relation} onChange={(e) => set({ collector_relation: e.target.value })}>
+            <option value="customer">The customer</option>
+            {authorised.length ? <option value="authorised">An authorised collector</option> : null}
+            <option value="other">Someone else (sent by the customer)</option>
+          </select>
+        </div>
+        <div className="field">
+          <label>Phone</label>
+          <input value={value.collector_phone} onChange={(e) => set({ collector_phone: e.target.value })} />
+        </div>
+        <div className="field">
+          <label>ID checked</label>
+          <select value={value.id_type} onChange={(e) => set({ id_type: e.target.value })}>
+            {ID_TYPES.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
+        </div>
+        {value.id_type ? (
+          <div className="field">
+            <label>ID number (only the last 4 characters are kept)</label>
+            <input value={value.id_reference} onChange={(e) => set({ id_reference: e.target.value })} autoComplete="off" />
+          </div>
+        ) : null}
+        <div className="field">
+          <label>Signed by</label>
+          <input value={value.signature_name} onChange={(e) => set({ signature_name: e.target.value })} placeholder="Name as signed" />
+        </div>
+        <div className="field">
+          <label>Proof reference</label>
+          <input
+            value={value.proof_reference}
+            onChange={(e) => set({ proof_reference: e.target.value })}
+            placeholder="Signed slip no. or photo link (optional)"
+          />
+        </div>
+        <div className="field">
+          <label>Notes</label>
+          <input value={value.notes} onChange={(e) => set({ notes: e.target.value })} placeholder="Optional" />
+        </div>
+      </div>
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: '0.75rem', fontWeight: 600 }}>
+        <input
+          type="checkbox"
+          checked={value.acknowledged}
+          onChange={(e) => set({ acknowledged: e.target.checked })}
+          style={{ width: 'auto' }}
+        />
+        The collector checked the goods and acknowledged receipt
+      </label>
+    </>
+  );
+};
+
+function QtyInput({ value, max, onChange }: { value: string; max: number; onChange: (v: string) => void }) {
+  const v = Number(value || 0);
+  const bad = !Number.isFinite(v) || v < 0 || v > max + 1e-9;
+  return (
+    <input
+      type="number"
+      min="0"
+      max={max}
+      step="any"
+      className="line-items__qty"
+      value={value}
+      aria-invalid={bad}
+      style={bad ? { borderColor: 'var(--danger, #c0392b)' } : undefined}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+// ─── quick release (no picking step) ───────────────────────────────────────
+
+const QuickReleaseModal: React.FC<{ row: any; onClose: () => void; onDone: () => Promise<void> | void }> = ({ row, onClose, onDone }) => {
+  const lines: any[] = row.lines || [];
+  const [quantities, setQuantities] = useState<Record<string, string>>(() =>
+    Object.fromEntries(lines.map((l) => [l.invoice_item_id, String(l.to_pick)]))
+  );
+  const [collector, setCollector] = useState<Collector>(() => emptyCollector(row.customer));
+  const [busy, setBusy] = useState(false);
+  const invalid = lines.some((l) => {
     const v = Number(quantities[l.invoice_item_id] || 0);
-    return !Number.isFinite(v) || v < 0 || v > Number(l.remaining) + 1e-9;
+    return !Number.isFinite(v) || v < 0 || v > Number(l.to_pick) + 1e-9;
   });
   const anyQty = lines.some((l) => Number(quantities[l.invoice_item_id] || 0) > 0);
-  const balance = Number(pickup.amount_due ?? pickup.balance ?? 0);
+  const due = Number(row.amount_due ?? 0);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -328,22 +736,14 @@ const ReleaseModal: React.FC<{
     setBusy(true);
     try {
       const res = await api.sales.fulfil({
-        invoice_id: pickup.invoice_id,
-        warehouse_id: pickup.warehouse?.id,
-        ...meta,
+        invoice_id: row.invoice_id,
+        warehouse_id: row.warehouse?.id,
+        ...collectorPayload(collector),
         items: lines
-          .map((l) => ({
-            invoice_item_id: l.invoice_item_id,
-            quantity: Number(quantities[l.invoice_item_id] || 0)
-          }))
+          .map((l) => ({ invoice_item_id: l.invoice_item_id, quantity: Number(quantities[l.invoice_item_id] || 0) }))
           .filter((i) => i.quantity > 0)
       });
-      await alertSuccess(
-        `${res.fulfilment_number} released`,
-        res.invoice?.fulfilment_status === 'fulfilled'
-          ? `${pickup.invoice_number} is now fully collected.`
-          : `${pickup.invoice_number} still has goods to collect.`
-      );
+      await alertSuccess(`${res.fulfilment_number} released`, `${row.invoice_number}: goods handed to ${collector.collected_by}.`);
       await onDone();
     } catch (err: any) {
       await alertError('Release failed', err.message);
@@ -352,144 +752,500 @@ const ReleaseModal: React.FC<{
     }
   };
 
-  return createPortal(
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <form className="modal invoice-view" role="dialog" aria-modal="true" onSubmit={submit}>
-        <div className="modal__header">
-          <div>
-            <div className="invoice-view__eyebrow">Release goods · {pickup.warehouse?.name}</div>
-            <h2 className="display invoice-view__number">{pickup.invoice_number}</h2>
-          </div>
-          <div className="modal__actions">
-            <button type="button" className="line-items__remove" onClick={onClose} aria-label="Close">
-              <X size={18} />
-            </button>
-          </div>
-        </div>
-
-        <div className="modal__body">
-          <div className="invoice-view__meta">
-            <div>
-              <div className="invoice-view__label">Customer</div>
-              <div className="invoice-view__strong">{pickup.customer?.name}</div>
-              {pickup.customer?.phone ? <div>{pickup.customer.phone}</div> : null}
-            </div>
-            <dl className="invoice-view__facts">
-              <dt>Invoice date</dt>
-              <dd>{fmtDate(pickup.invoice_date)}</dd>
-              <dt>Sold at</dt>
-              <dd>{pickup.selling_branch?.name || '—'}</dd>
-              <dt>Payment</dt>
-              <dd>{PAYMENT_LABELS[pickup.payment_status] || pickup.payment_status}</dd>
-            </dl>
-          </div>
-
-          {balance > 0 ? (
-            <div className="pickups__warning">
-              This order still has{' '}
-              {balance.toLocaleString(undefined, { minimumFractionDigits: 2 })} unpaid. Release only if the
-              customer is cleared to collect on credit.
-            </div>
-          ) : null}
-
-          <div className="line-items">
-            <table className="line-items__table">
-              <thead>
-                <tr>
-                  <th className="line-items__index">#</th>
-                  <th>Product</th>
-                  <th>UoM</th>
-                  <th className="num">Ordered</th>
-                  <th className="num">Collected</th>
-                  <th className="num">Outstanding</th>
-                  <th style={{ width: 120, textAlign: 'center' }}>Release now</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lines.map((l, idx) => {
-                  const v = Number(quantities[l.invoice_item_id] || 0);
-                  const bad = v < 0 || v > Number(l.remaining) + 1e-9;
-                  return (
-                    <tr key={l.invoice_item_id}>
-                      <td className="line-items__index">{idx + 1}</td>
-                      <td>
-                        <div className="invoice-view__strong">{l.product?.name}</div>
-                        <div className="invoice-view__sub">
-                          {[l.product?.sku, l.variant?.name].filter(Boolean).join(' · ')}
-                        </div>
-                      </td>
-                      <td>{l.uom?.code || '—'}</td>
-                      <td className="num">{qty(l.quantity)}</td>
-                      <td className="num">{qty(l.fulfilled_quantity)}</td>
-                      <td className="num">{qty(l.remaining)}</td>
-                      <td>
-                        <input
-                          type="number"
-                          min="0"
-                          max={l.remaining}
-                          step="any"
-                          className="line-items__qty"
-                          value={quantities[l.invoice_item_id] ?? ''}
-                          aria-invalid={bad}
-                          style={bad ? { borderColor: 'var(--danger, #c0392b)' } : undefined}
-                          onChange={(e) =>
-                            setQuantities((s) => ({ ...s, [l.invoice_item_id]: e.target.value }))
-                          }
-                        />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="form-grid">
-            <div className="field">
-              <label>Collected by</label>
-              <input
-                value={meta.collected_by}
-                onChange={(e) => setMeta({ ...meta, collected_by: e.target.value })}
-                placeholder="Name of person collecting"
-                required
-              />
-            </div>
-            <div className="field">
-              <label>Phone</label>
-              <input
-                value={meta.collector_phone}
-                onChange={(e) => setMeta({ ...meta, collector_phone: e.target.value })}
-              />
-            </div>
-            <div className="field">
-              <label>ID / waybill reference</label>
-              <input
-                value={meta.id_reference}
-                onChange={(e) => setMeta({ ...meta, id_reference: e.target.value })}
-                placeholder="Optional"
-              />
-            </div>
-            <div className="field">
-              <label>Notes</label>
-              <input
-                value={meta.notes}
-                onChange={(e) => setMeta({ ...meta, notes: e.target.value })}
-                placeholder="Optional"
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="modal__footer">
+  return (
+    <ModalShell
+      eyebrow={`Release now · ${row.warehouse?.name}`}
+      title={row.invoice_number}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
           <button type="button" className="btn btn-ghost" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" className="btn btn-primary" disabled={busy || Boolean(invalid) || !anyQty}>
+          <button type="submit" className="btn btn-primary" disabled={busy || invalid || !anyQty || !collector.acknowledged}>
             {busy ? 'Releasing…' : 'Release goods'}
           </button>
+        </>
+      }
+    >
+      {due > 0 ? (
+        <div className="pickups__warning">
+          This order still has {due.toLocaleString(undefined, { minimumFractionDigits: 2 })} unpaid. Release only if the
+          customer is cleared to collect on credit.
         </div>
-      </form>
-    </div>,
-    document.body
+      ) : null}
+      <div className="line-items">
+        <table className="line-items__table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>UoM</th>
+              <th className="num">Ordered</th>
+              <th className="num">Collected</th>
+              <th className="num">Available here</th>
+              <th style={{ width: 120, textAlign: 'center' }}>Release now</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((l) => (
+              <tr key={l.invoice_item_id}>
+                <td>{lineLabel(l)}</td>
+                <td>{l.uom?.code || '—'}</td>
+                <td className="num">{qty(l.quantity)}</td>
+                <td className="num">{qty(l.fulfilled_quantity)}</td>
+                <td className="num">{qty(l.to_pick)}</td>
+                <td>
+                  <QtyInput
+                    value={quantities[l.invoice_item_id] ?? ''}
+                    max={Number(l.to_pick)}
+                    onChange={(v) => setQuantities((s) => ({ ...s, [l.invoice_item_id]: v }))}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <CollectorFields value={collector} onChange={setCollector} hasCode={Boolean(row.has_pickup_code)}
+        authorised={Array.isArray(row.authorised_collectors) ? row.authorised_collectors : []}
+      />
+    </ModalShell>
+  );
+};
+
+// ─── picking ────────────────────────────────────────────────────────────────
+
+const PickModal: React.FC<{ taskId: string; onClose: () => void; onDone: () => Promise<void> | void }> = ({ taskId, onClose, onDone }) => {
+  const task = useTask(taskId);
+  const [picked, setPicked] = useState<Record<string, string>>({});
+  const [damaged, setDamaged] = useState<Record<string, string>>({});
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!task) return;
+    setPicked(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, String(Number(i.planned_quantity))])));
+    setDamaged(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, '0'])));
+  }, [task]);
+  if (!task) return <Loading onClose={onClose} />;
+
+  const rows = task.items.map((i: any) => {
+    const planned = Number(i.planned_quantity);
+    const p = Number(picked[i.invoice_item_id] || 0);
+    const d = Number(damaged[i.invoice_item_id] || 0);
+    return { i, planned, p, d, short: Math.max(0, planned - p - d), bad: p < 0 || d < 0 || p + d > planned + 1e-9 };
+  });
+  const invalid = rows.some((r: any) => r.bad);
+  const shortTotal = rows.reduce((s: number, r: any) => s + r.short + r.d, 0);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (invalid) return;
+    setBusy(true);
+    try {
+      const res = await api.sales.confirmPicking(taskId, {
+        items: rows.map((r: any) => ({ invoice_item_id: r.i.invoice_item_id, picked_quantity: r.p, damaged_quantity: r.d })),
+        discrepancy_notes: notes || undefined
+      });
+      await alertSuccess(
+        `${res.fulfilment_number} ${STATUS_LABELS[res.status]?.toLowerCase() || res.status}`,
+        res.status === 'picked'
+          ? `Delivery ${res.delivery_order?.delivery_number || ''} is ready to dispatch.`
+          : res.status === 'discrepancy'
+            ? 'Nothing could be picked; the order owner has been told to reallocate.'
+            : 'The customer can now collect with their pickup code.'
+      );
+      await onDone();
+    } catch (err: any) {
+      await alertError('Picking failed', err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      eyebrow={`Picking list · ${task.warehouse?.name}`}
+      title={`${task.fulfilment_number} — ${task.invoice?.invoice_number}`}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            Close
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={busy || invalid}>
+            {busy ? 'Saving…' : 'Confirm picked'}
+          </button>
+        </>
+      }
+    >
+      <div className="invoice-view__meta">
+        <div>
+          <div className="invoice-view__label">Customer</div>
+          <div className="invoice-view__strong">{task.invoice?.customer?.name}</div>
+        </div>
+        <dl className="invoice-view__facts">
+          <dt>Type</dt>
+          <dd>{task.fulfilment_type === 'delivery' ? 'Delivery' : 'Customer pickup'}</dd>
+          {task.invoice?.delivery_address ? (
+            <>
+              <dt>Deliver to</dt>
+              <dd>{task.invoice.delivery_address}</dd>
+            </>
+          ) : null}
+          <dt>Started</dt>
+          <dd>{fmtDate(task.pick_started_at, true)}</dd>
+        </dl>
+      </div>
+      <div className="line-items">
+        <table className="line-items__table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Lots / batches</th>
+              <th className="num">To pick</th>
+              <th style={{ width: 110, textAlign: 'center' }}>Picked</th>
+              <th style={{ width: 110, textAlign: 'center' }}>Damaged</th>
+              <th className="num">Missing</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r: any) => (
+              <tr key={r.i.id}>
+                <td>
+                  {lineLabel(r.i)}
+                  {r.i.invoice_item?.product?.barcode ? (
+                    <div className="invoice-view__sub">Barcode {r.i.invoice_item.product.barcode}</div>
+                  ) : null}
+                </td>
+                <td style={{ fontSize: '0.8rem' }}>
+                  {(r.i.lots || []).map((l: any) => (
+                    <div key={l.lot_id}>
+                      {l.batch_number || 'lot'} · {qty(l.quantity)}
+                      {l.expiry_date ? ` · exp ${fmtDate(l.expiry_date)}` : ''}
+                    </div>
+                  ))}
+                </td>
+                <td className="num">
+                  {qty(r.planned)} {r.i.invoice_item?.uom?.code}
+                </td>
+                <td>
+                  <QtyInput value={picked[r.i.invoice_item_id] ?? ''} max={r.planned} onChange={(v) => setPicked((s) => ({ ...s, [r.i.invoice_item_id]: v }))} />
+                </td>
+                <td>
+                  <QtyInput value={damaged[r.i.invoice_item_id] ?? ''} max={r.planned} onChange={(v) => setDamaged((s) => ({ ...s, [r.i.invoice_item_id]: v }))} />
+                </td>
+                <td className="num" style={r.short > 0 ? { color: 'var(--accent)', fontWeight: 600 } : undefined}>
+                  {qty(r.short)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {shortTotal > 0 ? (
+        <>
+          <div className="pickups__warning" style={{ marginTop: '0.75rem' }}>
+            {qty(shortTotal)} will be released from the reservation as a discrepancy and become a backorder on the order.
+          </div>
+          <div className="field">
+            <label>What happened?</label>
+            <input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="e.g. 1 carton crushed, bin empty" />
+          </div>
+        </>
+      ) : null}
+    </ModalShell>
+  );
+};
+
+// ─── hand-over of a picked task ─────────────────────────────────────────────
+
+const CollectModal: React.FC<{ taskId: string; onClose: () => void; onDone: () => Promise<void> | void }> = ({ taskId, onClose, onDone }) => {
+  const task = useTask(taskId);
+  const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [collector, setCollector] = useState<Collector>(() => emptyCollector(null));
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!task) return;
+    setQuantities(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, String(Number(i.picked_quantity))])));
+    setCollector(emptyCollector(task.invoice?.customer));
+  }, [task]);
+  if (!task) return <Loading onClose={onClose} />;
+
+  const items: any[] = task.items.filter((i: any) => Number(i.picked_quantity) > 0);
+  const invalid = items.some((i) => {
+    const v = Number(quantities[i.invoice_item_id] || 0);
+    return !Number.isFinite(v) || v < 0 || v > Number(i.picked_quantity) + 1e-9;
+  });
+  const anyQty = items.some((i) => Number(quantities[i.invoice_item_id] || 0) > 0);
+  const partial = items.some((i) => Number(quantities[i.invoice_item_id] || 0) < Number(i.picked_quantity) - 1e-9);
+  const due = Number(task.invoice?.amount_due || 0);
+  const authorised = Array.isArray(task.invoice?.authorised_collectors) ? task.invoice.authorised_collectors : [];
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (invalid || !anyQty) return;
+    setBusy(true);
+    try {
+      await api.sales.releaseFulfilment(taskId, {
+        ...collectorPayload(collector),
+        items: items.map((i) => ({ invoice_item_id: i.invoice_item_id, quantity: Number(quantities[i.invoice_item_id] || 0) }))
+      });
+      await alertSuccess(
+        `${task.fulfilment_number} handed over`,
+        partial ? 'The rest stays ready for collection on a new record.' : `${task.invoice?.invoice_number}: goods collected.`
+      );
+      await onDone();
+    } catch (err: any) {
+      await alertError('Hand-over failed', err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      eyebrow={`Hand over · ${task.warehouse?.name}`}
+      title={`${task.fulfilment_number} — ${task.invoice?.invoice_number}`}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={busy || invalid || !anyQty || !collector.acknowledged}>
+            {busy ? 'Releasing…' : partial ? 'Hand over part' : 'Hand over all'}
+          </button>
+        </>
+      }
+    >
+      {due > 0 ? (
+        <div className="pickups__warning">
+          This order still has {due.toLocaleString(undefined, { minimumFractionDigits: 2 })} unpaid. Release only if the
+          customer is cleared to collect on credit.
+        </div>
+      ) : null}
+      <div className="line-items">
+        <table className="line-items__table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>UoM</th>
+              <th className="num">Picked</th>
+              <th style={{ width: 120, textAlign: 'center' }}>Hand over</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((i) => (
+              <tr key={i.id}>
+                <td>{lineLabel(i)}</td>
+                <td>{i.invoice_item?.uom?.code || '—'}</td>
+                <td className="num">{qty(i.picked_quantity)}</td>
+                <td>
+                  <QtyInput
+                    value={quantities[i.invoice_item_id] ?? ''}
+                    max={Number(i.picked_quantity)}
+                    onChange={(v) => setQuantities((s) => ({ ...s, [i.invoice_item_id]: v }))}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <CollectorFields value={collector} onChange={setCollector} hasCode={Boolean(task.invoice?.has_pickup_code)} authorised={authorised} />
+      {(task.verifications || []).some((v: any) => v.result !== 'success') ? (
+        <div className="line-items__discount-note" style={{ marginTop: '0.5rem' }}>
+          Recent code checks:{' '}
+          {task.verifications
+            .slice(0, 5)
+            .map((v: any) => `${v.result} ${fmtDate(v.created_at, true)}`)
+            .join(' · ')}
+        </div>
+      ) : null}
+    </ModalShell>
+  );
+};
+
+// ─── delivery ───────────────────────────────────────────────────────────────
+
+const DispatchModal: React.FC<{ task: any; vehicles: any[]; onClose: () => void; onDone: () => Promise<void> | void }> = ({
+  task,
+  vehicles,
+  onClose,
+  onDone
+}) => {
+  const [vehicleId, setVehicleId] = useState('');
+  const [driver, setDriver] = useState(task.delivery_order?.driver_name || '');
+  const [busy, setBusy] = useState(false);
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api.sales.dispatchFulfilment(task.id, { vehicle_id: vehicleId || undefined, driver_name: driver || undefined });
+      await alertSuccess(`${task.delivery_order?.delivery_number || task.fulfilment_number} dispatched`, 'Confirm delivery when the customer signs for it.');
+      await onDone();
+    } catch (err: any) {
+      await alertError('Dispatch failed', err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <ModalShell
+      eyebrow={`Dispatch · ${task.warehouse?.name}`}
+      title={`${task.fulfilment_number} — ${task.invoice?.invoice_number}`}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={busy || (!vehicleId && !driver.trim())}>
+            {busy ? 'Dispatching…' : 'Dispatch'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ marginTop: 0 }}>
+        Deliver to <strong>{task.invoice?.delivery_address || task.invoice?.customer?.name}</strong>
+      </p>
+      <div className="form-grid">
+        <div className="field">
+          <label>Vehicle</label>
+          <select value={vehicleId} onChange={(e) => setVehicleId(e.target.value)}>
+            <option value="">— none / third-party —</option>
+            {vehicles.map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+                {v.plate_number ? ` · ${v.plate_number}` : ''}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label>Driver / transporter</label>
+          <input value={driver} onChange={(e) => setDriver(e.target.value)} placeholder="Name" />
+        </div>
+      </div>
+    </ModalShell>
+  );
+};
+
+const DeliverModal: React.FC<{ taskId: string; onClose: () => void; onDone: () => Promise<void> | void }> = ({ taskId, onClose, onDone }) => {
+  const task = useTask(taskId);
+  const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [form, setForm] = useState({ received_by: '', signature_name: '', proof_reference: '', pod_notes: '' });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!task) return;
+    setQuantities(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, String(Number(i.picked_quantity))])));
+  }, [task]);
+  if (!task) return <Loading onClose={onClose} />;
+  const items: any[] = task.items.filter((i: any) => Number(i.picked_quantity) > 0);
+  const invalid = items.some((i) => {
+    const v = Number(quantities[i.invoice_item_id] || 0);
+    return !Number.isFinite(v) || v < 0 || v > Number(i.picked_quantity) + 1e-9;
+  });
+  const returned = items.reduce((s, i) => s + Math.max(0, Number(i.picked_quantity) - Number(quantities[i.invoice_item_id] || 0)), 0);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (invalid) return;
+    setBusy(true);
+    try {
+      await api.sales.deliverFulfilment(taskId, {
+        ...form,
+        items: items.map((i) => ({ invoice_item_id: i.invoice_item_id, quantity: Number(quantities[i.invoice_item_id] || 0) }))
+      });
+      await alertSuccess('Delivery confirmed', returned > 0 ? `${qty(returned)} came back and stays reserved for the order.` : 'All goods delivered.');
+      await onDone();
+    } catch (err: any) {
+      await alertError('Delivery confirmation failed', err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      eyebrow={`Proof of delivery · ${task.delivery_order?.delivery_number || ''}`}
+      title={`${task.fulfilment_number} — ${task.invoice?.invoice_number}`}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={
+        <>
+          <button type="button" className="btn btn-ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn btn-primary" disabled={busy || invalid || !form.received_by.trim()}>
+            {busy ? 'Saving…' : 'Confirm delivery'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ marginTop: 0 }}>
+        {task.invoice?.delivery_address}
+        {task.delivery_order?.driver_name ? ` · driver ${task.delivery_order.driver_name}` : ''}
+      </p>
+      <div className="line-items">
+        <table className="line-items__table">
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th className="num">Dispatched</th>
+              <th style={{ width: 120, textAlign: 'center' }}>Delivered</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((i) => (
+              <tr key={i.id}>
+                <td>{lineLabel(i)}</td>
+                <td className="num">
+                  {qty(i.picked_quantity)} {i.invoice_item?.uom?.code}
+                </td>
+                <td>
+                  <QtyInput
+                    value={quantities[i.invoice_item_id] ?? ''}
+                    max={Number(i.picked_quantity)}
+                    onChange={(v) => setQuantities((s) => ({ ...s, [i.invoice_item_id]: v }))}
+                  />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="form-grid">
+        <div className="field">
+          <label>Received by</label>
+          <input value={form.received_by} onChange={(e) => setForm({ ...form, received_by: e.target.value })} required />
+        </div>
+        <div className="field">
+          <label>Signed by</label>
+          <input value={form.signature_name} onChange={(e) => setForm({ ...form, signature_name: e.target.value })} />
+        </div>
+        <div className="field">
+          <label>Proof of delivery reference</label>
+          <input
+            value={form.proof_reference}
+            onChange={(e) => setForm({ ...form, proof_reference: e.target.value })}
+            placeholder="Signed note no. or photo link"
+          />
+        </div>
+        <div className="field">
+          <label>Notes</label>
+          <input value={form.pod_notes} onChange={(e) => setForm({ ...form, pod_notes: e.target.value })} placeholder="Optional" />
+        </div>
+      </div>
+      {returned > 0 ? (
+        <div className="pickups__warning" style={{ marginTop: '0.75rem' }}>
+          {qty(returned)} not delivered — it returns to {task.warehouse?.name} and stays reserved for the order.
+        </div>
+      ) : null}
+    </ModalShell>
   );
 };

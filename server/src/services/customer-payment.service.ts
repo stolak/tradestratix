@@ -243,3 +243,299 @@ export async function autoAllocate(businessId: string, customerId: string, amoun
   }
   return out;
 }
+
+/** Sum of unapplied customer credit still available. */
+export async function customerUnappliedCredit(businessId: string, customerId: string) {
+  const rows = await prisma.customerPayment.findMany({
+    where: { businessId, customerId, unappliedAmount: { gt: 0 } },
+    select: { id: true, paymentNumber: true, unappliedAmount: true, method: true, paymentDate: true, reference: true },
+    orderBy: { paymentDate: 'asc' }
+  });
+  const total = roundMoney(rows.reduce((s, r) => s + Number(r.unappliedAmount), 0));
+  return { total, payments: rows };
+}
+
+/**
+ * Apply existing unapplied customer credit to open invoice balances (oldest credit first).
+ * No cash moves — Dr unapplied_customer_receipts / Cr AR (per invoice revenue branch).
+ */
+export async function applyUnappliedCredit(
+  user: AuthUser,
+  input: {
+    customerId: string;
+    allocations: PaymentAllocationInput[];
+    idempotencyKey?: string | null;
+  }
+) {
+  const customer = await prisma.customer.findFirst({
+    where: { id: input.customerId, businessId: user.businessId }
+  });
+  if (!customer) throw httpError(404, 'Customer not found');
+
+  return prisma.$transaction(async (tx) => {
+    if (input.idempotencyKey) {
+      const existing = await tx.customerPayment.findFirst({
+        where: { businessId: user.businessId, idempotencyKey: input.idempotencyKey }
+      });
+      if (existing) return { payment: existing, replayed: true };
+    }
+
+    const accountMap = await getDefaultAccountMap(user.businessId);
+    if (!accountMap.unapplied_customer_receipts || !accountMap.accounts_receivable) {
+      throw httpError(400, 'Default unapplied_customer_receipts and accounts_receivable must be configured');
+    }
+
+    const merged = new Map<string, number>();
+    for (const a of input.allocations) {
+      merged.set(a.invoiceId, roundMoney((merged.get(a.invoiceId) || 0) + a.amount));
+    }
+    const invoiceIds = [...merged.keys()];
+    if (!invoiceIds.length) throw httpError(400, 'allocations are required');
+    await lockInvoices(tx, invoiceIds);
+    const invoices = await tx.salesInvoice.findMany({
+      where: {
+        id: { in: invoiceIds },
+        businessId: user.businessId,
+        customerId: input.customerId,
+        status: 'posted'
+      }
+    });
+    if (invoices.length !== invoiceIds.length) {
+      throw httpError(400, 'One or more invoices are not open for this customer');
+    }
+
+    let need = 0;
+    const splits: { invoiceId: string; branchId: string; ar: number }[] = [];
+    for (const inv of invoices) {
+      const apply = merged.get(inv.id)!;
+      const ar = roundMoney(Math.min(apply, Math.max(0, Number(inv.balance))));
+      if (ar <= 0) throw httpError(400, `${inv.invoiceNumber} has no recognised balance to settle`);
+      if (apply > ar + 0.01) {
+        throw httpError(400, `Cannot apply ${apply} to ${inv.invoiceNumber} (balance ${ar})`);
+      }
+      splits.push({ invoiceId: inv.id, branchId: inv.branchId || '', ar });
+      need = roundMoney(need + ar);
+    }
+
+    const credits = await tx.customerPayment.findMany({
+      where: {
+        businessId: user.businessId,
+        customerId: input.customerId,
+        unappliedAmount: { gt: 0 }
+      },
+      orderBy: { paymentDate: 'asc' }
+    });
+    const available = roundMoney(credits.reduce((s, c) => s + Number(c.unappliedAmount), 0));
+    if (need > available + 0.01) {
+      throw httpError(400, `Only ${available} unapplied credit available (need ${need})`);
+    }
+
+    let remaining = need;
+    for (const c of credits) {
+      if (remaining <= 0) break;
+      const take = roundMoney(Math.min(Number(c.unappliedAmount), remaining));
+      await tx.customerPayment.update({
+        where: { id: c.id },
+        data: { unappliedAmount: toDec(roundMoney(Number(c.unappliedAmount) - take)) }
+      });
+      remaining = roundMoney(remaining - take);
+    }
+
+    const byBranch = new Map<string, number>();
+    for (const s of splits) {
+      const b = s.branchId || (user.activeBranchId as string);
+      byBranch.set(b, roundMoney((byBranch.get(b) || 0) + s.ar));
+    }
+
+    const paymentId = shortId('cpay');
+    const paymentNumber = await nextDocNumber(tx.customerPayment, user.businessId, 'paymentNumber', 'CPAY', 5);
+    let firstJournalId: string | null = null;
+    for (const [branchId, ar] of byBranch) {
+      const j: any = await createJournal(
+        user,
+        {
+          source_type: 'customer_credit_apply',
+          source_id: paymentId,
+          customer_id: input.customerId,
+          post: true,
+          memo: `Apply customer credit ${paymentNumber}`,
+          idempotency_key: `credit_apply:${paymentId}:${branchId}`,
+          branch_id: branchId,
+          lines: [
+            {
+              account_id: accountMap.unapplied_customer_receipts,
+              debit: ar,
+              description: `Apply credit ${paymentNumber}`
+            },
+            {
+              account_id: accountMap.accounts_receivable,
+              credit: ar,
+              description: `AR settlement ${paymentNumber}`
+            }
+          ]
+        },
+        tx,
+        { trustedBranch: true }
+      );
+      firstJournalId = firstJournalId || j.id;
+    }
+
+    for (const s of splits) {
+      const inv = invoices.find((i) => i.id === s.invoiceId)!;
+      const paid = roundMoney(Number(inv.amountPaid) + s.ar);
+      await tx.salesInvoice.update({
+        where: { id: inv.id },
+        data: {
+          amountPaid: toDec(paid),
+          balance: toDec(Math.max(0, roundMoney(Number(inv.balance) - s.ar))),
+          paymentStatus: paymentStatusFor(inv, paid)
+        }
+      });
+    }
+
+    const payment = await tx.customerPayment.create({
+      data: {
+        id: paymentId,
+        businessId: user.businessId,
+        branchId: user.activeBranchId || splits[0]?.branchId || null,
+        customerId: input.customerId,
+        paymentNumber,
+        paymentDate: new Date(),
+        amount: toDec(0),
+        unappliedAmount: toDec(0),
+        method: 'credit_apply',
+        reference: null,
+        notes: 'Applied unapplied customer credit',
+        journalEntryId: firstJournalId,
+        idempotencyKey: input.idempotencyKey || null,
+        createdById: user.id,
+        allocations: {
+          create: splits.map((s) => ({
+            id: shortId('cpa'),
+            invoiceId: s.invoiceId,
+            amount: toDec(s.ar),
+            arAmount: toDec(s.ar),
+            depositAmount: toDec(0)
+          }))
+        }
+      },
+      include: { customer: true, allocations: { include: { invoice: true } } }
+    });
+    return { payment, replayed: false };
+  }, { timeout: 30000, maxWait: 10000 });
+}
+
+/**
+ * Refund unapplied customer credit as cash/bank. Dr unapplied / Cr cash.
+ */
+export async function refundUnappliedCredit(
+  user: AuthUser,
+  input: {
+    customerId: string;
+    amount: number;
+    accountId: string;
+    method?: string;
+    branchId?: string;
+    reference?: string | null;
+    notes?: string | null;
+    idempotencyKey?: string | null;
+  }
+) {
+  const amount = roundMoney(input.amount);
+  if (!(amount > 0)) throw httpError(400, 'amount must be greater than 0');
+  const customer = await prisma.customer.findFirst({
+    where: { id: input.customerId, businessId: user.businessId }
+  });
+  if (!customer) throw httpError(404, 'Customer not found');
+
+  const { resolveWriteBranchId } = await import('./branch-access.service.js');
+  const branchId = await resolveWriteBranchId(user, input.branchId);
+
+  return prisma.$transaction(async (tx) => {
+    if (input.idempotencyKey) {
+      const existing = await tx.customerPayment.findFirst({
+        where: { businessId: user.businessId, idempotencyKey: input.idempotencyKey }
+      });
+      if (existing) return { payment: existing, replayed: true };
+    }
+
+    const accountMap = await getDefaultAccountMap(user.businessId);
+    if (!accountMap.unapplied_customer_receipts) {
+      throw httpError(400, 'Default account "unapplied_customer_receipts" is not configured');
+    }
+
+    const credits = await tx.customerPayment.findMany({
+      where: {
+        businessId: user.businessId,
+        customerId: input.customerId,
+        unappliedAmount: { gt: 0 }
+      },
+      orderBy: { paymentDate: 'asc' }
+    });
+    const available = roundMoney(credits.reduce((s, c) => s + Number(c.unappliedAmount), 0));
+    if (amount > available + 0.01) {
+      throw httpError(400, `Only ${available} unapplied credit available`);
+    }
+
+    let remaining = amount;
+    for (const c of credits) {
+      if (remaining <= 0) break;
+      const take = roundMoney(Math.min(Number(c.unappliedAmount), remaining));
+      await tx.customerPayment.update({
+        where: { id: c.id },
+        data: { unappliedAmount: toDec(roundMoney(Number(c.unappliedAmount) - take)) }
+      });
+      remaining = roundMoney(remaining - take);
+    }
+
+    const paymentId = shortId('cpay');
+    const paymentNumber = await nextDocNumber(tx.customerPayment, user.businessId, 'paymentNumber', 'CPAY', 5);
+    const j: any = await createJournal(
+      user,
+      {
+        source_type: 'customer_credit_refund',
+        source_id: paymentId,
+        customer_id: input.customerId,
+        post: true,
+        memo: `Refund customer credit ${paymentNumber} — ${customer.name}`,
+        idempotency_key: `credit_refund:${paymentId}`,
+        branch_id: branchId,
+        lines: [
+          {
+            account_id: accountMap.unapplied_customer_receipts,
+            debit: amount,
+            description: `Refund credit ${paymentNumber}`
+          },
+          {
+            account_id: input.accountId,
+            credit: amount,
+            description: `${input.method || 'cash'} refund ${paymentNumber}`
+          }
+        ]
+      },
+      tx
+    );
+
+    const payment = await tx.customerPayment.create({
+      data: {
+        id: paymentId,
+        businessId: user.businessId,
+        branchId,
+        customerId: input.customerId,
+        paymentNumber,
+        paymentDate: new Date(),
+        amount: toDec(0),
+        unappliedAmount: toDec(0),
+        method: 'credit_refund',
+        accountId: input.accountId,
+        reference: input.reference || null,
+        notes: input.notes || `Refund of unapplied credit`,
+        journalEntryId: j.id,
+        idempotencyKey: input.idempotencyKey || null,
+        createdById: user.id
+      },
+      include: { customer: true, account: true }
+    });
+    return { payment, replayed: false };
+  }, { timeout: 30000, maxWait: 10000 });
+}

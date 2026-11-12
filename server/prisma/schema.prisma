@@ -106,6 +106,8 @@ model Business {
   branchProductDiscounts BranchProductDiscount[]
   salesReservations      SalesReservation[]
   salesFulfilments       SalesFulfilment[]
+  pickupVerifications    PickupVerification[]
+  salesReturns           SalesReturn[]
   suppliers              Supplier[]
   purchaseOrders         PurchaseOrder[]
   goodsReceiptNotes      GoodsReceiptNote[]
@@ -188,6 +190,8 @@ model Branch {
   salesInvoices    SalesInvoice[]     @relation("InvoiceRevenueBranch")
   salesInvoicesSold SalesInvoice[]    @relation("InvoiceSellingBranch")
   salesFulfilments SalesFulfilment[]
+  salesReturns     SalesReturn[]      @relation("ReturnReceivingBranch")
+  salesReturnsRevenue SalesReturn[]   @relation("ReturnRevenueBranch")
   fixedAssets      FixedAsset[]
   employees        Employee[]
   deliveryOrders   DeliveryOrder[]
@@ -245,6 +249,7 @@ model Warehouse {
   fulfilmentLines SalesInvoiceItem[]
   salesReservations SalesReservation[]
   salesFulfilments SalesFulfilment[]
+  salesReturns     SalesReturn[]
 
   @@unique([businessId, code])
   @@index([branchId])
@@ -1249,6 +1254,7 @@ model Customer {
   invoices       SalesInvoice[]
   payments       CustomerPayment[]
   deliveries     DeliveryOrder[]
+  salesReturns   SalesReturn[]
   journalEntries JournalEntry[]    @relation("JournalCustomer")
 
   @@unique([businessId, code])
@@ -1311,7 +1317,7 @@ model SalesInvoice {
   channel            String    @default("sales")
   /// draft | posted | void
   status             String    @default("draft")
-  /// immediate (handed over at posting) | pickup (collected later from the line warehouses)
+  /// immediate (handed over at confirmation) | pickup (collected later) | delivery (delivered to the customer)
   fulfilmentMode     String    @default("immediate") @map("fulfilment_mode")
   /// pending | partial | fulfilled
   fulfilmentStatus   String    @default("fulfilled") @map("fulfilment_status")
@@ -1330,6 +1336,18 @@ model SalesInvoice {
   /// Credit limit override recorded at confirmation
   creditOverrideById String?   @map("credit_override_by_id")
   creditOverrideReason String? @map("credit_override_reason") @db.Text
+  /// Code the customer quotes at collection (pickup orders); never shown on warehouse screens
+  pickupCode         String?   @map("pickup_code")
+  pickupCodeIssuedAt DateTime? @map("pickup_code_issued_at")
+  pickupCodeExpiresAt DateTime? @map("pickup_code_expires_at")
+  /// Consecutive failed code entries; the code locks at 5 until reissued
+  pickupCodeFailures Int       @default(0) @map("pickup_code_failures")
+  /// People besides the customer allowed to collect: [{ name, phone }]
+  authorisedCollectors Json?   @map("authorised_collectors")
+  /// Delivery orders: where the goods go
+  deliveryAddress    String?   @map("delivery_address") @db.Text
+  deliveryContact    String?   @map("delivery_contact")
+  deliveryPhone      String?   @map("delivery_phone")
   /// open | partial | paid | void
   paymentStatus      String    @default("open") @map("payment_status")
   invoiceDate        DateTime  @default(now()) @map("invoice_date")
@@ -1362,6 +1380,8 @@ model SalesInvoice {
   commissions SalesCommission[]
   deliveries  DeliveryOrder[]
   fulfilments SalesFulfilment[]
+  pickupVerifications PickupVerification[]
+  returns     SalesReturn[]
 
   @@unique([businessId, invoiceNumber])
   @@index([businessId, status])
@@ -1395,6 +1415,8 @@ model SalesInvoiceItem {
   cancelledQuantity     Decimal  @default(0) @map("cancelled_quantity") @db.Decimal(18, 4)
   /// Revenue + tax recognised for this line so far
   recognisedAmount      Decimal  @default(0) @map("recognised_amount") @db.Decimal(18, 4)
+  /// Quantity returned and posted (line UoM); cannot exceed fulfilledQuantity
+  returnedQuantity      Decimal  @default(0) @map("returned_quantity") @db.Decimal(18, 4)
   /// Manual allocation chosen on the draft: [{ warehouse_id, quantity }] in the line UoM
   allocationPlan        Json?    @map("allocation_plan")
 
@@ -1405,6 +1427,7 @@ model SalesInvoiceItem {
   fulfilmentWarehouse Warehouse? @relation(fields: [fulfilmentWarehouseId], references: [id])
   reservations        SalesReservation[]
   fulfilmentItems     SalesFulfilmentItem[]
+  returnItems         SalesReturnItem[]
 
   @@index([invoiceId])
   @@index([fulfilmentWarehouseId])
@@ -1446,7 +1469,8 @@ model SalesReservation {
   @@map("sales_reservations")
 }
 
-/// A hand-over of invoiced goods from one warehouse (pickup or immediate release).
+/// Warehouse fulfilment of an order from one warehouse: picking → ready / dispatched → released / delivered.
+/// Accounting (stock issue, revenue, COGS) posts once, when the record is released or delivered.
 model SalesFulfilment {
   id                String    @id
   businessId        String    @map("business_id")
@@ -1455,9 +1479,37 @@ model SalesFulfilment {
   warehouseId       String    @map("warehouse_id")
   /// Branch of the fulfilling warehouse
   branchId          String    @map("branch_id")
+  /// pickup | delivery
+  fulfilmentType    String    @default("pickup") @map("fulfilment_type")
+  /// picking | ready_for_collection | picked (delivery, awaiting dispatch) | dispatched |
+  /// released | delivered | cancelled | discrepancy
+  status            String    @default("released")
+  /// Remaining picked goods split off a partial collection
+  splitFromId       String?   @map("split_from_id")
+  pickerId          String?   @map("picker_id")
+  pickStartedAt     DateTime? @map("pick_started_at")
+  pickedAt          DateTime? @map("picked_at")
+  readyAt           DateTime? @map("ready_at")
+  dispatchedAt      DateTime? @map("dispatched_at")
+  dispatchedById    String?   @map("dispatched_by_id")
+  deliveredAt       DateTime? @map("delivered_at")
   collectedBy       String?   @map("collected_by")
   collectorPhone    String?   @map("collector_phone")
+  /// customer | authorised | other
+  collectorRelation String?   @map("collector_relation")
+  /// Kind of ID shown (e.g. national_id, drivers_licence); only the last 4 characters are kept
+  idType            String?   @map("id_type")
   idReference       String?   @map("id_reference")
+  /// code | override | none (counter sale)
+  verificationMethod String?  @map("verification_method")
+  acknowledged      Boolean   @default(false)
+  signatureName     String?   @map("signature_name")
+  /// Proof of collection / delivery attachment reference (URL or document number)
+  proofReference    String?   @map("proof_reference")
+  discrepancyNotes  String?   @map("discrepancy_notes") @db.Text
+  cancelledAt       DateTime? @map("cancelled_at")
+  cancelledById     String?   @map("cancelled_by_id")
+  cancelReason      String?   @map("cancel_reason") @db.Text
   notes             String?   @db.Text
   totalCost         Decimal   @default(0) @map("total_cost") @db.Decimal(18, 4)
   /// Revenue + tax recognised by this hand-over
@@ -1470,18 +1522,25 @@ model SalesFulfilment {
   cogsJournalEntryId       String? @map("cogs_journal_entry_id")
   /// Inventory relief journal in the fulfilling branch (only when it differs from the revenue branch)
   inventoryJournalEntryId  String? @map("inventory_journal_entry_id")
+  /// Employee who released / confirmed delivery (posting user)
   fulfilledById     String?   @map("fulfilled_by_id")
-  fulfilledAt       DateTime  @default(now()) @map("fulfilled_at")
+  /// When the goods were handed over (null until released or delivered)
+  fulfilledAt       DateTime? @default(now()) @map("fulfilled_at")
   createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @default(now()) @updatedAt @map("updated_at")
 
   business  Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
   invoice   SalesInvoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   warehouse Warehouse             @relation(fields: [warehouseId], references: [id])
   branch    Branch                @relation(fields: [branchId], references: [id])
   items     SalesFulfilmentItem[]
+  verifications PickupVerification[]
+  deliveryOrder DeliveryOrder?
+  returns   SalesReturn[]
 
   @@unique([businessId, fulfilmentNumber])
   @@index([invoiceId])
+  @@index([businessId, warehouseId, status])
   @@map("sales_fulfilments")
 }
 
@@ -1489,9 +1548,18 @@ model SalesFulfilmentItem {
   id            String  @id
   fulfilmentId  String  @map("fulfilment_id")
   invoiceItemId String  @map("invoice_item_id")
-  /// Quantity in the invoice line UoM
+  /// Quantity planned for picking (line UoM)
+  plannedQuantity Decimal @default(0) @map("planned_quantity") @db.Decimal(18, 4)
+  /// Quantity actually picked (line UoM)
+  pickedQuantity  Decimal @default(0) @map("picked_quantity") @db.Decimal(18, 4)
+  /// Not found at picking — reservation released as a discrepancy (line UoM)
+  shortQuantity   Decimal @default(0) @map("short_quantity") @db.Decimal(18, 4)
+  /// Found damaged at picking — reservation released as a discrepancy (line UoM)
+  damagedQuantity Decimal @default(0) @map("damaged_quantity") @db.Decimal(18, 4)
+  /// Quantity handed over / delivered (line UoM); 0 until released
   quantity      Decimal @db.Decimal(18, 4)
   baseQuantity  Decimal @map("base_quantity") @db.Decimal(18, 4)
+  notes         String? @db.Text
   cost          Decimal @default(0) @db.Decimal(18, 4)
   recognisedAmount Decimal @default(0) @map("recognised_amount") @db.Decimal(18, 4)
 
@@ -1501,6 +1569,122 @@ model SalesFulfilmentItem {
   @@index([fulfilmentId])
   @@index([invoiceItemId])
   @@map("sales_fulfilment_items")
+}
+
+/// Every pickup-code check at collection (success, failure, supervisor override) for accountability.
+model PickupVerification {
+  id            String   @id
+  businessId    String   @map("business_id")
+  invoiceId     String   @map("invoice_id")
+  fulfilmentId  String?  @map("fulfilment_id")
+  /// success | failed | locked | override
+  result        String
+  collectorName String?  @map("collector_name")
+  reason        String?  @db.Text
+  userId        String?  @map("user_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  business   Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoice    SalesInvoice     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  fulfilment SalesFulfilment? @relation(fields: [fulfilmentId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId, createdAt])
+  @@map("pickup_verifications")
+}
+
+/// Customer return of goods previously handed over. Stock restores only at the receiving warehouse.
+/// Revenue / tax / COGS reverse in the original revenue branch; cross-branch uses clearing.
+model SalesReturn {
+  id               String   @id
+  businessId       String   @map("business_id")
+  returnNumber     String   @map("return_number")
+  invoiceId        String   @map("invoice_id")
+  /// Optional: which hand-over the goods came from (helps cost and audit)
+  fulfilmentId     String?  @map("fulfilment_id")
+  customerId       String   @map("customer_id")
+  /// Branch that physically received the goods
+  branchId         String   @map("branch_id")
+  warehouseId      String   @map("warehouse_id")
+  /// Invoice revenue branch (where AR / revenue / COGS reverse)
+  revenueBranchId  String   @map("revenue_branch_id")
+  /// draft | posted | void
+  status           String   @default("draft")
+  /// Free-text reason (required on post)
+  reason           String?  @db.Text
+  /// saleable | damaged | quarantine — default for lines that omit their own
+  condition        String   @default("saleable")
+  /// credit_note (reduce AR / raise unapplied credit) | refund (cash/bank out)
+  settlement       String   @default("credit_note")
+  refundMethod     String?  @map("refund_method")
+  refundAccountId  String?  @map("refund_account_id")
+  subtotal         Decimal  @default(0) @db.Decimal(18, 4)
+  taxAmount        Decimal  @default(0) @map("tax_amount") @db.Decimal(18, 4)
+  totalAmount      Decimal  @default(0) @map("total_amount") @db.Decimal(18, 4)
+  /// Revenue + tax reversed
+  recognisedReversal Decimal @default(0) @map("recognised_reversal") @db.Decimal(18, 4)
+  /// Inventory / COGS cost reversed
+  cogsReversal     Decimal  @default(0) @map("cogs_reversal") @db.Decimal(18, 4)
+  /// Amount moved to unapplied customer credit (when settlement is credit_note and invoice was paid)
+  creditIssued     Decimal  @default(0) @map("credit_issued") @db.Decimal(18, 4)
+  /// Amount paid out in cash/bank (settlement = refund)
+  refundAmount     Decimal  @default(0) @map("refund_amount") @db.Decimal(18, 4)
+  revenueJournalEntryId   String? @map("revenue_journal_entry_id")
+  cogsJournalEntryId      String? @map("cogs_journal_entry_id")
+  inventoryJournalEntryId String? @map("inventory_journal_entry_id")
+  settlementJournalEntryId String? @map("settlement_journal_entry_id")
+  creditPaymentId  String?  @map("credit_payment_id")
+  notes            String?  @db.Text
+  createdById      String?  @map("created_by_id")
+  postedById       String?  @map("posted_by_id")
+  postedAt         DateTime? @map("posted_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  business      Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoice       SalesInvoice     @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  fulfilment    SalesFulfilment? @relation(fields: [fulfilmentId], references: [id], onDelete: SetNull)
+  customer      Customer         @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  branch        Branch           @relation("ReturnReceivingBranch", fields: [branchId], references: [id])
+  revenueBranch Branch           @relation("ReturnRevenueBranch", fields: [revenueBranchId], references: [id])
+  warehouse     Warehouse        @relation(fields: [warehouseId], references: [id])
+  items         SalesReturnItem[]
+
+  @@unique([businessId, returnNumber])
+  @@index([invoiceId])
+  @@index([customerId, status])
+  @@index([businessId, branchId, status])
+  @@map("sales_returns")
+}
+
+model SalesReturnItem {
+  id              String  @id
+  returnId        String  @map("return_id")
+  invoiceItemId   String  @map("invoice_item_id")
+  productId       String  @map("product_id")
+  variantId       String? @map("variant_id")
+  uomId           String? @map("uom_id")
+  /// Quantity returned in the invoice line UoM
+  quantity        Decimal @db.Decimal(18, 4)
+  baseQuantity    Decimal @map("base_quantity") @db.Decimal(18, 4)
+  unitPrice       Decimal @map("unit_price") @db.Decimal(18, 4)
+  lineTotal       Decimal @map("line_total") @db.Decimal(18, 4)
+  /// Revenue + tax share reversed for this line
+  recognisedAmount Decimal @default(0) @map("recognised_amount") @db.Decimal(18, 4)
+  /// Inventory cost restored / written off
+  cost            Decimal @default(0) @db.Decimal(18, 4)
+  /// saleable | damaged | quarantine
+  condition       String  @default("saleable")
+  /// When true, stock is received into the return warehouse; false → write-off only
+  restock         Boolean @default(true)
+  stockMovementId String? @map("stock_movement_id")
+  notes           String? @db.Text
+
+  returnRow   SalesReturn      @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  invoiceItem SalesInvoiceItem @relation(fields: [invoiceItemId], references: [id], onDelete: Restrict)
+
+  @@index([returnId])
+  @@index([invoiceItemId])
+  @@map("sales_return_items")
 }
 
 model CustomerPayment {
@@ -1967,12 +2151,20 @@ model DeliveryOrder {
   addressLine1   String?   @map("address_line1")
   city           String?
   notes          String?   @db.Text
+  /// Warehouse fulfilment this delivery carries (sales orders in delivery mode); delivering it posts the sale
+  fulfilmentId   String?   @unique @map("fulfilment_id")
+  /// Proof of delivery
+  receivedBy     String?   @map("received_by")
+  podReference   String?   @map("pod_reference")
+  podNotes       String?   @map("pod_notes") @db.Text
+  deliveredById  String?   @map("delivered_by_id")
   createdById    String?   @map("created_by_id")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
 
   business     Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
   salesInvoice SalesInvoice?       @relation(fields: [salesInvoiceId], references: [id], onDelete: SetNull)
+  fulfilment   SalesFulfilment?    @relation(fields: [fulfilmentId], references: [id], onDelete: SetNull)
   customer     Customer            @relation(fields: [customerId], references: [id])
   warehouse    Warehouse           @relation(fields: [warehouseId], references: [id])
   branch       Branch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)

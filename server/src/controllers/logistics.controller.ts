@@ -83,7 +83,7 @@ export async function dispatchDelivery(req: Request, res: Response, next: NextFu
 
 export async function markDelivered(req: Request, res: Response, next: NextFunction) {
   try {
-    return res.json(await logisticsService.markDelivered(req.user!, req.params.id));
+    return res.json(await logisticsService.markDelivered(req.user!, req.params.id, req.body || {}));
   } catch (err) {
     return next(err);
   }

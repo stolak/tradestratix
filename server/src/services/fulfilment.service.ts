@@ -246,13 +246,45 @@ export function fulfilmentStatusOf(items: { quantity: Num; fulfilledQuantity: Nu
   return allDone ? 'fulfilled' : anyDone ? 'partial' : 'pending';
 }
 
-type FulfilRequest = { invoiceItemId: string; quantity: number };
-type FulfilMeta = {
+export type FulfilRequest = { invoiceItemId: string; quantity: number };
+export type FulfilMeta = {
   collectedBy?: string | null;
   collectorPhone?: string | null;
+  collectorRelation?: string | null;
+  idType?: string | null;
   idReference?: string | null;
+  verificationMethod?: string | null;
+  acknowledged?: boolean;
+  signatureName?: string | null;
+  proofReference?: string | null;
   notes?: string | null;
+  /** Post an existing warehouse fulfilment (picked task) instead of creating a new record. */
+  existingFulfilmentId?: string | null;
+  fulfilmentType?: 'pickup' | 'delivery';
+  /** Final status of the record: released (handed over at the counter / warehouse) or delivered. */
+  finalStatus?: 'released' | 'delivered';
 };
+
+/** Keep only the last 4 characters of an identity document number. */
+export function maskIdReference(v: unknown) {
+  const s = String(v ?? '').replace(/\s+/g, '');
+  if (!s) return null;
+  return s.length <= 4 ? s : `••••${s.slice(-4)}`;
+}
+
+function headerMeta(meta: FulfilMeta) {
+  return {
+    collectedBy: meta.collectedBy || null,
+    collectorPhone: meta.collectorPhone || null,
+    collectorRelation: meta.collectorRelation || null,
+    idType: meta.idType || null,
+    idReference: maskIdReference(meta.idReference),
+    verificationMethod: meta.verificationMethod || null,
+    acknowledged: Boolean(meta.acknowledged),
+    signatureName: meta.signatureName || null,
+    proofReference: meta.proofReference || null
+  };
+}
 
 /**
  * Hand over goods from one warehouse: issue the reserved lots, recognise revenue/AR for the handed-over
@@ -274,23 +306,49 @@ export async function fulfilInTx(
   });
   if (!warehouse) throw httpError(400, 'Invalid warehouse_id');
 
-  const fulfilmentId = shortId('ful');
-  const fulfilmentNumber = await nextDocNumber(tx.salesFulfilment, user.businessId, 'fulfilmentNumber', 'FUL', 5);
-  await tx.salesFulfilment.create({
-    data: {
-      id: fulfilmentId,
-      businessId: user.businessId,
-      fulfilmentNumber,
-      invoiceId: invoice.id,
-      warehouseId: warehouse.id,
-      branchId: warehouse.branchId,
-      collectedBy: meta.collectedBy || null,
-      collectorPhone: meta.collectorPhone || null,
-      idReference: meta.idReference || null,
-      notes: meta.notes || null,
-      fulfilledById: user.id
+  const finalStatus = meta.finalStatus || 'released';
+  let fulfilmentId: string;
+  let fulfilmentNumber: string;
+  if (meta.existingFulfilmentId) {
+    const existing = await tx.salesFulfilment.findFirst({
+      where: { id: meta.existingFulfilmentId, businessId: user.businessId, invoiceId: invoice.id, warehouseId: warehouse.id }
+    });
+    if (!existing) throw httpError(404, 'Fulfilment not found for this order and warehouse');
+    if (['released', 'delivered', 'cancelled', 'discrepancy'].includes(existing.status)) {
+      throw httpError(400, `${existing.fulfilmentNumber} is already ${existing.status}`);
     }
-  });
+    fulfilmentId = existing.id;
+    fulfilmentNumber = existing.fulfilmentNumber;
+    await tx.salesFulfilment.update({
+      where: { id: fulfilmentId },
+      data: {
+        ...headerMeta(meta),
+        status: finalStatus,
+        notes: meta.notes ?? existing.notes,
+        fulfilledById: user.id,
+        fulfilledAt: new Date(),
+        ...(finalStatus === 'delivered' ? { deliveredAt: new Date() } : {})
+      }
+    });
+  } else {
+    fulfilmentId = shortId('ful');
+    fulfilmentNumber = await nextDocNumber(tx.salesFulfilment, user.businessId, 'fulfilmentNumber', 'FUL', 5);
+    await tx.salesFulfilment.create({
+      data: {
+        id: fulfilmentId,
+        businessId: user.businessId,
+        fulfilmentNumber,
+        invoiceId: invoice.id,
+        warehouseId: warehouse.id,
+        branchId: warehouse.branchId,
+        fulfilmentType: meta.fulfilmentType || 'pickup',
+        status: finalStatus,
+        ...headerMeta(meta),
+        notes: meta.notes || null,
+        fulfilledById: user.id
+      }
+    });
+  }
 
   const recognising = invoice.recognitionPolicy === 'at_fulfilment';
   const itemsById = new Map(invoice.items.map((i) => [i.id, i]));
@@ -374,17 +432,29 @@ export async function fulfilInTx(
       lineRecognised = roundMoney(Math.max(0, target - n(line.recognisedAmount)));
     }
 
-    await tx.salesFulfilmentItem.create({
-      data: {
-        id: shortId('sfi'),
-        fulfilmentId,
-        invoiceItemId: line.id,
-        quantity: toDec(qty),
-        baseQuantity: toDec(baseQty),
-        cost: toDec(lineCost),
-        recognisedAmount: toDec(lineRecognised)
-      }
-    });
+    const itemData = {
+      quantity: toDec(qty),
+      baseQuantity: toDec(baseQty),
+      cost: toDec(lineCost),
+      recognisedAmount: toDec(lineRecognised)
+    };
+    const taskItem = meta.existingFulfilmentId
+      ? await tx.salesFulfilmentItem.findFirst({ where: { fulfilmentId, invoiceItemId: line.id } })
+      : null;
+    if (taskItem) {
+      await tx.salesFulfilmentItem.update({ where: { id: taskItem.id }, data: itemData });
+    } else {
+      await tx.salesFulfilmentItem.create({
+        data: {
+          id: shortId('sfi'),
+          fulfilmentId,
+          invoiceItemId: line.id,
+          plannedQuantity: toDec(qty),
+          pickedQuantity: toDec(qty),
+          ...itemData
+        }
+      });
+    }
     const current = await tx.salesInvoiceItem.findUniqueOrThrow({ where: { id: line.id } });
     await tx.salesInvoiceItem.update({
       where: { id: line.id },
@@ -712,6 +782,9 @@ export async function listPendingPickups(user: AuthUser, opts: { warehouseId?: s
         balance: inv.balance,
         amountDue: roundMoney(n(inv.totalAmount) - n(inv.cancelledAmount) - n(inv.amountPaid)),
         fulfilmentStatus: inv.fulfilmentStatus,
+        fulfilmentMode: inv.fulfilmentMode,
+        hasPickupCode: Boolean(inv.pickupCode),
+        authorisedCollectors: Array.isArray(inv.authorisedCollectors) ? inv.authorisedCollectors : [],
         reservationExpiresAt: inv.reservationExpiresAt,
         customer: inv.customer,
         sellingBranch: inv.sellingBranch || inv.branch,
@@ -750,97 +823,7 @@ export async function listPendingPickups(user: AuthUser, opts: { warehouseId?: s
   });
 }
 
-export async function fulfilPickup(user: AuthUser, body: Record<string, any>) {
-  const invoiceId = requireString(body.invoice_id || body.invoiceId, 'invoice_id');
-  const warehouseId = requireString(body.warehouse_id || body.warehouseId, 'warehouse_id');
-  const itemsInput: any[] = Array.isArray(body.items) ? body.items : [];
-
-  const warehouse = await prisma.warehouse.findFirst({
-    where: { id: warehouseId, businessId: user.businessId, isActive: true }
-  });
-  if (!warehouse) throw httpError(400, 'Invalid warehouse_id');
-  await branchAccess.assertBranchMembership(user, warehouse.branchId);
-  await branchAccess.assertBranchActive(user.businessId, warehouse.branchId);
-
-  const requests: FulfilRequest[] = itemsInput.map((i, idx) => {
-    const invoiceItemId = i.invoice_item_id || i.invoiceItemId;
-    if (!invoiceItemId) throw httpError(400, `items[${idx}].invoice_item_id is required`);
-    const quantity = Number(i.quantity);
-    if (!Number.isFinite(quantity) || quantity < 0) throw httpError(400, `items[${idx}].quantity is invalid`);
-    return { invoiceItemId, quantity };
-  });
-
-  const result = await prisma.$transaction(
-    async (tx) => {
-      await lockInvoices(tx, [invoiceId]);
-      const invoice = await invoiceForFulfilment(tx, user.businessId, invoiceId);
-      if (!invoice) throw httpError(404, 'Invoice not found');
-      if (invoice.status !== 'posted') throw httpError(400, 'Only confirmed invoices can be fulfilled');
-      if (invoice.fulfilmentStatus === 'fulfilled') {
-        throw httpError(400, 'This invoice has already been fully collected');
-      }
-      return fulfilInTx(tx, user, invoice, warehouse.id, requests, {
-        collectedBy: body.collected_by || body.collectedBy,
-        collectorPhone: body.collector_phone || body.collectorPhone,
-        idReference: body.id_reference || body.idReference,
-        notes: body.notes
-      });
-    },
-    { timeout: 30000, maxWait: 10000 }
-  );
-
-  await writeAudit({
-    user,
-    action: 'fulfil',
-    module: 'sales',
-    entityType: 'SalesFulfilment',
-    entityId: result.id,
-    summary: `Released goods ${result.fulfilmentNumber} for invoice ${invoiceId}`
-  });
-
-  return getFulfilment(user, result.id);
-}
-
-export async function getFulfilment(user: AuthUser, id: string) {
-  const row = await prisma.salesFulfilment.findFirst({
-    where: { id, businessId: user.businessId },
-    include: {
-      warehouse: { select: { id: true, name: true, code: true } },
-      branch: { select: { id: true, name: true, code: true } },
-      invoice: {
-        select: {
-          id: true,
-          invoiceNumber: true,
-          invoiceDate: true,
-          fulfilmentStatus: true,
-          customer: { select: { id: true, name: true, phone: true } }
-        }
-      },
-      items: {
-        select: {
-          id: true,
-          quantity: true,
-          baseQuantity: true,
-          invoiceItem: {
-            select: {
-              id: true,
-              product: { select: { id: true, name: true, sku: true } },
-              uom: { select: { id: true, code: true } }
-            }
-          }
-        }
-      }
-    }
-  });
-  if (!row) throw httpError(404, 'Fulfilment not found');
-  const allowed = await authorisedWarehouseIds(user);
-  if (!allowed.has(row.warehouseId) && !branchAccess.canAccessAllBranches(user)) {
-    throw httpError(403, 'You do not have access to that warehouse');
-  }
-  return serialize(row);
-}
-
-/** Recent releases from warehouses in the user's branches. */
+/** Recent hand-overs (released or delivered) from warehouses in the user's branches. */
 export async function listFulfilments(user: AuthUser, opts: { warehouseId?: string } = {}) {
   const allowed = await authorisedWarehouseIds(user);
   if (opts.warehouseId && !allowed.has(opts.warehouseId)) {
@@ -849,7 +832,8 @@ export async function listFulfilments(user: AuthUser, opts: { warehouseId?: stri
   const rows = await prisma.salesFulfilment.findMany({
     where: {
       businessId: user.businessId,
-      warehouseId: opts.warehouseId ? opts.warehouseId : { in: [...allowed] }
+      warehouseId: opts.warehouseId ? opts.warehouseId : { in: [...allowed] },
+      status: { in: ['released', 'delivered'] }
     },
     include: {
       warehouse: { select: { id: true, name: true, code: true } },

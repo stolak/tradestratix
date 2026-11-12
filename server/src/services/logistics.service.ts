@@ -3,6 +3,7 @@ import { httpError, nextDocNumber, requireString, serialize, shortId, toDec } fr
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
+import * as warehouseFulfilment from './warehouse-fulfilment.service.js';
 
 const vehicleInclude = {
   driver: { select: { id: true, fullName: true, code: true, phone: true } }
@@ -14,6 +15,7 @@ const deliveryInclude = {
   branch: { select: { id: true, name: true, code: true } },
   vehicle: { select: { id: true, name: true, plateNumber: true, code: true } },
   salesInvoice: { select: { id: true, invoiceNumber: true, status: true } },
+  fulfilment: { select: { id: true, fulfilmentNumber: true, status: true } },
   items: {
     include: {
       product: { select: { id: true, name: true, sku: true } },
@@ -339,6 +341,10 @@ export async function scheduleDelivery(user: AuthUser, id: string, body: Record<
 
 export async function dispatchDelivery(user: AuthUser, id: string, body: Record<string, any> = {}) {
   const delivery = await getDeliveryOrThrow(user.businessId, id);
+  if (delivery.fulfilmentId) {
+    await warehouseFulfilment.dispatchTask(user, delivery.fulfilmentId, body);
+    return getDelivery(user.businessId, id);
+  }
   if (!['draft', 'scheduled'].includes(delivery.status)) {
     throw httpError(400, 'Only draft or scheduled deliveries can be dispatched');
   }
@@ -380,8 +386,12 @@ export async function dispatchDelivery(user: AuthUser, id: string, body: Record<
   return serialize(updated);
 }
 
-export async function markDelivered(user: AuthUser, id: string) {
+export async function markDelivered(user: AuthUser, id: string, body: Record<string, any> = {}) {
   const delivery = await getDeliveryOrThrow(user.businessId, id);
+  if (delivery.fulfilmentId) {
+    await warehouseFulfilment.deliverTask(user, delivery.fulfilmentId, body);
+    return getDelivery(user.businessId, id);
+  }
   if (!['dispatched', 'scheduled'].includes(delivery.status)) {
     throw httpError(400, 'Only dispatched or scheduled deliveries can be marked delivered');
   }
@@ -391,6 +401,10 @@ export async function markDelivered(user: AuthUser, id: string) {
     data: {
       status: 'delivered',
       deliveredAt: new Date(),
+      deliveredById: user.id,
+      receivedBy: body.received_by || body.receivedBy || null,
+      podReference: body.pod_reference || body.podReference || null,
+      podNotes: body.pod_notes || body.podNotes || null,
       ...(delivery.dispatchedAt ? {} : { dispatchedAt: new Date() })
     },
     include: deliveryInclude
@@ -412,6 +426,10 @@ export async function cancelDelivery(user: AuthUser, id: string, body: Record<st
   const delivery = await getDeliveryOrThrow(user.businessId, id);
   if (['delivered', 'cancelled'].includes(delivery.status)) {
     throw httpError(400, `Cannot cancel a ${delivery.status} delivery`);
+  }
+  if (delivery.fulfilmentId) {
+    // Goods come back to the warehouse: the order keeps its reservation and can be picked again.
+    await warehouseFulfilment.returnDispatched(user, delivery.fulfilmentId, body.notes || 'Delivery cancelled');
   }
 
   const updated = await prisma.deliveryOrder.update({

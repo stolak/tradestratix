@@ -217,7 +217,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
     permissions: [
       'dashboard.view',
       'sales.*',
-      'fulfilment.reallocate',
+      'fulfilment.*',
       'pos.*',
       'products.branch_price',
       'purchases.view',
@@ -264,7 +264,8 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'products.view',
       'products.edit',
       'sales.fulfil',
-      'fulfilment.reallocate',
+      'sales.return',
+      'fulfilment.*',
       'inventory.*',
       'warehouses.*',
       'purchases.view',
@@ -282,6 +283,8 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
     permissions: [
       'dashboard.view',
       'sales.fulfil',
+      'sales.return',
+      'fulfilment.pick',
       'products.view',
       'inventory.view',
       'inventory.create',
@@ -379,6 +382,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'sales.create',
       'sales.print',
       'sales.fulfil',
+      'sales.return',
       'customers.view',
       'products.view',
       'warehouses.view',
@@ -496,12 +500,13 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
     ]
   },
   delivery_officer: {
-    menus: ['dashboard', 'distribution', 'sales', 'customers'],
+    menus: ['dashboard', 'distribution', 'pickups', 'sales', 'customers'],
     permissions: [
       'dashboard.view',
       'distribution.view',
       'distribution.edit',
       'distribution.post',
+      'fulfilment.dispatch',
       'sales.view',
       'customers.view',
       'notifications.view'
@@ -613,9 +618,34 @@ async function main() {
       description: 'Confirm an order beyond the customer credit limit (reason recorded)'
     },
     {
+      module: 'sales',
+      action: 'return',
+      description: 'Create and post sales returns (restock, credit note or refund) at any authorised branch'
+    },
+    {
+      module: 'sales',
+      action: 'refund',
+      description: 'Refund unapplied customer credit as cash or bank'
+    },
+    {
       module: 'fulfilment',
       action: 'reallocate',
       description: 'Move order reservations between warehouses, allocate backorders and run reservation expiry'
+    },
+    {
+      module: 'fulfilment',
+      action: 'pick',
+      description: 'Open picking lists and record picked, missing and damaged quantities in your warehouses'
+    },
+    {
+      module: 'fulfilment',
+      action: 'dispatch',
+      description: 'Dispatch picked delivery orders and confirm delivery with proof of delivery'
+    },
+    {
+      module: 'fulfilment',
+      action: 'override_pickup_code',
+      description: 'Release goods without the customer pickup code (reason recorded)'
     },
     {
       module: 'sales',

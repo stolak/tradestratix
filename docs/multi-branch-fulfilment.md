@@ -1,7 +1,7 @@
 # Multi-branch sales fulfilment
 
-Status: **Phases 1–2 implemented** (order lifecycle, split-line allocation, reservations, revenue at hand-over,
-deposits, credit exposure, cross-branch receipts). Later phases are listed at the end.
+Status: **Phases 1–4 implemented** (order lifecycle, allocation, reservations, revenue at hand-over, warehouse
+picking / pickup codes / delivery with POD, sales returns and customer credit). Later phases are listed at the end.
 
 ## Concepts
 
@@ -194,10 +194,41 @@ covering: same-branch pickup, cross-branch pickup with deposit and branch restri
 and backorder, close short with deposit release, full cancellation, reallocation, credit exposure and override,
 concurrent reservations, expiry, cross-branch receipt with idempotency, POS regression, clearing nets to zero.
 
+## Warehouse fulfilment (Phase 3)
+
+Warehouse tasks (`SalesFulfilment`) are separate from reservations. **Reserved** means active `SalesReservation`
+rows; a fulfilment record is created when picking starts.
+
+Statuses: `picking` → `ready_for_collection` (pickup) or `picked` → `dispatched` → `delivered` (delivery), or
+`released` (collection). Short/damaged pick lines become `discrepancy` and release the reservation.
+Accounting still posts only on release / deliver via `fulfilInTx`.
+
+Pickup orders get a 6-digit `pickupCode` at confirmation (hidden from warehouse list views). Five wrong entries
+lock the code until the selling/revenue branch reissues it (`POST /invoices/:id/pickup-code`). Collection records
+collector details and acknowledgement. Delivery creates a linked `DeliveryOrder` and requires proof of delivery
+(`received_by`) before stock and revenue post.
+
+APIs: `POST /fulfilments/picking`, `…/:id/pick`, `…/:id/release`, `…/:id/dispatch`, `…/:id/deliver`,
+`GET /fulfilments/dashboard`. UI: **Pickups** page.
+
+## Sales returns and customer credit (Phase 4)
+
+`SalesReturn` / `SalesReturnItem` reverse goods already handed over (`returnedQuantity` ≤ `fulfilledQuantity`).
+
+* Receiving warehouse may be any authorised branch (including a different branch from the sale).
+* Saleable / quarantine restock into matching warehouse categories; damaged restock requires a `damaged`
+  warehouse, otherwise the cost is written off (`inventory_write_off`).
+* Posting: Dr `sales_returns` + tax, Cr AR in the **revenue** branch; inventory / COGS reverse with clearing when
+  the receiving branch differs. Commission base is reduced.
+* Settlement: `credit_note` moves overpayment to unapplied customer credit; `refund` pays cash/bank.
+* Legacy `on_posting` invoices can be corrected with returns (cancel-order is still blocked for them).
+
+Unapplied credit: `GET /sales/customers/:id/credit`, `POST /sales/credits/apply`, `POST /sales/credits/refund`
+(`sales.refund`). Sales page: Returns tab, **Return goods** on the invoice, Apply / Refund credit on Payments.
+
 ## Not yet implemented (later phases)
 
-* Picking / packing states, pickup codes, delivery with proof of delivery and discrepancies.
-* Returns to any branch and credit notes (also needed to reverse legacy `on_posting` invoices).
-* Refund of unapplied customer credit and applying it to other invoices from the UI.
-* Inter-branch clearing reconciliation and fulfilment reports; order amendment after confirmation.
+* Inter-branch clearing reconciliation and fulfilment / consolidated reports.
+* Order amendment after confirmation (qty / warehouse changes without cancel + re-order).
 * Serial-number reservation (serial tracking does not exist yet).
+* Photo / file attachments for proof of delivery (string reference only today).

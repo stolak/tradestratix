@@ -60,6 +60,6 @@ export async function listOpenDeliveries(businessId: string) {
   return serialize(rows);
 }
 
-export async function deliverMobile(user: AuthUser, id: string) {
-  return markDelivered(user, id);
+export async function deliverMobile(user: AuthUser, id: string, body: Record<string, any> = {}) {
+  return markDelivered(user, id, body);
 }

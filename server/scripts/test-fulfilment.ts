@@ -14,6 +14,11 @@ import { createStockMovement } from '../src/services/inventory.service.js';
 import * as sales from '../src/services/sales.service.js';
 import * as orders from '../src/services/sales-order.service.js';
 import * as fulfilment from '../src/services/fulfilment.service.js';
+import * as wf from '../src/services/warehouse-fulfilment.service.js';
+import * as logistics from '../src/services/logistics.service.js';
+import { reissuePickupCode } from '../src/services/pickup-code.service.js';
+import * as returns from '../src/services/sales-return.service.js';
+import * as customerPayment from '../src/services/customer-payment.service.js';
 import { getDefaultAccountMap } from '../src/services/accounting.service.js';
 import { shortId } from '../src/utils/helpers.js';
 
@@ -135,12 +140,21 @@ async function main() {
   assert(r1.status === 'posted' && num(r1.recognisedAmount) === 0 && num(r1.balance) === 0, 'confirmed with no revenue and no receivable');
   assert(!r1.journalEntryId, 'no revenue journal at confirmation');
   assert((await freeIn(IKEJA.id)) === 2, 'IKEJA free stock drops from 5 to 2 (reserved)');
-  const ful1: any = await fulfilment.fulfilPickup(br2, {
+  assert(/^\d{6}$/.test(String(r1.pickupCode)), 'pickup order receives a 6-digit pickup code');
+  const listed: any = await sales.getInvoice(br2, inv1.id);
+  assert(listed.pickup_code === r1.pickupCode, 'selling branch sees the pickup code');
+  const release1 = {
     invoice_id: inv1.id,
     warehouse_id: IKEJA.id,
     items: [{ invoice_item_id: r1.items[0].id, quantity: 3 }],
-    collected_by: 'Test Collector'
-  });
+    collected_by: 'Test Collector',
+    acknowledged: true
+  };
+  await expectError(() => wf.quickRelease(br2, { ...release1, pickup_code: '000000' === r1.pickupCode ? '111111' : '000000' }), 400, 'wrong pickup code refused');
+  await expectError(() => wf.quickRelease(br2, { ...release1, pickup_code: r1.pickupCode, acknowledged: false }), 400, 'release without acknowledgement refused');
+  const ful1: any = await wf.quickRelease(br2, { ...release1, pickup_code: r1.pickupCode });
+  const checks1 = await prisma.pickupVerification.findMany({ where: { invoiceId: inv1.id }, orderBy: { createdAt: 'asc' } });
+  assert(checks1.some((c) => c.result === 'failed') && checks1.some((c) => c.result === 'success'), 'failed and successful code checks are recorded');
   r1 = await reload(inv1.id);
   assert(num(r1.recognisedAmount) === 300 && num(r1.balance) === 300, 'hand-over recognises 300 and raises AR 300');
   assert(r1.fulfilmentStatus === 'fulfilled', 'order fully fulfilled');
@@ -168,21 +182,44 @@ async function main() {
   if (hqOfficer) {
     await expectError(
       () =>
-        fulfilment.fulfilPickup(asUser(hqOfficer, HQ.id), {
+        wf.quickRelease(asUser(hqOfficer, HQ.id), {
           invoice_id: inv1.id,
           warehouse_id: IKEJA.id,
-          items: [{ invoice_item_id: r1.items[0].id, quantity: 1 }]
+          items: [{ invoice_item_id: r1.items[0].id, quantity: 1 }],
+          collected_by: 'x',
+          acknowledged: true
         }),
       403,
       'HQ-only officer cannot release from IKEJA'
     );
+    await expectError(
+      () =>
+        wf.quickRelease(asUser(hqOfficer, HQ.id), {
+          invoice_id: inv2.id,
+          warehouse_id: MAIN.id,
+          items: [{ invoice_item_id: r2.items[0].id, quantity: 1 }],
+          collected_by: 'x',
+          acknowledged: true,
+          override_reason: 'Customer lost code'
+        }),
+      403,
+      'officer without override permission cannot skip the pickup code'
+    );
   }
   const releaser = hqOfficer ? asUser(hqOfficer, HQ.id) : ownerAt(HQ.id);
-  const ful2: any = await fulfilment.fulfilPickup(releaser, {
+  const ful2: any = await wf.quickRelease(releaser, {
     invoice_id: inv2.id,
     warehouse_id: MAIN.id,
-    items: [{ invoice_item_id: r2.items[0].id, quantity: 2 }]
+    items: [{ invoice_item_id: r2.items[0].id, quantity: 2 }],
+    pickup_code: r2.pickupCode,
+    collected_by: 'Driver for customer',
+    collector_relation: 'other',
+    id_type: 'national_id',
+    id_reference: 'A1234567',
+    acknowledged: true
   });
+  const f2 = await prisma.salesFulfilment.findUniqueOrThrow({ where: { id: ful2.id } });
+  assert(f2.idReference === '••••4567' && f2.verificationMethod === 'code', 'only the last 4 ID characters are stored; verified by code');
   r2 = await reload(inv2.id);
   assert(num(r2.recognisedAmount) === 200 && num(r2.depositHeld) === 200 && num(r2.balance) === 0, 'collecting 2 recognises 200 settled from the deposit');
   assert(r2.fulfilmentStatus === 'partial', 'order partially fulfilled');
@@ -314,6 +351,187 @@ async function main() {
   });
   assert(replay.id === pay.id, 'replaying the same idempotency key returns the original payment');
 
+  // Warehouse picking → ready → partial collection (split) → code lock-out / reissue.
+  console.log('\nPicking and collection');
+  await receive(MAIN.id, 20);
+  const invP = await order(hq, { warehouse_id: MAIN.id, fulfilment_mode: 'pickup', items: [{ quantity: 6, allocations: [{ warehouse_id: MAIN.id, quantity: 6 }] }] });
+  await sales.postInvoice(hq, invP.id);
+  let rP = await reload(invP.id);
+  const lineP = rP.items[0].id;
+  const task: any = await wf.startPicking(hq, { invoice_id: invP.id, warehouse_id: MAIN.id });
+  assert(task.status === 'picking' && num(task.items[0].planned_quantity) === 6, 'picking list opened for 6');
+  assert(task.invoice.pickup_code === undefined && task.invoice.has_pickup_code === true, 'warehouse view hides the pickup code');
+  await expectError(() => wf.startPicking(hq, { invoice_id: invP.id, warehouse_id: MAIN.id }), 400, 'second picking list for the same goods refused');
+  await expectError(
+    () => wf.quickRelease(hq, { invoice_id: invP.id, warehouse_id: MAIN.id, items: [{ invoice_item_id: lineP, quantity: 1 }], pickup_code: rP.pickupCode, collected_by: 'x', acknowledged: true }),
+    400,
+    'goods on a picking list cannot be released directly'
+  );
+  const picked: any = await wf.confirmPicking(hq, task.id, { items: [{ invoice_item_id: lineP, picked_quantity: 4, damaged_quantity: 1 }] });
+  assert(picked.status === 'ready_for_collection', 'picked goods ready for collection');
+  assert(num(picked.items[0].short_quantity) === 1 && num(picked.items[0].damaged_quantity) === 1, 'discrepancy recorded: 1 missing, 1 damaged');
+  const resP = await prisma.salesReservation.findMany({ where: { invoiceItemId: lineP } });
+  assert(resP.reduce((s, r) => s + Number(r.quantity) - Number(r.releasedQuantity) - Number(r.fulfilledQuantity), 0) === 4, '2 released from the reservation as a discrepancy, 4 still reserved');
+  assert(resP.some((r) => r.releaseReason === 'discrepancy'), 'release reason "discrepancy"');
+  rP = await reload(invP.id);
+  assert(num(rP.recognisedAmount) === 0, 'picking alone recognises nothing');
+  const rel: any = await wf.releaseTask(hq, task.id, {
+    items: [{ invoice_item_id: lineP, quantity: 3 }],
+    pickup_code: rP.pickupCode,
+    collected_by: 'Fulfilment Test Customer',
+    acknowledged: true,
+    signature_name: 'FTC'
+  });
+  assert(rel.status === 'released' && num(rel.items[0].quantity) === 3, 'partial collection of 3 released');
+  rP = await reload(invP.id);
+  assert(num(rP.recognisedAmount) === 300 && rP.fulfilmentStatus === 'partial', 'revenue 300 recognised at hand-over; order partial');
+  const split = await prisma.salesFulfilment.findFirstOrThrow({ where: { splitFromId: task.id }, include: { items: true } });
+  assert(split.status === 'ready_for_collection' && num(split.items[0].pickedQuantity) === 1, 'remaining 1 kept ready on a split record');
+  for (let i = 0; i < 5; i += 1) {
+    await wf.releaseTask(hq, split.id, { pickup_code: 'bad', collected_by: 'x', acknowledged: true }).catch(() => undefined);
+  }
+  await expectError(() => wf.releaseTask(hq, split.id, { pickup_code: rP.pickupCode, collected_by: 'x', acknowledged: true }), 423, 'code locked after 5 wrong entries');
+  const reissued: any = await reissuePickupCode(hq, invP.id, { reason: 'Locked at counter' });
+  await wf.releaseTask(hq, split.id, { pickup_code: reissued.pickup_code, collected_by: 'Fulfilment Test Customer', acknowledged: true });
+  rP = await reload(invP.id);
+  assert(num(rP.recognisedAmount) === 400 && num(rP.items[0].fulfilledQuantity) === 4, 'reissued code releases the balance (4 of 6 collected)');
+  await orders.cancelOrder(hq, invP.id, { reason: 'Damaged/missing units not replaced' });
+  rP = await reload(invP.id);
+  assert(rP.fulfilmentStatus === 'fulfilled' && num(rP.cancelledAmount) === 200, 'discrepancy quantity closed short (200 cancelled)');
+
+  // Delivery: pick → dispatch → proof of delivery posts the sale.
+  console.log('\nDelivery with proof of delivery');
+  const invD = await order(hq, {
+    warehouse_id: MAIN.id,
+    fulfilment_mode: 'delivery',
+    delivery_address: '12 Test Street, Lagos',
+    items: [{ quantity: 3, allocations: [{ warehouse_id: MAIN.id, quantity: 3 }] }]
+  });
+  await sales.postInvoice(hq, invD.id);
+  let rD = await reload(invD.id);
+  assert(rD.fulfilmentMode === 'delivery' && !rD.pickupCode && !rD.reservationExpiresAt, 'delivery order: no pickup code, no hold expiry');
+  const lineD = rD.items[0].id;
+  const tD: any = await wf.startPicking(hq, { invoice_id: invD.id, warehouse_id: MAIN.id });
+  const pD: any = await wf.confirmPicking(hq, tD.id, {});
+  assert(pD.status === 'picked' && pD.delivery_order?.status === 'draft', 'picked for delivery; linked delivery order created');
+  const doId = pD.delivery_order.id;
+  await expectError(() => logistics.markDelivered(hq, doId, { received_by: 'Gate' }), 400, 'cannot deliver before dispatch');
+  await expectError(() => wf.dispatchTask(hq, tD.id, {}), 400, 'dispatch needs a vehicle or driver');
+  await logistics.dispatchDelivery(hq, doId, { driver_name: 'Test Driver' });
+  const dD = await prisma.salesFulfilment.findUniqueOrThrow({ where: { id: tD.id } });
+  assert(dD.status === 'dispatched', 'dispatch from the Distribution page moves the fulfilment to dispatched');
+  rD = await reload(invD.id);
+  assert(num(rD.recognisedAmount) === 0, 'nothing recognised while in transit');
+  await expectError(() => orders.cancelOrder(hq, invD.id, { reason: 'x' }), 400, 'cannot cancel while out for delivery');
+  await expectError(() => logistics.markDelivered(hq, doId, {}), 400, 'proof of delivery requires the receiver');
+  await logistics.markDelivered(hq, doId, { received_by: 'Gate Keeper', pod_reference: 'POD-TEST-1', items: [{ invoice_item_id: lineD, quantity: 2 }] });
+  rD = await reload(invD.id);
+  const delivered = await prisma.deliveryOrder.findUniqueOrThrow({ where: { id: doId } });
+  assert(num(rD.recognisedAmount) === 200 && rD.fulfilmentStatus === 'partial', 'delivered 2 of 3: 200 recognised, order partial');
+  assert(delivered.status === 'delivered' && delivered.receivedBy === 'Gate Keeper' && delivered.podReference === 'POD-TEST-1', 'delivery order holds the proof of delivery');
+  const resD = await prisma.salesReservation.findMany({ where: { invoiceItemId: lineD, status: 'active' } });
+  assert(resD.reduce((s, r) => s + Number(r.quantity) - Number(r.fulfilledQuantity) - Number(r.releasedQuantity), 0) === 1, 'undelivered unit back in the warehouse, still reserved');
+  await orders.cancelOrder(hq, invD.id, { reason: 'Customer refused the last unit' });
+
+  // Returns: same-branch credit note, cross-branch restock, apply credit, over-return refused.
+  console.log('\nSales returns');
+  await receive(MAIN.id, 20);
+  const invR: any = await sales.createInvoice(hq, {
+    customer_id: customerId,
+    branch_id: HQ.id,
+    warehouse_id: MAIN.id,
+    fulfilment_mode: 'immediate',
+    items: [{ product_id: productId, quantity: 5 }],
+    pay_now: true,
+    amount_paid: 500,
+    payment_method: 'cash'
+  });
+  created.invoices.push(invR.id);
+  const lineR = invR.items[0].id;
+  const freeAfterSale = await freeIn(MAIN.id);
+  await expectError(
+    () =>
+      returns.createReturn(hq, {
+        invoice_id: invR.id,
+        warehouse_id: MAIN.id,
+        reason: 'Too many',
+        items: [{ invoice_item_id: lineR, quantity: 6 }]
+      }),
+    400,
+    'cannot return more than handed over'
+  );
+  const draftR: any = await returns.createReturn(hq, {
+    invoice_id: invR.id,
+    warehouse_id: MAIN.id,
+    reason: 'Customer changed mind',
+    settlement: 'credit_note',
+    condition: 'saleable',
+    items: [{ invoice_item_id: lineR, quantity: 2 }]
+  });
+  assert(draftR.status === 'draft' && draftR.return_number, 'draft return created');
+  const postedR: any = await returns.postReturn(hq, draftR.id, { reason: 'Customer changed mind' });
+  assert(postedR.status === 'posted', 'return posted');
+  const rR = await reload(invR.id);
+  assert(num(rR.recognisedAmount) === 300, 'recognised reduced by returned value (500 → 300)');
+  assert(num(rR.items[0].returnedQuantity) === 2, 'line returned quantity = 2');
+  assert(num(postedR.credit_issued) === 200, 'paid invoice return issues 200 customer credit');
+  assert((await freeIn(MAIN.id)) === freeAfterSale + 2, '2 units restocked to MAIN');
+
+  // Cross-branch return: sell at HQ, return into IKEJA (BR2)
+  const invX: any = await sales.createInvoice(hq, {
+    customer_id: customerId,
+    branch_id: HQ.id,
+    warehouse_id: MAIN.id,
+    fulfilment_mode: 'immediate',
+    items: [{ product_id: productId, quantity: 3 }],
+    pay_now: true,
+    amount_paid: 300,
+    payment_method: 'cash'
+  });
+  created.invoices.push(invX.id);
+  const freeIkejaBefore = await freeIn(IKEJA.id);
+  const draftX: any = await returns.createReturn(ownerAt(BR2.id), {
+    invoice_id: invX.id,
+    warehouse_id: IKEJA.id,
+    reason: 'Returned at Ikeja',
+    settlement: 'credit_note',
+    items: [{ invoice_item_id: invX.items[0].id, quantity: 1 }]
+  });
+  const postedX: any = await returns.postReturn(ownerAt(BR2.id), draftX.id, { reason: 'Returned at Ikeja' });
+  assert(postedX.branch_id === BR2.id && postedX.revenue_branch_id === HQ.id, 'return received at BR2, revenue reversed at HQ');
+  assert((await freeIn(IKEJA.id)) === freeIkejaBefore + 1, 'stock restored at IKEJA, not MAIN');
+  const rX = await reload(invX.id);
+  assert(num(rX.recognisedAmount) === 200, 'cross-branch return reduced recognised to 200');
+
+  // Apply unapplied credit to a new open invoice
+  const invPayDraft: any = await sales.createInvoice(hq, {
+    customer_id: customerId,
+    branch_id: HQ.id,
+    warehouse_id: MAIN.id,
+    fulfilment_mode: 'immediate',
+    items: [{ product_id: productId, quantity: 2 }]
+  });
+  created.invoices.push(invPayDraft.id);
+  const invPay: any = await sales.postInvoice(hq, invPayDraft.id);
+  const openBal = num((await reload(invPay.id)).balance);
+  assert(openBal === 200, 'new invoice has AR 200');
+  const credit = await customerPayment.customerUnappliedCredit(businessId, customerId);
+  assert(credit.total >= 200, `customer has unapplied credit (>=200, got ${credit.total})`);
+  const applyAmt = Math.min(200, credit.total);
+  await customerPayment.applyUnappliedCredit(hq, {
+    customerId,
+    allocations: [{ invoiceId: invPay.id, amount: applyAmt }],
+    idempotencyKey: `test-apply-${invPay.id}`
+  });
+  const rPay = await reload(invPay.id);
+  assert(num(rPay.balance) === openBal - applyAmt, 'credit applied to invoice balance');
+  const applyReplay = await customerPayment.applyUnappliedCredit(hq, {
+    customerId,
+    allocations: [{ invoiceId: invPay.id, amount: applyAmt }],
+    idempotencyKey: `test-apply-${invPay.id}`
+  });
+  assert(applyReplay.replayed === true, 'apply credit is idempotent');
+
   // POS regression: counter sale is recognised, paid and handed over at once.
   console.log('\nPOS regression');
   const walkRep = await prisma.salesRep.findFirst({ where: { businessId, status: 'active', employee: { userId: owner.id } } });
@@ -347,8 +565,11 @@ async function cleanup() {
     await prisma.journalEntry.deleteMany({ where: { customerId: created.customerId } });
   }
   if (ids.length) {
+    await prisma.salesReturnItem.deleteMany({ where: { returnRow: { invoiceId: { in: ids } } } });
+    await prisma.salesReturn.deleteMany({ where: { invoiceId: { in: ids } } });
     await prisma.salesCommission.deleteMany({ where: { invoiceId: { in: ids } } });
     await prisma.appNotification.deleteMany({ where: { entityId: { in: ids } } });
+    await prisma.deliveryOrder.deleteMany({ where: { salesInvoiceId: { in: ids } } });
     await prisma.salesInvoice.deleteMany({ where: { id: { in: ids } } });
   }
   if (created.productId) {

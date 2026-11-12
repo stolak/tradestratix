@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { SearchSelect } from '../components/SearchSelect';
 import { InvoiceViewModal } from '../components/InvoiceViewModal';
 
-type Tab = 'invoices' | 'payments';
+type Tab = 'invoices' | 'payments' | 'returns';
 
 type SellPriceOption = {
   id: string;
@@ -49,7 +49,7 @@ type PreviewLine = {
   }[];
 };
 
-type FulfilmentMode = 'immediate' | 'pickup';
+type FulfilmentMode = 'immediate' | 'pickup' | 'delivery';
 
 type FulfilmentOptions = {
   branches: { id: string; name: string; code: string }[];
@@ -61,6 +61,12 @@ const FULFILMENT_LABELS: Record<string, string> = {
   pending: 'To collect',
   partial: 'Part collected',
   fulfilled: 'Collected'
+};
+
+const DELIVERY_LABELS: Record<string, string> = {
+  pending: 'To deliver',
+  partial: 'Part delivered',
+  fulfilled: 'Delivered'
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -154,6 +160,9 @@ export const SalesPage: React.FC = () => {
   const canChooseRevenueBranch = can('sales.revenue_branch');
   const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
   const [fulfilmentMode, setFulfilmentMode] = useState<FulfilmentMode>('immediate');
+  const deferred = fulfilmentMode !== 'immediate';
+  const [delivery, setDelivery] = useState({ address: '', contact: '', phone: '' });
+  const [collectors, setCollectors] = useState('');
   const [revenueBranchId, setRevenueBranchId] = useState('');
   const [fulfilOptions, setFulfilOptions] = useState<FulfilmentOptions>({
     branches: [],
@@ -172,6 +181,7 @@ export const SalesPage: React.FC = () => {
   const [reps, setReps] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
   const [payments, setPayments] = useState<any[]>([]);
+  const [returns, setReturns] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
 
   const [form, setForm] = useState({
@@ -218,7 +228,7 @@ export const SalesPage: React.FC = () => {
   );
   const warehouseOptions = useMemo(
     () =>
-      fulfilmentMode === 'pickup' && allWarehouseOptions.length
+      deferred && allWarehouseOptions.length
         ? allWarehouseOptions
         : warehouses.map((w) => ({ value: w.id, label: `${w.code} — ${w.name}` })),
     [warehouses, fulfilmentMode, allWarehouseOptions]
@@ -234,7 +244,7 @@ export const SalesPage: React.FC = () => {
   const freeStock = (productId: string, warehouseId: string) =>
     fulfilOptions.availability[productId]?.[warehouseId] ?? 0;
   const otherBranchPickup =
-    fulfilmentMode === 'pickup' &&
+    deferred &&
     lines.some((l) => {
       const wh = warehouseById.get(l.warehouse_id || form.warehouse_id);
       return wh && wh.branch?.id !== activeBranchId;
@@ -294,9 +304,9 @@ export const SalesPage: React.FC = () => {
         product_id: l.product_id,
         uom_id: l.uom_id,
         quantity: Number(l.quantity),
-        warehouse_id: fulfilmentMode === 'pickup' && l.warehouse_id ? l.warehouse_id : undefined,
+        warehouse_id: deferred && l.warehouse_id ? l.warehouse_id : undefined,
         allocations:
-          fulfilmentMode === 'pickup' && l.allocations
+          deferred && l.allocations
             ? l.allocations.map((a) => ({ warehouse_id: a.warehouse_id, quantity: Number(a.quantity) || 0 }))
             : undefined
       }));
@@ -384,7 +394,8 @@ export const SalesPage: React.FC = () => {
       api.salesReps.list(activeBranchId || undefined),
       api.sales.invoices(),
       api.sales.payments(),
-      api.salesReps.me()
+      api.salesReps.me(),
+      api.sales.returns()
     ]);
     const value = <T,>(i: number, fallback: T): T =>
       settled[i].status === 'fulfilled' ? ((settled[i] as PromiseFulfilledResult<T>).value as T) : fallback;
@@ -396,6 +407,7 @@ export const SalesPage: React.FC = () => {
     const inv = value<any[]>(4, []);
     const pay = value<any[]>(5, []);
     const meRep = value<any | null>(6, null);
+    const rets = value<any[]>(7, []);
     const resolvedRepId = meRep?.id || user?.sales_rep?.id || '';
     const resolvedIsRep = Boolean(meRep?.id || user?.is_sales_rep || user?.sales_rep?.id);
     setMySalesRep(meRep?.id ? { id: meRep.id } : null);
@@ -408,13 +420,21 @@ export const SalesPage: React.FC = () => {
     setReps(r);
     setInvoices(inv.filter((i: any) => i.channel !== 'pos'));
     setPayments(pay);
+    setReturns(rets);
 
     const failed = settled
       .map((s, i) =>
         s.status === 'rejected'
-          ? ['Customers', 'Warehouses', 'Products', 'Sales reps', 'Invoices', 'Payments', 'My sales rep'][
-              i
-            ]
+          ? [
+              'Customers',
+              'Warehouses',
+              'Products',
+              'Sales reps',
+              'Invoices',
+              'Payments',
+              'My sales rep',
+              'Returns'
+            ][i]
           : null
       )
       .filter(Boolean);
@@ -520,9 +540,9 @@ export const SalesPage: React.FC = () => {
         selling_price_id: l.selling_price_id || undefined,
         quantity: Number(l.quantity),
         unit_price: Number(l.unit_price),
-        warehouse_id: fulfilmentMode === 'pickup' && l.warehouse_id ? l.warehouse_id : undefined,
+        warehouse_id: deferred && l.warehouse_id ? l.warehouse_id : undefined,
         allocations:
-          fulfilmentMode === 'pickup' && l.allocations
+          deferred && l.allocations
             ? l.allocations
                 .map((a) => ({ warehouse_id: a.warehouse_id, quantity: Number(a.quantity) || 0 }))
                 .filter((a) => a.quantity > 0)
@@ -559,6 +579,24 @@ export const SalesPage: React.FC = () => {
         sales_rep_id: form.sales_rep_id || undefined,
         notes: form.notes || undefined,
         fulfilment_mode: fulfilmentMode,
+        ...(fulfilmentMode === 'delivery'
+          ? {
+              delivery_address: delivery.address || undefined,
+              delivery_contact: delivery.contact || undefined,
+              delivery_phone: delivery.phone || undefined
+            }
+          : {}),
+        ...(fulfilmentMode === 'pickup' && collectors.trim()
+          ? {
+              authorised_collectors: collectors
+                .split(';')
+                .map((c) => {
+                  const [name, phone] = c.split(',').map((s) => s.trim());
+                  return { name, phone: phone || undefined };
+                })
+                .filter((c) => c.name)
+            }
+          : {}),
         revenue_branch_id:
           canChooseRevenueBranch && revenueBranchId && revenueBranchId !== activeBranchId
             ? revenueBranchId
@@ -579,17 +617,28 @@ export const SalesPage: React.FC = () => {
   const postInvoice = async (id: string, opts: Record<string, unknown> = {}): Promise<boolean> => {
     try {
       const posted = await api.sales.postInvoice(id, opts);
-      await alertSuccess(
-        posted?.fulfilment_mode === 'pickup' ? 'Order confirmed — stock reserved' : 'Sale confirmed and handed over',
-        posted?.fulfilment_mode === 'pickup'
-          ? 'Revenue, receivable and cost of goods post as the customer collects. Any payment taken now is held as a deposit.'
-          : undefined
-      );
+      if (posted?.fulfilment_mode === 'pickup') {
+        await Swal.fire({
+          icon: 'success',
+          title: 'Order confirmed — stock reserved',
+          html:
+            `Give the customer this pickup code:<div class="pickup-code">${posted.pickup_code || '—'}</div>` +
+            'The warehouse will ask for it at collection. Revenue, receivable and cost of goods post as the customer collects; any payment taken now is held as a deposit.',
+          confirmButtonColor: '#0f5c4c'
+        });
+      } else {
+        await alertSuccess(
+          posted?.fulfilment_mode === 'delivery' ? 'Order confirmed — stock reserved for delivery' : 'Sale confirmed and handed over',
+          posted?.fulfilment_mode === 'delivery'
+            ? 'The warehouse will pick and dispatch it. Revenue posts when delivery is confirmed.'
+            : undefined
+        );
+      }
       await load();
       return true;
     } catch (err: any) {
       const msg = String(err.message || '');
-      const isPickup = invoices.find((i) => i.id === id)?.fulfilment_mode === 'pickup';
+      const isPickup = ['pickup', 'delivery'].includes(invoices.find((i) => i.id === id)?.fulfilment_mode);
       if (/insufficient sellable stock/i.test(msg) && isPickup && !opts.allow_backorder) {
         const r = await Swal.fire({
           icon: 'warning',
@@ -666,6 +715,13 @@ export const SalesPage: React.FC = () => {
         >
           Payments
         </button>
+        <button
+          type="button"
+          className={`btn ${tab === 'returns' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setTab('returns')}
+        >
+          Returns
+        </button>
         <button type="button" className="btn btn-ghost" onClick={() => void load()}>
           Refresh
         </button>
@@ -685,7 +741,8 @@ export const SalesPage: React.FC = () => {
                 {(
                   [
                     ['immediate', 'Collect now'],
-                    ['pickup', 'Pickup later']
+                    ['pickup', 'Pickup later'],
+                    ['delivery', 'Deliver']
                   ] as [FulfilmentMode, string][]
                 ).map(([id, label]) => (
                   <button
@@ -699,9 +756,11 @@ export const SalesPage: React.FC = () => {
                 ))}
               </div>
               <span className="fulfil-mode__hint">
-                {fulfilmentMode === 'pickup'
-                  ? 'Confirming reserves stock — split across warehouses in any branch if needed. Revenue and cost of goods post as each part is collected.'
-                  : 'Goods leave this branch’s warehouses when the sale is confirmed; revenue posts at the same time.'}
+                {fulfilmentMode === 'delivery'
+                  ? 'Confirming reserves stock in any branch. The warehouse picks and dispatches it; revenue and cost of goods post when delivery is confirmed with proof of delivery.'
+                  : deferred
+                    ? 'Confirming reserves stock — split across warehouses in any branch if needed — and issues the customer a pickup code. Revenue and cost of goods post as each part is collected.'
+                    : 'Goods leave this branch’s warehouses when the sale is confirmed; revenue posts at the same time.'}
                 {otherBranchPickup
                   ? ' Some lines are collected from another branch; that branch’s inventory is settled through inter-branch clearing.'
                   : ''}
@@ -745,7 +804,9 @@ export const SalesPage: React.FC = () => {
                 ) : null}
               </div>
               <div className="field">
-                <label>{fulfilmentMode === 'pickup' ? 'Default pickup warehouse' : 'Warehouse'}</label>
+                <label>
+                  {fulfilmentMode === 'delivery' ? 'Ship from warehouse' : deferred ? 'Default pickup warehouse' : 'Warehouse'}
+                </label>
                 <SearchSelect
                   value={form.warehouse_id}
                   options={warehouseOptions}
@@ -819,6 +880,48 @@ export const SalesPage: React.FC = () => {
               </div>
             </div>
 
+            {fulfilmentMode === 'delivery' ? (
+              <div className="form-grid">
+                <div className="field" style={{ gridColumn: 'span 2' }}>
+                  <label>Delivery address</label>
+                  <input
+                    value={delivery.address}
+                    onChange={(e) => setDelivery({ ...delivery, address: e.target.value })}
+                    placeholder={
+                      [selectedCustomer?.address_line1, selectedCustomer?.city].filter(Boolean).join(', ') ||
+                      'Street, area, city'
+                    }
+                  />
+                </div>
+                <div className="field">
+                  <label>Receiving contact</label>
+                  <input
+                    value={delivery.contact}
+                    onChange={(e) => setDelivery({ ...delivery, contact: e.target.value })}
+                    placeholder={selectedCustomer?.name || 'Name'}
+                  />
+                </div>
+                <div className="field">
+                  <label>Contact phone</label>
+                  <input
+                    value={delivery.phone}
+                    onChange={(e) => setDelivery({ ...delivery, phone: e.target.value })}
+                    placeholder={selectedCustomer?.phone || ''}
+                  />
+                </div>
+              </div>
+            ) : null}
+            {fulfilmentMode === 'pickup' ? (
+              <div className="field">
+                <label>Others allowed to collect (optional)</label>
+                <input
+                  value={collectors}
+                  onChange={(e) => setCollectors(e.target.value)}
+                  placeholder="Name, phone; Name, phone"
+                />
+              </div>
+            ) : null}
+
             <div className="line-items">
              <div className="line-items__scroll">
               <table className="line-items__table">
@@ -830,7 +933,7 @@ export const SalesPage: React.FC = () => {
                     <th style={{ width: 100, textAlign: 'center' }}>Qty</th>
                     <th className="num" style={{ width: 130 }}>Unit price</th>
                     <th className="num" style={{ width: 130 }}>Subtotal</th>
-                    {fulfilmentMode === 'pickup' ? <th style={{ width: '22%' }}>Pickup from</th> : null}
+                    {deferred ? <th style={{ width: '22%' }}>Pickup from</th> : null}
                     <th style={{ width: 52 }} />
                   </tr>
                 </thead>
@@ -921,7 +1024,7 @@ export const SalesPage: React.FC = () => {
                             maximumFractionDigits: 2
                           })}
                         </td>
-                        {fulfilmentMode === 'pickup' ? (
+                        {deferred ? (
                           <td>
                             <select
                               value={line.warehouse_id}
@@ -1010,7 +1113,7 @@ export const SalesPage: React.FC = () => {
               </div>
             ) : null}
 
-            {fulfilmentMode === 'pickup' && Object.keys(preview).length ? (
+            {deferred && Object.keys(preview).length ? (
               <div className="alloc">
                 <div className="alloc__head">
                   <span className="alloc__title">Stock allocation</span>
@@ -1164,10 +1267,11 @@ export const SalesPage: React.FC = () => {
                       </td>
                       <td>
                         {inv.status !== 'posted' ? (
-                          inv.fulfilment_mode === 'pickup' ? 'Pickup' : '—'
+                          inv.fulfilment_mode === 'pickup' ? 'Pickup' : inv.fulfilment_mode === 'delivery' ? 'Delivery' : '—'
                         ) : (
                           <span className={`invoice-chip invoice-chip--${inv.fulfilment_status}`}>
-                            {FULFILMENT_LABELS[inv.fulfilment_status] || inv.fulfilment_status}
+                            {(inv.fulfilment_mode === 'delivery' ? DELIVERY_LABELS : FULFILMENT_LABELS)[inv.fulfilment_status] ||
+                              inv.fulfilment_status}
                           </span>
                         )}
                         {inv.branch_id && inv.selling_branch_id && inv.branch_id !== inv.selling_branch_id ? (
@@ -1266,6 +1370,105 @@ export const SalesPage: React.FC = () => {
             <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
               Post payment
             </button>
+            {can('sales.post') || can('sales.refund') ? (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {can('sales.post') ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={async () => {
+                      if (!payForm.customer_id) return;
+                      try {
+                        const credit = await api.sales.customerCredit(payForm.customer_id);
+                        if (!(credit.total > 0)) {
+                          await alertError('No credit', 'This customer has no unapplied credit.');
+                          return;
+                        }
+                        const open = invoices.filter(
+                          (i) =>
+                            i.customer_id === payForm.customer_id &&
+                            i.status === 'posted' &&
+                            Number(i.balance) > 0
+                        );
+                        if (!open.length) {
+                          await alertError('No open invoices', 'Nothing recognised is outstanding for this customer.');
+                          return;
+                        }
+                        const pick = await Swal.fire({
+                          title: `Apply ${Number(credit.total).toLocaleString()} credit`,
+                          input: 'select',
+                          inputOptions: Object.fromEntries(
+                            open.map((i) => [
+                              i.id,
+                              `${i.invoice_number} · balance ${Number(i.balance).toLocaleString()}`
+                            ])
+                          ),
+                          showCancelButton: true,
+                          confirmButtonText: 'Apply to invoice'
+                        });
+                        if (!pick.isConfirmed) return;
+                        const inv = open.find((i) => i.id === pick.value)!;
+                        const apply = Math.min(Number(credit.total), Number(inv.balance));
+                        await api.sales.applyCredit({
+                          customer_id: payForm.customer_id,
+                          allocations: [{ invoice_id: inv.id, amount: apply }]
+                        });
+                        await alertSuccess('Credit applied');
+                        await load();
+                      } catch (err: any) {
+                        await alertError('Apply credit failed', err.message);
+                      }
+                    }}
+                  >
+                    Apply customer credit
+                  </button>
+                ) : null}
+                {can('sales.refund') ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={async () => {
+                      if (!payForm.customer_id) return;
+                      try {
+                        const credit = await api.sales.customerCredit(payForm.customer_id);
+                        if (!(credit.total > 0)) {
+                          await alertError('No credit', 'This customer has no unapplied credit.');
+                          return;
+                        }
+                        const amt = await Swal.fire({
+                          title: 'Refund customer credit',
+                          input: 'number',
+                          inputValue: credit.total,
+                          inputLabel: `Available ${Number(credit.total).toLocaleString()}`,
+                          showCancelButton: true,
+                          confirmButtonText: 'Refund cash'
+                        });
+                        if (!amt.isConfirmed) return;
+                        const defaults = await api.accounting.defaultAccounts();
+                        const cash = defaults.find((d: any) => d.setting_key === 'cash' || d.key === 'cash');
+                        const accountId = cash?.account_id || cash?.accountId;
+                        if (!accountId) {
+                          await alertError('Cash account missing', 'Map a default Cash account first.');
+                          return;
+                        }
+                        await api.sales.refundCredit({
+                          customer_id: payForm.customer_id,
+                          amount: Number(amt.value),
+                          account_id: accountId,
+                          method: 'cash'
+                        });
+                        await alertSuccess('Credit refunded');
+                        await load();
+                      } catch (err: any) {
+                        await alertError('Refund failed', err.message);
+                      }
+                    }}
+                  >
+                    Refund credit
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </form>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
@@ -1310,6 +1513,68 @@ export const SalesPage: React.FC = () => {
             </div>
           </div>
         </>
+      ) : null}
+
+      {tab === 'returns' ? (
+        <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+          <div style={{ padding: '0.75rem 1rem', color: 'var(--muted)' }}>
+            Returns of goods already handed over. Open an invoice and use <strong>Return goods</strong>, or review
+            posted returns below.
+          </div>
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Return #</th>
+                  <th>Invoice</th>
+                  <th>Customer</th>
+                  <th>Warehouse</th>
+                  <th>Status</th>
+                  <th className="num">Amount</th>
+                  <th>Settlement</th>
+                </tr>
+              </thead>
+              <tbody>
+                {returns.length ? (
+                  returns.map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.return_number}</td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn-linkish"
+                          onClick={() => setViewInvoiceId(r.invoice_id || r.invoice?.id)}
+                        >
+                          {r.invoice?.invoice_number || '—'}
+                        </button>
+                      </td>
+                      <td>{r.customer?.name}</td>
+                      <td>
+                        {r.warehouse?.code || r.warehouse?.name}
+                        {r.branch?.name ? ` · ${r.branch.name}` : ''}
+                      </td>
+                      <td>{r.status}</td>
+                      <td className="num">{Number(r.total_amount || 0).toLocaleString()}</td>
+                      <td>
+                        {r.settlement === 'refund'
+                          ? `refund ${Number(r.refund_amount || 0).toLocaleString()}`
+                          : Number(r.credit_issued) > 0
+                            ? `credit ${Number(r.credit_issued).toLocaleString()}`
+                            : r.settlement || '—'}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={7} style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                      No returns yet
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       ) : null}
 
       {viewInvoiceId ? (

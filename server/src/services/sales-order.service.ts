@@ -18,6 +18,7 @@ import {
 import { lockInvoices, paymentStatusFor } from './customer-payment.service.js';
 import { planAllocation, roundQty } from './stock-allocation.service.js';
 import { getInvoice, reservationDays } from './sales.service.js';
+import { cancelTasksInTx, openTaskIds } from './warehouse-fulfilment.service.js';
 
 const EPS = 1e-6;
 const n = (v: unknown) => Number(v || 0);
@@ -39,7 +40,7 @@ async function assertOrderBranch(user: AuthUser, inv: { branchId: string | null;
 export async function previewAllocation(user: AuthUser, body: Record<string, any>) {
   const itemsInput: any[] = Array.isArray(body.items) ? body.items : [];
   if (!itemsInput.length) return serialize({ lines: [] });
-  const immediate = String(body.fulfilment_mode || body.fulfilmentMode || 'immediate') !== 'pickup';
+  const immediate = !['pickup', 'delivery'].includes(String(body.fulfilment_mode || body.fulfilmentMode || 'immediate'));
   const sellingBranchId = await branchAccess.resolveWriteBranchId(
     user,
     body.branch_id || body.branchId || user.activeBranchId
@@ -156,7 +157,6 @@ export async function cancelOrder(user: AuthUser, id: string, body: Record<strin
       await lockInvoices(tx, [id]);
       const invoice = (await invoiceForFulfilment(tx, user.businessId, id))!;
       const inv = await tx.salesInvoice.findUniqueOrThrow({ where: { id } });
-
       const requests: CancelLine[] = linesInput.length
         ? linesInput.map((l, i) => {
             const invoiceItemId = l.invoice_item_id || l.invoiceItemId;
@@ -170,6 +170,13 @@ export async function cancelOrder(user: AuthUser, id: string, body: Record<strin
             invoiceItemId: it.id,
             quantity: roundQty(n(it.quantity) - n(it.fulfilledQuantity) - n(it.cancelledQuantity))
           }));
+
+      const affected = new Set(requests.filter((r) => r.quantity > EPS).map((r) => r.invoiceItemId));
+      const openTasks = await openTaskIds(tx, id, undefined, [...affected]);
+      if (openTasks.some((t) => t.status === 'dispatched')) {
+        throw httpError(400, 'Goods on this order are out for delivery; confirm or return the delivery before cancelling');
+      }
+      await cancelTasksInTx(tx, user.id, openTasks.map((t) => t.id), `Order cancelled: ${reason}`);
 
       const reservations = await activeReservations(tx, invoice.items.map((i) => i.id));
       let cancelledLines = 0;
@@ -327,8 +334,8 @@ export async function reallocateOrder(user: AuthUser, id: string, body: Record<s
   const header = await prisma.salesInvoice.findFirst({ where: { id, businessId: user.businessId } });
   if (!header) throw httpError(404, 'Invoice not found');
   await assertOrderBranch(user, header);
-  if (header.status !== 'posted' || header.fulfilmentMode !== 'pickup') {
-    throw httpError(400, 'Only confirmed pickup orders can be reallocated');
+  if (header.status !== 'posted' || header.fulfilmentMode === 'immediate') {
+    throw httpError(400, 'Only confirmed pickup or delivery orders can be reallocated');
   }
   if (toWarehouseId && toWarehouseId === fromWarehouseId) {
     throw httpError(400, 'Choose a different destination warehouse');
@@ -338,6 +345,11 @@ export async function reallocateOrder(user: AuthUser, id: string, body: Record<s
     async (tx) => {
       await lockInvoices(tx, [id]);
       const invoice = (await invoiceForFulfilment(tx, user.businessId, id))!;
+      const tasks = await openTaskIds(tx, id, fromWarehouseId, itemId ? [itemId] : undefined);
+      if (tasks.some((t) => t.status === 'dispatched')) {
+        throw httpError(400, 'Goods from that warehouse are out for delivery and cannot be reallocated');
+      }
+      await cancelTasksInTx(tx, user.id, tasks.map((t) => t.id), `Reallocated: ${reason}`);
       const targets = invoice.items.filter((i) => !itemId || i.id === itemId);
       if (!targets.length) throw httpError(400, 'Line not found on this order');
       const reservations = (await activeReservations(tx, targets.map((t) => t.id))).filter(
@@ -382,10 +394,10 @@ export async function allocateBackorders(user: AuthUser, id: string) {
   const header = await prisma.salesInvoice.findFirst({ where: { id, businessId: user.businessId } });
   if (!header) throw httpError(404, 'Invoice not found');
   await assertOrderBranch(user, header);
-  if (header.status !== 'posted' || header.fulfilmentMode !== 'pickup') {
-    throw httpError(400, 'Only confirmed pickup orders have backorders');
+  if (header.status !== 'posted' || header.fulfilmentMode === 'immediate') {
+    throw httpError(400, 'Only confirmed pickup or delivery orders have backorders');
   }
-  const days = await reservationDays(user.businessId);
+  const days = header.fulfilmentMode === 'pickup' ? await reservationDays(user.businessId) : 0;
   const plan = await prisma.$transaction(
     async (tx) => {
       await lockInvoices(tx, [id]);
@@ -437,6 +449,9 @@ export async function expireReservations(opts: { businessId?: string; now?: Date
         await lockInvoices(tx, [inv.id]);
         const fresh = await tx.salesInvoice.findUnique({ where: { id: inv.id } });
         if (!fresh?.reservationExpiresAt || fresh.reservationExpiresAt >= now || fresh.status !== 'posted') return 0;
+        const tasks = await openTaskIds(tx, inv.id);
+        if (tasks.some((t) => t.status === 'dispatched')) return 0;
+        await cancelTasksInTx(tx, null, tasks.map((t) => t.id), 'Reservation expired');
         const items = await tx.salesInvoiceItem.findMany({ where: { invoiceId: inv.id }, select: { id: true } });
         const reservations = await activeReservations(tx, items.map((i) => i.id));
         const base = await releaseReservations(tx, null, reservations, 'expired');

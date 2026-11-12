@@ -84,6 +84,18 @@ async function main() {
       });
     }
   }
+
+  // Hand-overs recorded before picking existed: planned = picked = released.
+  const legacyReleases = await prisma.salesFulfilmentItem.count({
+    where: { plannedQuantity: 0, pickedQuantity: 0, quantity: { gt: 0 } }
+  });
+  console.log(`${legacyReleases} released fulfilment line(s) without picking quantities`);
+  if (!dry && legacyReleases) {
+    await prisma.$executeRaw`
+      UPDATE sales_fulfilment_items
+         SET planned_quantity = quantity, picked_quantity = quantity
+       WHERE planned_quantity = 0 AND picked_quantity = 0 AND quantity > 0`;
+  }
   console.log('Done.');
 }
 

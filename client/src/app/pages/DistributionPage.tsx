@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import Swal from 'sweetalert2';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
 
@@ -128,7 +129,25 @@ export const DistributionPage: React.FC = () => {
           driver_name: deliveryForm.driver_name || undefined
         });
       } else if (action === 'deliver') {
-        await api.distribution.deliver(id);
+        const pod = await Swal.fire({
+          title: 'Proof of delivery',
+          html:
+            '<input id="pod-received" class="swal2-input" placeholder="Received by (name)">' +
+            '<input id="pod-ref" class="swal2-input" placeholder="Signed note no. or photo link (optional)">',
+          showCancelButton: true,
+          confirmButtonText: 'Confirm delivered',
+          confirmButtonColor: '#0f5c4c',
+          preConfirm: () => {
+            const received = (document.getElementById('pod-received') as HTMLInputElement)?.value.trim();
+            if (!received) {
+              Swal.showValidationMessage('Enter who received the goods');
+              return false;
+            }
+            return { received_by: received, pod_reference: (document.getElementById('pod-ref') as HTMLInputElement)?.value.trim() || undefined };
+          }
+        });
+        if (!pod.isConfirmed) return;
+        await api.distribution.deliver(id, pod.value as Record<string, unknown>);
       } else {
         await api.distribution.cancel(id);
       }

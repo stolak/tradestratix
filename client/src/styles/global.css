@@ -1602,6 +1602,19 @@ body.modal-open {
   color: var(--danger);
 }
 
+.pickup-code {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-size: 2.2rem;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 12px;
+  padding: 0.6rem 1rem;
+  margin: 0.5rem auto 0.75rem;
+  display: inline-block;
+}
+
 .invoice-chip--active {
   background: var(--brand-soft);
   color: var(--ok);

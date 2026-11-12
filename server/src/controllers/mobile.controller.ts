@@ -19,7 +19,7 @@ export async function listDeliveries(req: Request, res: Response, next: NextFunc
 
 export async function deliver(req: Request, res: Response, next: NextFunction) {
   try {
-    return res.json(await mobileService.deliverMobile(req.user!, req.params.id));
+    return res.json(await mobileService.deliverMobile(req.user!, req.params.id, req.body || {}));
   } catch (err) {
     return next(err);
   }

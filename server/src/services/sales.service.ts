@@ -16,6 +16,7 @@ import { applyPaymentInTx, autoAllocate } from './customer-payment.service.js';
 import * as branchAccess from './branch-access.service.js';
 import { assertSalesRepInBranch } from './sales-rep.service.js';
 import { userHasAnyPermission } from './permission.service.js';
+import { issuePickupCode } from './pickup-code.service.js';
 import { getCustomerExposure } from './customer.service.js';
 import {
   applyDiscount,
@@ -255,10 +256,21 @@ export async function listInvoices(
     include: invoiceInclude,
     orderBy: { createdAt: 'desc' }
   });
-  return serialize(rows.map(presentInvoiceSalesRep));
+  return serialize(rows.map((r) => redactPickupCode(presentInvoiceSalesRep(r))));
 }
 
 /** Throws 403 unless the user can see the selling, revenue or any fulfilling branch of the invoice. */
+/** The pickup code is for the customer; warehouse staff must hear it from the collector. */
+function redactPickupCode<T extends { pickupCode?: string | null }>(row: T): T {
+  return { ...row, pickupCode: null, hasPickupCode: Boolean(row.pickupCode) };
+}
+
+async function canSeePickupCode(user: AuthUser, inv: { branchId: string | null; sellingBranchId: string | null }) {
+  if (branchAccess.canAccessAllBranches(user)) return true;
+  const mine = await branchAccess.listAuthorisedBranchIds(user.id, user.businessId, user.role);
+  return [inv.sellingBranchId, inv.branchId].some((b) => b && mine.includes(b));
+}
+
 export async function assertInvoiceVisible(
   user: AuthUser,
   branchIds: (string | null | undefined)[]
@@ -302,9 +314,20 @@ export async function getInvoice(user: AuthUser, id: string) {
         include: {
           warehouse: { select: { id: true, name: true, code: true } },
           branch: { select: { id: true, name: true, code: true } },
-          items: { select: { invoiceItemId: true, quantity: true, recognisedAmount: true } }
+          items: {
+            select: {
+              invoiceItemId: true,
+              plannedQuantity: true,
+              pickedQuantity: true,
+              shortQuantity: true,
+              damagedQuantity: true,
+              quantity: true,
+              recognisedAmount: true
+            }
+          },
+          deliveryOrder: { select: { id: true, deliveryNumber: true, status: true, receivedBy: true } }
         },
-        orderBy: { fulfilledAt: 'asc' }
+        orderBy: { createdAt: 'asc' }
       }
     }
   });
@@ -316,7 +339,8 @@ export async function getInvoice(user: AuthUser, id: string) {
     ...row.items.map((i) => i.fulfilmentWarehouse?.branch.id),
     ...row.items.flatMap((i) => i.reservations.map((r) => r.warehouse.branch.id))
   ]);
-  return serialize(presentInvoiceSalesRep(row));
+  const presented = presentInvoiceSalesRep(row);
+  return serialize((await canSeePickupCode(user, row)) ? { ...presented, hasPickupCode: Boolean(row.pickupCode) } : redactPickupCode(presented));
 }
 
 export async function createInvoice(user: AuthUser, body: Record<string, any>) {
@@ -347,11 +371,24 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
     branchId = (await branchAccess.assertBranchActive(user.businessId, revenueInput)).id;
   }
 
+  const requestedMode = String(body.fulfilment_mode || body.fulfilmentMode || '').toLowerCase();
   const fulfilmentMode =
-    channel !== 'pos' &&
-    String(body.fulfilment_mode || body.fulfilmentMode || '').toLowerCase() === 'pickup'
-      ? 'pickup'
-      : 'immediate';
+    channel !== 'pos' && (requestedMode === 'pickup' || requestedMode === 'delivery') ? requestedMode : 'immediate';
+  const deliveryAddress =
+    fulfilmentMode === 'delivery'
+      ? String(body.delivery_address || body.deliveryAddress || '').trim() ||
+        [customer.addressLine1, customer.city].filter(Boolean).join(', ')
+      : '';
+  if (fulfilmentMode === 'delivery' && !deliveryAddress) {
+    throw httpError(400, 'delivery_address is required for delivery orders (the customer has no address on file)');
+  }
+  const collectorsInput: any[] = Array.isArray(body.authorised_collectors || body.authorisedCollectors)
+    ? body.authorised_collectors || body.authorisedCollectors
+    : [];
+  const authorisedCollectors = collectorsInput
+    .map((c) => ({ name: String(c?.name || '').trim(), phone: String(c?.phone || '').trim() || null }))
+    .filter((c) => c.name)
+    .slice(0, 10);
 
   const activeWarehouse = async (id: string, label: string) => {
     const wh = await prisma.warehouse.findFirst({
@@ -363,7 +400,7 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
     if (fulfilmentMode === 'immediate' && wh.branchId !== sellingBranchId) {
       throw httpError(
         400,
-        `${label}: goods handed over at the point of sale must come from a warehouse in this branch. Choose "Pickup later" to fulfil from another branch.`
+        `${label}: goods handed over at the point of sale must come from a warehouse in this branch. Choose "Pickup later" or "Deliver" to fulfil from another branch.`
       );
     }
     return wh;
@@ -457,6 +494,12 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
       fulfilmentStatus: 'pending',
       recognitionPolicy: 'at_fulfilment',
       paymentStatus: 'open',
+      deliveryAddress: deliveryAddress || null,
+      deliveryContact:
+        fulfilmentMode === 'delivery' ? body.delivery_contact || body.deliveryContact || customer.name : null,
+      deliveryPhone:
+        fulfilmentMode === 'delivery' ? body.delivery_phone || body.deliveryPhone || customer.phone || null : null,
+      authorisedCollectors: authorisedCollectors.length ? authorisedCollectors : undefined,
       invoiceDate: body.invoice_date || body.invoiceDate
         ? new Date(body.invoice_date || body.invoiceDate)
         : new Date(),
@@ -559,7 +602,7 @@ export async function postInvoice(user: AuthUser, id: string, opts: ConfirmOptio
     if (!accountMap[key]) throw httpError(400, `Default account "${key}" is not configured`);
   }
 
-  const immediate = invoice.fulfilmentMode !== 'pickup';
+  const immediate = invoice.fulfilmentMode === 'immediate';
   const totalAmount = Number(invoice.totalAmount);
   const payNow = Boolean(opts.pay_now) || invoice.channel === 'pos';
   const method = String(opts.payment_method || (payNow ? 'cash' : '')).toLowerCase();
@@ -592,7 +635,7 @@ export async function postInvoice(user: AuthUser, id: string, opts: ConfirmOptio
   }
   const allowBackorder =
     !immediate && (opts.allow_backorder === true || String(opts.allow_backorder) === 'true');
-  const days = immediate ? 0 : await reservationDays(user.businessId);
+  const days = invoice.fulfilmentMode === 'pickup' ? await reservationDays(user.businessId) : 0;
 
   let overridden = false;
   const result = await prisma.$transaction(
@@ -641,6 +684,9 @@ export async function postInvoice(user: AuthUser, id: string, opts: ConfirmOptio
           postedById: user.id
         }
       });
+      if (invoice.fulfilmentMode === 'pickup') {
+        await issuePickupCode(tx, user.businessId, invoice.id);
+      }
 
       if (invoice.salesRepId && invoice.salesRep) {
         const pct = Number(invoice.salesRep.commissionPercent || 0);
@@ -705,7 +751,11 @@ export async function postInvoice(user: AuthUser, id: string, opts: ConfirmOptio
     entityId: id,
     summary:
       `Confirmed ${invoice.invoiceNumber}` +
-      (immediate ? ' (handed over)' : ' (awaiting pickup)') +
+      (immediate
+        ? ' (handed over)'
+        : invoice.fulfilmentMode === 'delivery'
+          ? ' (awaiting delivery)'
+          : ' (awaiting pickup)') +
       (payAmount > 0 ? ` — collected ${payAmount}` : '') +
       (overridden ? ` — credit limit overridden: ${overrideReason}` : '')
   });

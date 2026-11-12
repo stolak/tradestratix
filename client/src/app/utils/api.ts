@@ -392,12 +392,59 @@ export const api = {
       ),
     fulfil: (body: Record<string, unknown>) =>
       request<any>('/sales/fulfilments', { method: 'POST', body: JSON.stringify(body) }),
+    warehouseDashboard: (filter: { warehouse_id?: string; q?: string; status?: string } = {}) => {
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(filter)) if (v) params.set(k, v);
+      const qs = params.toString();
+      return request<{ warehouses: any[]; summary: Record<string, number>; awaiting: any[]; tasks: any[] }>(
+        `/sales/fulfilments/dashboard${qs ? `?${qs}` : ''}`
+      );
+    },
+    fulfilment: (id: string) => request<any>(`/sales/fulfilments/${id}`),
+    startPicking: (body: { invoice_id: string; warehouse_id: string; notes?: string }) =>
+      request<any>('/sales/fulfilments/picking', { method: 'POST', body: JSON.stringify(body) }),
+    confirmPicking: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/sales/fulfilments/${id}/pick`, { method: 'POST', body: JSON.stringify(body) }),
+    releaseFulfilment: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/sales/fulfilments/${id}/release`, { method: 'POST', body: JSON.stringify(body) }),
+    cancelFulfilment: (id: string, reason: string) =>
+      request<any>(`/sales/fulfilments/${id}/cancel`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    dispatchFulfilment: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/sales/fulfilments/${id}/dispatch`, { method: 'POST', body: JSON.stringify(body) }),
+    deliverFulfilment: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/sales/fulfilments/${id}/deliver`, { method: 'POST', body: JSON.stringify(body) }),
+    reissuePickupCode: (id: string, reason: string) =>
+      request<{ pickup_code: string; pickup_code_expires_at: string | null }>(`/sales/invoices/${id}/pickup-code`, {
+        method: 'POST',
+        body: JSON.stringify({ reason })
+      }),
     payments: (customerId?: string) =>
       request<any[]>(
         `/sales/payments${customerId ? `?customer_id=${encodeURIComponent(customerId)}` : ''}`
       ),
     recordPayment: (body: Record<string, unknown>) =>
-      request<any>('/sales/payments', { method: 'POST', body: JSON.stringify(body) })
+      request<any>('/sales/payments', { method: 'POST', body: JSON.stringify(body) }),
+    returnPreview: (invoiceId: string) =>
+      request<any>(`/sales/invoices/${invoiceId}/return-preview`),
+    returns: (filter: { invoice_id?: string; customer_id?: string; status?: string; q?: string } = {}) => {
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(filter)) if (v) params.set(k, v);
+      const qs = params.toString();
+      return request<any[]>(`/sales/returns${qs ? `?${qs}` : ''}`);
+    },
+    getReturn: (id: string) => request<any>(`/sales/returns/${id}`),
+    createReturn: (body: Record<string, unknown>) =>
+      request<any>('/sales/returns', { method: 'POST', body: JSON.stringify(body) }),
+    postReturn: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/sales/returns/${id}/post`, { method: 'POST', body: JSON.stringify(body) }),
+    voidReturn: (id: string, reason: string) =>
+      request<any>(`/sales/returns/${id}/void`, { method: 'POST', body: JSON.stringify({ reason }) }),
+    customerCredit: (customerId: string) =>
+      request<{ total: number; payments: any[] }>(`/sales/customers/${customerId}/credit`),
+    applyCredit: (body: Record<string, unknown>) =>
+      request<any>('/sales/credits/apply', { method: 'POST', body: JSON.stringify(body) }),
+    refundCredit: (body: Record<string, unknown>) =>
+      request<any>('/sales/credits/refund', { method: 'POST', body: JSON.stringify(body) })
   },
   inventory: {
     board: (warehouseId?: string) =>
@@ -498,8 +545,8 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(body)
       }),
-    deliver: (id: string) =>
-      request<any>(`/distribution/deliveries/${id}/deliver`, { method: 'POST', body: '{}' }),
+    deliver: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/distribution/deliveries/${id}/deliver`, { method: 'POST', body: JSON.stringify(body) }),
     cancel: (id: string) =>
       request<any>(`/distribution/deliveries/${id}/cancel`, { method: 'POST', body: '{}' })
   },

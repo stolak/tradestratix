@@ -65,6 +65,23 @@ const FULFILMENT_LABELS: Record<string, string> = {
   fulfilled: 'collected'
 };
 
+const DELIVERY_LABELS: Record<string, string> = {
+  pending: 'to deliver',
+  partial: 'part delivered',
+  fulfilled: 'delivered'
+};
+
+const TASK_LABELS: Record<string, string> = {
+  picking: 'picking',
+  ready_for_collection: 'ready',
+  picked: 'awaiting dispatch',
+  dispatched: 'out for delivery',
+  released: 'collected',
+  delivered: 'delivered',
+  cancelled: 'cancelled',
+  discrepancy: 'discrepancy'
+};
+
 function fmtDate(v: unknown) {
   if (!v) return '—';
   const d = new Date(String(v));
@@ -110,7 +127,8 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
   const items: any[] = invoice?.items || [];
   const allocations: any[] = invoice?.allocations || [];
   const fulfilments: any[] = invoice?.fulfilments || [];
-  const isPickup = invoice?.fulfilment_mode === 'pickup';
+  const isDelivery = invoice?.fulfilment_mode === 'delivery';
+  const isPickup = invoice?.fulfilment_mode === 'pickup' || isDelivery;
   const soldElsewhere =
     invoice?.selling_branch_id && invoice?.branch_id && invoice.selling_branch_id !== invoice.branch_id;
   const discountTotal = items.reduce((sum, it) => {
@@ -147,6 +165,11 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
   const canReallocate = can('fulfilment.reallocate') && isOpenOrder && isPickup && reservedWarehouses.size > 0;
   const canAllocate =
     (can('fulfilment.reallocate') || can('sales.post')) && isOpenOrder && isPickup && backorderedQty > 1e-9;
+  const returnableQty = items.reduce(
+    (s, it) => s + Math.max(0, n(it.fulfilled_quantity) - n(it.returned_quantity)),
+    0
+  );
+  const canReturn = can('sales.return') && returnableQty > 1e-9;
 
   const runAction = async (fn: () => Promise<any>, success: string) => {
     setActing(true);
@@ -220,6 +243,156 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
   const allocateBackorders = () =>
     runAction(() => api.sales.allocateBackorders(invoice.id), 'Backordered quantities reserved');
 
+  const canReissueCode =
+    (can('sales.post') || can('sales.approve')) &&
+    isOpenOrder &&
+    invoice?.fulfilment_mode === 'pickup' &&
+    invoice?.fulfilment_status !== 'fulfilled';
+  const reissueCode = async () => {
+    const r = await Swal.fire({
+      title: 'Reissue pickup code?',
+      text: 'The old code stops working immediately.',
+      input: 'text',
+      inputLabel: 'Reason',
+      inputValidator: (v) => (String(v || '').trim() ? undefined : 'A reason is required'),
+      showCancelButton: true,
+      confirmButtonText: 'Reissue',
+      confirmButtonColor: '#0f5c4c'
+    });
+    if (!r.isConfirmed) return;
+    try {
+      const res = await api.sales.reissuePickupCode(invoice.id, String(r.value).trim());
+      setInvoice({ ...invoice, pickup_code: res.pickup_code, pickup_code_expires_at: res.pickup_code_expires_at, pickup_code_failures: 0 });
+      await Swal.fire({
+        icon: 'success',
+        title: 'New pickup code',
+        html: `<div class="pickup-code">${res.pickup_code}</div>Share it with the customer.`,
+        confirmButtonColor: '#0f5c4c'
+      });
+    } catch (err: any) {
+      await alertError('Reissue failed', err.message);
+    }
+  };
+
+  const returnGoods = async () => {
+    setActing(true);
+    try {
+      const preview = await api.sales.returnPreview(invoice.id);
+      const warehouses = await api.warehouses.list();
+      if (!preview.lines?.length) {
+        await alertError('Nothing to return', 'All handed-over quantities have already been returned.');
+        return;
+      }
+      const whOptions = warehouses
+        .map(
+          (w: any) =>
+            `<option value="${w.id}">${w.branch?.name || ''} · ${w.code} — ${w.name}${
+              w.category && w.category !== 'main' ? ` (${w.category})` : ''
+            }</option>`
+        )
+        .join('');
+      const lineRows = preview.lines
+        .map(
+          (l: any) => `
+          <tr>
+            <td style="text-align:left">${l.product?.name || ''}<div class="invoice-view__sub">${l.product?.sku || ''}</div></td>
+            <td>${q(l.returnable_quantity)}</td>
+            <td><input class="swal2-input" data-line="${l.invoice_item_id}" type="number" min="0" max="${l.returnable_quantity}" step="any" value="${l.returnable_quantity}" style="width:5.5rem;margin:0" /></td>
+          </tr>`
+        )
+        .join('');
+      const r = await Swal.fire({
+        title: 'Return goods',
+        width: 640,
+        html: `
+          <div style="text-align:left;display:grid;gap:10px">
+            <label>Receive into warehouse
+              <select id="ret-wh" class="swal2-select" style="width:100%">${whOptions}</select>
+            </label>
+            <label>Condition
+              <select id="ret-cond" class="swal2-select" style="width:100%">
+                <option value="saleable">Saleable (restock)</option>
+                <option value="damaged">Damaged (write-off unless damaged warehouse)</option>
+                <option value="quarantine">Quarantine</option>
+              </select>
+            </label>
+            <label>Settlement
+              <select id="ret-settle" class="swal2-select" style="width:100%">
+                <option value="credit_note">Customer credit / reduce balance</option>
+                <option value="refund">Cash / bank refund</option>
+              </select>
+            </label>
+            <table class="table" style="font-size:0.9rem"><thead><tr><th>Product</th><th>Returnable</th><th>Qty</th></tr></thead>
+            <tbody>${lineRows}</tbody></table>
+            <label>Reason<input id="ret-reason" class="swal2-input" style="width:100%" placeholder="Why are the goods coming back?" /></label>
+          </div>`,
+        showCancelButton: true,
+        confirmButtonText: 'Post return',
+        confirmButtonColor: '#0f5c4c',
+        preConfirm: () => {
+          const warehouse_id = (document.getElementById('ret-wh') as HTMLSelectElement)?.value;
+          const condition = (document.getElementById('ret-cond') as HTMLSelectElement)?.value || 'saleable';
+          const settlement = (document.getElementById('ret-settle') as HTMLSelectElement)?.value || 'credit_note';
+          const reason = String((document.getElementById('ret-reason') as HTMLInputElement)?.value || '').trim();
+          if (!reason) {
+            Swal.showValidationMessage('A reason is required');
+            return;
+          }
+          const items: { invoice_item_id: string; quantity: number }[] = [];
+          for (const input of Array.from(document.querySelectorAll<HTMLInputElement>('input[data-line]'))) {
+            const quantity = Number(input.value);
+            if (quantity > 0) items.push({ invoice_item_id: input.dataset.line!, quantity });
+          }
+          if (!items.length) {
+            Swal.showValidationMessage('Enter a quantity on at least one line');
+            return;
+          }
+          return { warehouse_id, condition, settlement, reason, items };
+        }
+      });
+      if (!r.isConfirmed || !r.value) return;
+      let refund_account_id: string | undefined;
+      if (r.value.settlement === 'refund') {
+        const defaults = await api.accounting.defaultAccounts();
+        const cash = defaults.find((d: any) => d.setting_key === 'cash' || d.key === 'cash');
+        refund_account_id = cash?.account_id || cash?.accountId;
+        if (!refund_account_id) {
+          await alertError('Refund account missing', 'Map a default Cash account under Accounting → Default accounts.');
+          return;
+        }
+      }
+      const draft = await api.sales.createReturn({
+        invoice_id: invoice.id,
+        warehouse_id: r.value.warehouse_id,
+        condition: r.value.condition,
+        settlement: r.value.settlement,
+        reason: r.value.reason,
+        refund_account_id,
+        items: r.value.items
+      });
+      const posted = await api.sales.postReturn(draft.id, {
+        reason: r.value.reason,
+        settlement: r.value.settlement,
+        refund_account_id
+      });
+      const refreshed = await api.sales.getInvoice(invoice.id);
+      setInvoice(refreshed);
+      await alertSuccess(
+        `Return ${posted.return_number} posted`,
+        posted.credit_issued > 0
+          ? `${Number(posted.credit_issued).toLocaleString()} held as customer credit`
+          : posted.refund_amount > 0
+            ? `${Number(posted.refund_amount).toLocaleString()} refunded`
+            : 'Invoice balance updated'
+      );
+      onChanged?.();
+    } catch (err: any) {
+      await alertError('Return failed', err.message);
+    } finally {
+      setActing(false);
+    }
+  };
+
   return createPortal(
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className="modal invoice-view" role="dialog" aria-modal="true" aria-label="Invoice">
@@ -259,10 +432,11 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                 </span>
                 {invoice.status === 'posted' ? (
                   <span className={`invoice-chip invoice-chip--${invoice.fulfilment_status}`}>
-                    {FULFILMENT_LABELS[invoice.fulfilment_status] || invoice.fulfilment_status}
+                    {(isDelivery ? DELIVERY_LABELS : FULFILMENT_LABELS)[invoice.fulfilment_status] ||
+                      invoice.fulfilment_status}
                   </span>
                 ) : isPickup ? (
-                  <span className="invoice-chip invoice-chip--pending">pickup</span>
+                  <span className="invoice-chip invoice-chip--pending">{isDelivery ? 'delivery' : 'pickup'}</span>
                 ) : null}
               </div>
 
@@ -287,7 +461,7 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                       <dd>{invoice.selling_branch?.name || '—'}</dd>
                     </>
                   ) : null}
-                  <dt>{isPickup ? 'Pickup from' : 'Warehouse'}</dt>
+                  <dt>{isDelivery ? 'Ship from' : isPickup ? 'Pickup from' : 'Warehouse'}</dt>
                   <dd>
                     {invoice.warehouse?.name || '—'}
                     {isPickup && invoice.warehouse?.branch?.name
@@ -306,6 +480,43 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                     <>
                       <dt>Stock held until</dt>
                       <dd>{fmtDate(invoice.reservation_expires_at)}</dd>
+                    </>
+                  ) : null}
+                  {isDelivery && invoice.delivery_address ? (
+                    <>
+                      <dt>Deliver to</dt>
+                      <dd>
+                        {invoice.delivery_address}
+                        {invoice.delivery_contact || invoice.delivery_phone
+                          ? ` · ${[invoice.delivery_contact, invoice.delivery_phone].filter(Boolean).join(', ')}`
+                          : ''}
+                      </dd>
+                    </>
+                  ) : null}
+                  {isOpenOrder && invoice.fulfilment_mode === 'pickup' && invoice.fulfilment_status !== 'fulfilled' &&
+                  (invoice.pickup_code || invoice.has_pickup_code) ? (
+                    <>
+                      <dt>Pickup code</dt>
+                      <dd>
+                        {invoice.pickup_code ? (
+                          <strong style={{ letterSpacing: '0.15em' }}>{invoice.pickup_code}</strong>
+                        ) : (
+                          'issued (shown to the selling branch)'
+                        )}
+                        {invoice.pickup_code_failures >= 5 ? <span className="invoice-view__danger"> · locked</span> : null}
+                        {invoice.pickup_code_expires_at ? ` · until ${fmtDate(invoice.pickup_code_expires_at)}` : ''}
+                        {canReissueCode && invoice.pickup_code ? (
+                          <button type="button" className="btn-linkish no-print" style={{ marginLeft: 8 }} onClick={() => void reissueCode()}>
+                            Reissue
+                          </button>
+                        ) : null}
+                      </dd>
+                    </>
+                  ) : null}
+                  {Array.isArray(invoice.authorised_collectors) && invoice.authorised_collectors.length ? (
+                    <>
+                      <dt>Also may collect</dt>
+                      <dd>{invoice.authorised_collectors.map((c: any) => c.name).join(', ')}</dd>
                     </>
                   ) : null}
                   {invoice.credit_override_reason ? (
@@ -331,7 +542,7 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                       <th>Product</th>
                       <th>UoM</th>
                       <th className="num">Qty</th>
-                      {isPickup ? <th className="num">Collected</th> : null}
+                      {isPickup ? <th className="num">{isDelivery ? 'Delivered' : 'Collected'}</th> : null}
                       <th className="num">Unit price</th>
                       <th className="num">Subtotal</th>
                     </tr>
@@ -368,6 +579,9 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                           ) : null}
                           {n(it.cancelled_quantity) > 0 ? (
                             <div className="invoice-view__sub">{q(n(it.cancelled_quantity))} cancelled</div>
+                          ) : null}
+                          {n(it.returned_quantity) > 0 ? (
+                            <div className="invoice-view__sub">{q(n(it.returned_quantity))} returned</div>
                           ) : null}
                         </td>
                         <td>{it.uom?.code || it.uom?.name || '—'}</td>
@@ -414,16 +628,19 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                   ) : null}
                   {isPickup && fulfilments.length ? (
                     <div style={{ marginTop: invoice.notes || allocations.length ? '1rem' : 0 }}>
-                      <div className="invoice-view__label">Collections</div>
+                      <div className="invoice-view__label">Warehouse fulfilment</div>
                       {fulfilments.map((f) => (
                         <div key={f.id} className="invoice-view__payment">
                           <span>
-                            {f.fulfilment_number} · {f.warehouse?.name} · {fmtDate(f.fulfilled_at)}
+                            {f.fulfilment_number} · {f.warehouse?.name} ·{' '}
+                            {fmtDate(f.fulfilled_at || f.dispatched_at || f.picked_at || f.created_at)}
                             {f.collected_by ? ` · ${f.collected_by}` : ''}
+                            {f.delivery_order ? ` · ${f.delivery_order.delivery_number}` : ''}
+                            {f.discrepancy_notes ? (
+                              <span className="invoice-view__danger"> · {f.discrepancy_notes}</span>
+                            ) : null}
                           </span>
-                          <span>
-                            {(f.items || []).length} line{(f.items || []).length === 1 ? '' : 's'}
-                          </span>
+                          <span>{TASK_LABELS[f.status] || f.status}</span>
                         </div>
                       ))}
                     </div>
@@ -481,7 +698,12 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
           ) : null}
         </div>
 
-        {invoice && ((invoice.status === 'draft' && canPost && onPost) || canCancel || canReallocate || canAllocate) ? (
+        {invoice &&
+        ((invoice.status === 'draft' && canPost && onPost) ||
+          canCancel ||
+          canReallocate ||
+          canAllocate ||
+          canReturn) ? (
           <div className="modal__footer no-print">
             {canCancel ? (
               <button
@@ -493,6 +715,11 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                 {invoice.status === 'posted' && items.some((it) => n(it.fulfilled_quantity) > 0)
                   ? 'Close balance'
                   : 'Cancel order'}
+              </button>
+            ) : null}
+            {canReturn ? (
+              <button type="button" className="btn btn-ghost" onClick={() => void returnGoods()} disabled={acting}>
+                Return goods
               </button>
             ) : null}
             {canReallocate ? (
