@@ -10,7 +10,8 @@ import {
   createJournal,
   reverseJournal,
   requireDefaultAccountIds,
-  resolveDefaultAccounts
+  resolveDefaultAccounts,
+  partnerLineBalances
 } from '../src/services/accounting.service.js';
 import type { AuthUser } from '../src/types/express/index.js';
 
@@ -117,6 +118,10 @@ async function main() {
     assert(saleJe.sales_representative_id == null, 'sale journal rep null when no seed rep');
   }
   assert(!saleJe.supplier_id, 'sale journal supplier remains null');
+  const saleArLine = (saleJe.lines || []).find((l: any) => l.account_id === ar.accountId);
+  const saleRevLine = (saleJe.lines || []).find((l: any) => l.account_id === revenue.accountId);
+  assert(saleArLine?.customer_id === customer.id, 'AR line stamped with customer_id');
+  assert(!saleRevLine?.customer_id, 'revenue line has no customer_id');
 
   // 3. Idempotency
   const again = (await createJournal(user, {
@@ -152,6 +157,10 @@ async function main() {
   })) as any;
   assert(grnJe.supplier_id === supplier.id, 'GRN journal has supplier_id');
   assert(!grnJe.customer_id, 'GRN journal customer remains null');
+  const grnApLine = (grnJe.lines || []).find((l: any) => l.account_id === ap.accountId);
+  const grnInvLine = (grnJe.lines || []).find((l: any) => l.account_id === inventory.accountId);
+  assert(grnApLine?.supplier_id === supplier.id, 'AP line stamped with supplier_id');
+  assert(!grnInvLine?.supplier_id, 'inventory line has no supplier_id');
 
   // 5. Cross-business entity rejection
   console.log('\nValidation');
@@ -196,6 +205,12 @@ async function main() {
   if (salesRep) {
     assert(rev.sales_representative_id === salesRep.id, 'reversal keeps sales_representative_id');
   }
+  const revArLine = (rev.lines || []).find((l: any) => l.account_id === ar.accountId);
+  assert(revArLine?.customer_id === customer.id, 'reversal AR line keeps customer_id');
+
+  // 7b. Line-based partner balance (AR stamp present)
+  const balMap = await partnerLineBalances(business.id, 'customer', customer.id);
+  assert(typeof balMap.get(customer.id) === 'number', 'partnerLineBalances returns customer balance');
 
   // 8. Nullable entity journals still allowed (rent-like)
   console.log('\nNullable entity journals');

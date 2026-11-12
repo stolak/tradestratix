@@ -31,14 +31,15 @@ Updated: 2026-11-12
   - Backfill: `npm run backfill:employee-users`
   - Tests: `npm run test:sales-rep-employees`
 - **Journal entity attribution + default account resolver**
-  - `JournalEntry`: nullable `customerId`, `supplierId`, `salesRepresentativeId` (+ indexes)
+  - `JournalEntry` + `JournalLine`: nullable `customerId`, `supplierId`, `salesRepresentativeId` (+ indexes)
+  - Line stamps only on AR/AP/sales-rep control lines; partner balances use line ids (survive AR/AP remaps)
   - Central default-account catalog/resolver with ownership, active, and type validation
-  - Posting engine validates entities, rejects inactive accounts, copies attribution on reverse
+  - Posting engine validates entities, rejects inactive accounts, copies header + line attribution on reverse
   - Sales/procurement journals stamp customer/supplier/rep where applicable
   - APIs: default-accounts catalog/status/upsert; journal filters; entity ledgers
   - Client: Accounting → Default accounts (status summary, category/issue filters, type-filtered assign); Journals show customer/supplier/rep
-  - Backfill: `npm run backfill:journal-entities`
-  - Tests: `npm run test:journal-entities` (13 passed)
+  - Backfill: `npm run backfill:journal-entities`; `npm run backfill:journal-line-entities`
+  - Tests: `npm run test:journal-entities`
 - **Multi-branch architecture (cross-cutting)**
   - Enhanced `UserBranch` membership (businessId, roleCode, status, assignedAt/By)
   - `branchId` on operational docs; stock transfers keep `fromBranchId`/`toBranchId`

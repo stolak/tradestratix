@@ -138,7 +138,68 @@ type JournalLineInput = {
   description?: string;
   debit?: number;
   credit?: number;
+  /** Optional explicit stamp; otherwise auto-set on control accounts from the header. */
+  customer_id?: string | null;
+  customerId?: string | null;
+  supplier_id?: string | null;
+  supplierId?: string | null;
+  sales_representative_id?: string | null;
+  salesRepresentativeId?: string | null;
 };
+
+/** Default-account keys whose lines carry partner balance (never revenue/cash/expense counterparts). */
+const CUSTOMER_BALANCE_ACCOUNT_KEYS = ['accounts_receivable'] as const;
+const SUPPLIER_BALANCE_ACCOUNT_KEYS = ['accounts_payable'] as const;
+const SALES_REP_BALANCE_ACCOUNT_KEYS = [
+  'cash_in_custody_sales_rep',
+  'sales_rep_commission_payable',
+  'sales_rep_receivable'
+] as const;
+
+async function controlAccountIdSets(businessId: string) {
+  const map = await loadDefaultAccountMap(businessId);
+  const pick = (keys: readonly string[]) =>
+    new Set(keys.map((k) => map[k]).filter(Boolean) as string[]);
+  return {
+    customer: pick(CUSTOMER_BALANCE_ACCOUNT_KEYS),
+    supplier: pick(SUPPLIER_BALANCE_ACCOUNT_KEYS),
+    salesRep: pick(SALES_REP_BALANCE_ACCOUNT_KEYS)
+  };
+}
+
+/**
+ * Partner balances from journal *lines* stamped with entity ids (stable if default AR/AP mapping changes).
+ * Customer / sales-rep: Σ debit − Σ credit. Supplier (AP): Σ credit − Σ debit (amount owed).
+ */
+export async function partnerLineBalances(
+  businessId: string,
+  kind: 'customer' | 'supplier' | 'sales_representative',
+  entityId?: string
+) {
+  const column =
+    kind === 'customer'
+      ? 'customer_id'
+      : kind === 'supplier'
+        ? 'supplier_id'
+        : 'sales_representative_id';
+  const rows = await prisma.$queryRawUnsafe<Array<{ entity_id: string; balance: unknown }>>(
+    `SELECT jl.\`${column}\` AS entity_id,
+            ${
+              kind === 'supplier'
+                ? 'SUM(jl.credit) - SUM(jl.debit)'
+                : 'SUM(jl.debit) - SUM(jl.credit)'
+            } AS balance
+     FROM journal_lines jl
+     JOIN journal_entries je ON je.id = jl.journal_entry_id
+     WHERE je.business_id = ?
+       AND jl.\`${column}\` IS NOT NULL
+       AND je.status IN ('posted', 'reversed')
+       ${entityId ? `AND jl.\`${column}\` = ?` : ''}
+     GROUP BY jl.\`${column}\``,
+    ...(entityId ? [businessId, entityId] : [businessId])
+  );
+  return new Map(rows.map((r) => [r.entity_id, roundMoney(Number(r.balance || 0))]));
+}
 
 async function nextEntryNumber(businessId: string, tx: Prisma.TransactionClient) {
   return nextDocNumber(tx.journalEntry, businessId, 'entryNumber', 'JE', 6);
@@ -217,6 +278,8 @@ export async function createJournal(
     salesRepresentativeId
   });
 
+  const controlAccounts = await controlAccountIdSets(user.businessId);
+
   const normalized = lines.map((l, idx) => {
     const accountId = l.account_id || l.accountId;
     if (!accountId) throw httpError(400, `lines[${idx}].account_id is required`);
@@ -226,14 +289,55 @@ export async function createJournal(
     if ((debit > 0 && credit > 0) || (debit === 0 && credit === 0)) {
       throw httpError(400, `lines[${idx}] must have either debit or credit`);
     }
+
+    let lineCustomerId = (l.customer_id ?? l.customerId ?? null) || null;
+    let lineSupplierId = (l.supplier_id ?? l.supplierId ?? null) || null;
+    let lineSalesRepId = (l.sales_representative_id ?? l.salesRepresentativeId ?? null) || null;
+
+    // Auto-stamp only the balance-bearing control line from the header (not revenue/cash/expense).
+    if (!lineCustomerId && customerId && controlAccounts.customer.has(accountId)) {
+      lineCustomerId = customerId;
+    }
+    if (!lineSupplierId && supplierId && controlAccounts.supplier.has(accountId)) {
+      lineSupplierId = supplierId;
+    }
+    if (!lineSalesRepId && salesRepresentativeId && controlAccounts.salesRep.has(accountId)) {
+      lineSalesRepId = salesRepresentativeId;
+    }
+
+    const stamped = [lineCustomerId, lineSupplierId, lineSalesRepId].filter(Boolean).length;
+    if (stamped > 1) {
+      throw httpError(400, `lines[${idx}] can reference at most one of customer, supplier, sales representative`);
+    }
+
     return {
       accountId,
       description: l.description || null,
       debit,
       credit,
-      lineNo: idx + 1
+      lineNo: idx + 1,
+      customerId: lineCustomerId,
+      supplierId: lineSupplierId,
+      salesRepresentativeId: lineSalesRepId
     };
   });
+
+  const lineEntityIds = {
+    customerId: [...new Set(normalized.map((l) => l.customerId).filter(Boolean))] as string[],
+    supplierId: [...new Set(normalized.map((l) => l.supplierId).filter(Boolean))] as string[],
+    salesRepresentativeId: [
+      ...new Set(normalized.map((l) => l.salesRepresentativeId).filter(Boolean))
+    ] as string[]
+  };
+  for (const id of lineEntityIds.customerId) {
+    await assertEntityInBusiness(user.businessId, { customerId: id });
+  }
+  for (const id of lineEntityIds.supplierId) {
+    await assertEntityInBusiness(user.businessId, { supplierId: id });
+  }
+  for (const id of lineEntityIds.salesRepresentativeId) {
+    await assertEntityInBusiness(user.businessId, { salesRepresentativeId: id });
+  }
 
   const totalDebit = roundMoney(normalized.reduce((s, l) => s + l.debit, 0));
   const totalCredit = roundMoney(normalized.reduce((s, l) => s + l.credit, 0));
@@ -314,7 +418,10 @@ export async function createJournal(
             description: l.description,
             debit: toDec(l.debit),
             credit: toDec(l.credit),
-            lineNo: l.lineNo
+            lineNo: l.lineNo,
+            customerId: l.customerId,
+            supplierId: l.supplierId,
+            salesRepresentativeId: l.salesRepresentativeId
           }))
         }
       },
@@ -366,7 +473,11 @@ export async function reverseJournal(user: AuthUser, id: string, memo?: string) 
       account_id: l.accountId,
       description: l.description || undefined,
       debit: Number(l.credit),
-      credit: Number(l.debit)
+      credit: Number(l.debit),
+      // Copy line stamps explicitly so remapped default AR/AP still reverses partner balances.
+      customer_id: l.customerId,
+      supplier_id: l.supplierId,
+      sales_representative_id: l.salesRepresentativeId
     }))
   });
 

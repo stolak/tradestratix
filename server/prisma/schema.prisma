@@ -538,18 +538,30 @@ model JournalEntry {
 }
 
 model JournalLine {
-  id             String       @id
-  journalEntryId String       @map("journal_entry_id")
-  accountId      String       @map("account_id")
-  description    String?      @db.Text
-  debit          Decimal      @default(0) @db.Decimal(18, 4)
-  credit         Decimal      @default(0) @db.Decimal(18, 4)
-  lineNo         Int          @map("line_no")
-  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
-  account        Account      @relation(fields: [accountId], references: [id])
+  id                      String   @id
+  journalEntryId          String   @map("journal_entry_id")
+  accountId               String   @map("account_id")
+  description             String?  @db.Text
+  debit                   Decimal  @default(0) @db.Decimal(18, 4)
+  credit                  Decimal  @default(0) @db.Decimal(18, 4)
+  lineNo                  Int      @map("line_no")
+  /// Set only on customer control lines (typically AR) — partner balances use this, not the current default-account map
+  customerId              String?  @map("customer_id")
+  /// Set only on supplier control lines (typically AP)
+  supplierId              String?  @map("supplier_id")
+  /// Set only on sales-rep control lines (custody / commission payable / recoveries)
+  salesRepresentativeId   String?  @map("sales_representative_id")
+  journalEntry            JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  account                 Account      @relation(fields: [accountId], references: [id])
+  customer                Customer?    @relation("JournalLineCustomer", fields: [customerId], references: [id], onDelete: Restrict)
+  supplier                Supplier?    @relation("JournalLineSupplier", fields: [supplierId], references: [id], onDelete: Restrict)
+  salesRepresentative     SalesRep?    @relation("JournalLineSalesRep", fields: [salesRepresentativeId], references: [id], onDelete: Restrict)
 
   @@index([journalEntryId])
   @@index([accountId])
+  @@index([customerId])
+  @@index([supplierId])
+  @@index([salesRepresentativeId])
   @@map("journal_lines")
 }
 
@@ -1021,6 +1033,7 @@ model Supplier {
   payments       SupplierPayment[]
   expenseBills   ExpenseBill[]
   journalEntries JournalEntry[]     @relation("JournalSupplier")
+  journalLines   JournalLine[]      @relation("JournalLineSupplier")
 
   @@unique([businessId, code])
   @@index([businessId, name])
@@ -1257,6 +1270,7 @@ model Customer {
   deliveries     DeliveryOrder[]
   salesReturns   SalesReturn[]
   journalEntries JournalEntry[]    @relation("JournalCustomer")
+  journalLines   JournalLine[]     @relation("JournalLineCustomer")
 
   @@unique([businessId, code])
   @@index([businessId, name])
@@ -1296,6 +1310,7 @@ model SalesRep {
   invoices       SalesInvoice[]
   commissions    SalesCommission[]
   journalEntries JournalEntry[]    @relation("JournalSalesRep")
+  journalLines   JournalLine[]     @relation("JournalLineSalesRep")
 
   @@unique([businessId, code])
   @@index([businessId, employeeId])

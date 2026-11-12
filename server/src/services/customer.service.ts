@@ -4,7 +4,7 @@ import { httpError, requireString, roundMoney, serialize, shortId } from '../uti
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { userHasAnyPermission } from './permission.service.js';
-import { getDefaultAccountMap } from './accounting.service.js';
+import { partnerLineBalances } from './accounting.service.js';
 import * as branchAccess from './branch-access.service.js';
 
 type PurchaseFilter = { branchId?: string | null; from?: string | null; to?: string | null };
@@ -41,24 +41,11 @@ async function purchaseScope(user: AuthUser, filter: PurchaseFilter) {
 }
 
 /**
- * Current AR balance per customer from the general ledger: every posted (or later reversed,
- * whose reversal is also posted) journal tagged to the customer, across all branches and dates.
+ * Current customer balance from journal *lines* stamped with customer_id (AR control lines).
+ * Stable if the default accounts_receivable mapping changes later.
  */
 async function ledgerBalances(businessId: string, customerId?: string) {
-  const accountMap = await getDefaultAccountMap(businessId);
-  const arAccountId = accountMap.accounts_receivable;
-  if (!arAccountId) return new Map<string, number>();
-  const rows = await prisma.$queryRaw<{ customer_id: string; balance: unknown }[]>`
-    SELECT je.customer_id AS customer_id, SUM(jl.debit) - SUM(jl.credit) AS balance
-    FROM journal_lines jl
-    JOIN journal_entries je ON je.id = jl.journal_entry_id
-    WHERE je.business_id = ${businessId}
-      AND je.customer_id IS NOT NULL
-      AND je.status IN ('posted', 'reversed')
-      AND jl.account_id = ${arAccountId}
-      ${customerId ? Prisma.sql`AND je.customer_id = ${customerId}` : Prisma.empty}
-    GROUP BY je.customer_id`;
-  return new Map(rows.map((r) => [r.customer_id, roundMoney(Number(r.balance || 0))]));
+  return partnerLineBalances(businessId, 'customer', customerId);
 }
 
 export async function customerBalances(

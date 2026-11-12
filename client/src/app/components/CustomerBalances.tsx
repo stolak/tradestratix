@@ -265,7 +265,7 @@ export const CustomerBalances: React.FC = () => {
             Total owed by customers
             <span
               className="info-tip"
-              title="Current accounts-receivable balance from the general ledger across every branch and date. Branch and date filters never change it."
+              title="Sum of journal lines stamped with this customer (AR control lines). Stable if the default AR account mapping changes. All branches · live · date filters do not change it."
             >
               <Info size={13} />
             </span>

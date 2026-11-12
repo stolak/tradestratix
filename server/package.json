@@ -18,6 +18,7 @@
     "backfill:sales-rep-employees": "tsx scripts/backfill-sales-rep-employees.ts",
     "backfill:employee-users": "tsx scripts/backfill-employee-users.ts",
     "backfill:fulfilment": "tsx scripts/backfill-fulfilment-recognition.ts",
+    "backfill:journal-line-entities": "tsx scripts/backfill-journal-line-entities.ts",
     "test:fulfilment": "tsx scripts/test-fulfilment.ts",
     "test:branches": "tsx scripts/test-multi-branch.ts",
     "test:journal-entities": "tsx scripts/test-journal-entities.ts",

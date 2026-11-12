@@ -35,12 +35,20 @@ Rules:
 
 ### Journal-level vs line-level
 
-Current workflows create **one journal per independently attributable partner document** (invoice, customer payment, GRN, supplier payment). Header-level attribution is therefore accurate.
+Current workflows create **one journal per independently attributable partner document** (invoice, customer payment, GRN, supplier payment). Header-level attribution remains for lists, filters and reversals.
+
+`JournalLine` also carries nullable `customerId` / `supplierId` / `salesRepresentativeId`, stamped **only on balance-bearing control lines** (AR / AP / sales-rep custody·payable·recoveries) — never on the revenue, cash or expense counterpart. `createJournal` auto-stamps from the header when the line account matches the current default control account; reversals copy line stamps explicitly.
+
+Partner balances (Customers → Balances, etc.) are:
+
+`Σ debit − Σ credit` (supplier owed: `Σ credit − Σ debit`) on lines where the entity id is set.
+
+That stays correct even if `DefaultAccountSetting` for `accounts_receivable` / `accounts_payable` is remapped later. Backfill: `npm run backfill:journal-line-entities` (from `server/`).
 
 If a future payment batch settles multiple customers in one journal, either:
 
 1. Split into one journal per customer (preferred, matches current payment APIs), or
-2. Add line-level `customerId` / `supplierId` dimensions.
+2. Pass explicit per-line entity ids on each control line.
 
 Do not put a single customer id on a multi-customer batch header.
 
