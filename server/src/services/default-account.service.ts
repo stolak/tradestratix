@@ -158,6 +158,14 @@ export const DEFAULT_ACCOUNT_CATALOG: DefaultAccountKeyMeta[] = [
     category: 'inventory'
   },
   {
+    key: 'goods_in_transit',
+    label: 'Goods in Transit',
+    description:
+      'Inventory sent between warehouses and not yet received (still owned by source until receipt)',
+    accountTypes: ['asset'],
+    category: 'inventory'
+  },
+  {
     key: 'cogs',
     label: 'Cost of Goods Sold',
     description: 'Cost of inventory sold',

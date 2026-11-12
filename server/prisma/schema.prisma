@@ -994,6 +994,7 @@ model StockTransfer {
   fromBranchId    String?             @map("from_branch_id")
   toBranchId      String?             @map("to_branch_id")
   /// draft | pending_approval | approved | in_transit | received | rejected | cancelled
+  /// New sends go straight to in_transit (qty held on source until receive).
   status          String              @default("draft")
   notes           String?             @db.Text
   requestedById   String?             @map("requested_by_id")

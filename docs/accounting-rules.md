@@ -70,6 +70,24 @@ Missing or wrong-type mappings throw a clear configuration error and block posti
 UI: **Accounting → Default accounts** — status summary, category / issue filters, and account assignment
 filtered by each key’s expected account type (`accounting.edit` or `settings.edit` to change).
 
+## Stock transfers (GIT)
+
+Warehouse-to-warehouse transfers (subject to warehouse category flags for inter-branch):
+
+1. **Send** — hold qty as `quantity_in_transit` on the source lot (still in source `quantity_on_hand`; excluded from Available).
+2. **Receive** — reduce source on-hand + in-transit; increase destination on-hand.
+3. **Cancel** (while in transit) — release the hold back to available.
+
+**Same-branch** transfers are stock movements only — **no GL**.
+
+**Inter-branch** only posts GIT:
+
+- Send: `Dr Goods in Transit` / `Cr Inventory` (source branch)
+- Receive: clear GIT at source via `inter_branch_clearing`; `Dr Inventory` at destination
+- Cancel: reverse the GIT entry at source
+
+Available for sale/issue/allocation = `on_hand − reserved − in_transit`.
+
 ## Supplier payments (AP)
 
 Supplier payments always **debit Accounts Payable** (supplier control) and credit cash/bank:

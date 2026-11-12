@@ -304,7 +304,7 @@ export async function stockBalance(
       ...r,
       on_hand: qty(r.on_hand),
       reserved: qty(r.reserved),
-      available: qty(r.on_hand - r.reserved),
+      available: qty(r.on_hand - r.reserved - r.in_transit),
       in_transit: qty(r.in_transit),
       expired_qty: qty(r.expired_qty),
       stock_value: roundMoney(r.stock_value),

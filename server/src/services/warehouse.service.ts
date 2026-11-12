@@ -77,7 +77,7 @@ const WAREHOUSE_MANAGE_ROLES = new Set([
   'branch_manager'
 ]);
 
-function canManageAllWarehouses(user: AuthUser) {
+export function canManageAllWarehouses(user: AuthUser) {
   if (WAREHOUSE_MANAGE_ROLES.has(user.role)) return true;
   const perms = user.permissions || [];
   return (
@@ -85,6 +85,33 @@ function canManageAllWarehouses(user: AuthUser) {
     perms.includes('warehouses.edit') ||
     perms.includes('warehouses.delete')
   );
+}
+
+/** Managers may touch any warehouse; others need an active UserWarehouse assignment. */
+export async function assertUserCanAccessWarehouse(user: AuthUser, warehouseId: string) {
+  const warehouse = await prisma.warehouse.findFirst({
+    where: { id: warehouseId, businessId: user.businessId },
+    include: { warehouseCategory: true, branch: true }
+  });
+  if (!warehouse) throw httpError(400, 'Invalid warehouse');
+  if (!warehouse.isActive) throw httpError(400, `Warehouse ${warehouse.code} is disabled`);
+
+  if (canManageAllWarehouses(user) || user.role === 'business_owner') {
+    return warehouse;
+  }
+
+  const assignment = await prisma.userWarehouse.findFirst({
+    where: {
+      userId: user.id,
+      businessId: user.businessId,
+      warehouseId,
+      status: 'active'
+    }
+  });
+  if (!assignment) {
+    throw httpError(403, `You do not have access to warehouse ${warehouse.code}`);
+  }
+  return warehouse;
 }
 
 /** Assign all active warehouses in the given branches to a user (idempotent). */

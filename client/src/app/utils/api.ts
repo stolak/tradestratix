@@ -587,6 +587,8 @@ export const api = {
     adjust: (body: Record<string, unknown>) =>
       request<any>('/inventory/adjust', { method: 'POST', body: JSON.stringify(body) }),
     transfers: () => request<any[]>('/inventory/transfers'),
+    transferWarehouses: () =>
+      request<{ from: any[]; to: any[] }>('/inventory/transfers/warehouses'),
     createTransfer: (body: Record<string, unknown>) =>
       request<any>('/inventory/transfers', { method: 'POST', body: JSON.stringify(body) }),
     approveTransfer: (id: string) =>
@@ -594,7 +596,9 @@ export const api = {
     dispatchTransfer: (id: string) =>
       request<any>(`/inventory/transfers/${id}/dispatch`, { method: 'POST', body: '{}' }),
     receiveTransfer: (id: string) =>
-      request<any>(`/inventory/transfers/${id}/receive`, { method: 'POST', body: '{}' })
+      request<any>(`/inventory/transfers/${id}/receive`, { method: 'POST', body: '{}' }),
+    cancelTransfer: (id: string) =>
+      request<any>(`/inventory/transfers/${id}/cancel`, { method: 'POST', body: '{}' })
   },
   assets: {
     list: (status?: string) =>

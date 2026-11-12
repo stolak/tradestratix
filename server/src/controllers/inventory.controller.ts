@@ -125,3 +125,19 @@ export async function receiveTransfer(req: Request, res: Response, next: NextFun
     return next(err);
   }
 }
+
+export async function cancelTransfer(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await transferService.cancelTransfer(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function transferWarehouses(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await transferService.listTransferWarehouses(req.user!));
+  } catch (err) {
+    return next(err);
+  }
+}

@@ -16,6 +16,11 @@ router.post('/issue', requirePermission('inventory.create'), inventoryController
 router.post('/adjust', requirePermission('inventory.edit'), inventoryController.adjust);
 
 router.get('/transfers', requirePermission('inventory.view', 'warehouses.view'), inventoryController.listTransfers);
+router.get(
+  '/transfers/warehouses',
+  requirePermission('inventory.view', 'inventory.create'),
+  inventoryController.transferWarehouses
+);
 router.post('/transfers', requirePermission('inventory.create'), inventoryController.createTransfer);
 router.post(
   '/transfers/:id/approve',
@@ -31,6 +36,11 @@ router.post(
   '/transfers/:id/receive',
   requirePermission('inventory.create'),
   inventoryController.receiveTransfer
+);
+router.post(
+  '/transfers/:id/cancel',
+  requirePermission('inventory.create', 'inventory.edit'),
+  inventoryController.cancelTransfer
 );
 
 export default router;

@@ -40,6 +40,18 @@ function qtyNum(v: Prisma.Decimal | number | string | null | undefined): number 
   return Number(v);
 }
 
+/** Sellable / issuable qty: on hand less sales reservations and goods held in transit. */
+export function lotAvailable(lot: {
+  quantityOnHand?: Prisma.Decimal | number | string | null;
+  quantityReserved?: Prisma.Decimal | number | string | null;
+  quantityInTransit?: Prisma.Decimal | number | string | null;
+}) {
+  return Math.max(
+    0,
+    qtyNum(lot.quantityOnHand) - qtyNum(lot.quantityReserved) - qtyNum(lot.quantityInTransit)
+  );
+}
+
 async function findOrCreateLot(
   client: DbClient,
   input: {
@@ -89,7 +101,7 @@ async function findOrCreateLot(
   });
 }
 
-/** FEFO when expiry tracked; otherwise FIFO by createdAt. Available = on hand − reserved (in-transit excluded). */
+/** FEFO when expiry tracked; otherwise FIFO by createdAt. Available = on hand − reserved − in transit. */
 export async function allocateFefo(
   client: DbClient,
   variantId: string,
@@ -114,17 +126,11 @@ export async function allocateFefo(
 
   if (trackExpiry) {
     const nonExpired = lots.filter((l) => !l.expiryDate || l.expiryDate >= today);
-    const nonExpiredQty = nonExpired.reduce(
-      (s, l) => s + Math.max(0, qtyNum(l.quantityOnHand) - qtyNum(l.quantityReserved)),
-      0
-    );
+    const nonExpiredQty = nonExpired.reduce((s, l) => s + lotAvailable(l), 0);
     if (nonExpiredQty >= quantity) lots = nonExpired;
   }
 
-  const available = lots.reduce(
-    (s, l) => s + Math.max(0, qtyNum(l.quantityOnHand) - qtyNum(l.quantityReserved)),
-    0
-  );
+  const available = lots.reduce((s, l) => s + lotAvailable(l), 0);
   if (available + 1e-9 < quantity) {
     throw httpError(400, `Insufficient stock (need ${quantity}, available ${available})`);
   }
@@ -138,7 +144,7 @@ export async function allocateFefo(
   }[] = [];
   for (const lot of lots) {
     if (remaining <= 1e-9) break;
-    const free = Math.max(0, qtyNum(lot.quantityOnHand) - qtyNum(lot.quantityReserved));
+    const free = lotAvailable(lot);
     const take = Math.min(free, remaining);
     if (take <= 0) continue;
     allocations.push({
@@ -230,11 +236,14 @@ async function createSingleMovement(
   if (lot.warehouseId !== input.warehouse_id) {
     throw httpError(400, 'Lot warehouse mismatch');
   }
-  if (input.quantity_out > qtyNum(lot.quantityOnHand) + 1e-9) {
-    throw httpError(
-      400,
-      `Insufficient quantity on lot ${lot.batchNumber}: need ${input.quantity_out}, have ${qtyNum(lot.quantityOnHand)}`
-    );
+  if (input.quantity_out > 0) {
+    const free = lotAvailable(lot);
+    if (input.quantity_out > free + 1e-9) {
+      throw httpError(
+        400,
+        `Insufficient available quantity on lot ${lot.batchNumber}: need ${input.quantity_out}, available ${free}`
+      );
+    }
   }
 
   const newQty = qtyNum(lot.quantityOnHand) + input.quantity_in - input.quantity_out;
@@ -592,17 +601,20 @@ export async function inventoryBoard(
         ...l,
         variant_id: v.id,
         variant_name: v.name,
-        available: qtyNum(l.quantityOnHand) - qtyNum(l.quantityReserved),
+        available: lotAvailable(l),
+        in_transit: qtyNum(l.quantityInTransit),
         is_expired: p.trackExpiry && !!l.expiryDate && l.expiryDate < today
       }))
     );
     const onHand = lots.reduce((s, l) => s + qtyNum(l.quantityOnHand), 0);
     const available = lots.reduce((s, l) => s + l.available, 0);
+    const inTransit = lots.reduce((s, l) => s + qtyNum(l.in_transit), 0);
     const nearest = lots.find((l) => l.expiryDate) || lots[0];
     return {
       ...p,
       on_hand: onHand,
       available,
+      in_transit: inTransit,
       lots_count: lots.length,
       nearest_expiry: nearest?.expiryDate || null,
       nearest_batch: nearest?.batchNumber || null,
@@ -653,7 +665,8 @@ export async function listLots(
   return serialize(
     lots.map((l) => ({
       ...l,
-      available: qtyNum(l.quantityOnHand) - qtyNum(l.quantityReserved),
+      available: lotAvailable(l),
+      in_transit: qtyNum(l.quantityInTransit),
       is_expired: !!l.expiryDate && l.expiryDate < today,
       days_to_expiry: l.expiryDate
         ? Math.ceil((new Date(`${l.expiryDate}T00:00:00`).getTime() - Date.now()) / 86400000)
@@ -736,14 +749,14 @@ export async function onHandQty(
   tx?: Prisma.TransactionClient
 ) {
   const client = tx || prisma;
-  const agg = await client.stockLot.aggregate({
+  const lots = await client.stockLot.findMany({
     where: {
       businessId,
       variantId,
       status: 'available',
       ...(warehouseId ? { warehouseId } : {})
     },
-    _sum: { quantityOnHand: true, quantityReserved: true }
+    select: { quantityOnHand: true, quantityReserved: true, quantityInTransit: true }
   });
-  return qtyNum(agg._sum.quantityOnHand) - qtyNum(agg._sum.quantityReserved);
+  return lots.reduce((s, l) => s + lotAvailable(l), 0);
 }

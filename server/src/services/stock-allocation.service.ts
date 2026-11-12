@@ -88,14 +88,15 @@ export async function stockByWarehouse(
     }
     const onHand = Number(lot.quantityOnHand);
     const reserved = Number(lot.quantityReserved);
+    const inTransit = Number(lot.quantityInTransit || 0);
     const expired =
       tracksExpiry.get(lot.variantId) && lot.expiryDate != null && lot.expiryDate < today;
     row.onHand += onHand;
     row.reserved += reserved;
     if (lot.status !== 'available' || expired) {
-      row.blocked += Math.max(0, onHand - reserved);
+      row.blocked += Math.max(0, onHand - reserved - inTransit);
     } else {
-      row.free += Math.max(0, onHand - reserved);
+      row.free += Math.max(0, onHand - reserved - inTransit);
     }
   }
   for (const [key, row] of acc) {

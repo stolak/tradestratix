@@ -560,6 +560,7 @@ const COA: { code: string; name: string; accountType: string; key?: string }[] =
   { code: '1135', name: 'Supplier Advances', accountType: 'asset', key: 'supplier_advances' },
   { code: '1136', name: 'Supplier Deposits', accountType: 'asset', key: 'supplier_deposits' },
   { code: '1140', name: 'Inventory Asset', accountType: 'asset', key: 'inventory' },
+  { code: '1145', name: 'Goods in Transit', accountType: 'asset', key: 'goods_in_transit' },
   { code: '1150', name: 'Inter-branch Clearing', accountType: 'asset', key: 'inter_branch_clearing' },
   { code: '1200', name: 'Fixed Assets', accountType: 'asset' },
   { code: '1210', name: 'Property, Plant & Equipment', accountType: 'asset', key: 'fixed_assets' },
