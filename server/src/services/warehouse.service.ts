@@ -2,6 +2,7 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, serialize, shortId } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import { resolveWarehouseCategory } from './warehouse-category.service.js';
 
 async function warehouseIdsWithActivity(businessId: string, warehouseIds: string[]) {
   if (!warehouseIds.length) return new Set<string>();
@@ -128,13 +129,22 @@ export async function assignBranchWarehousesToUser(opts: {
 /**
  * List warehouses for the active/switched branch.
  * Non-managers only see warehouses explicitly assigned via UserWarehouse.
+ * Managers may pass includeInactive / omit branch to manage the full directory.
  */
-export async function listWarehouses(user: AuthUser, branchId?: string) {
-  const effectiveBranchId =
-    branchId || user.activeBranchId || user.defaultBranchId || null;
+export async function listWarehouses(
+  user: AuthUser,
+  branchId?: string | null,
+  opts?: { includeInactive?: boolean; allBranches?: boolean }
+) {
+  const manage = canManageAllWarehouses(user);
+  const includeInactive = !!(opts?.includeInactive && manage);
+  const allBranches = !!(opts?.allBranches && manage);
+  const effectiveBranchId = allBranches
+    ? null
+    : branchId || user.activeBranchId || user.defaultBranchId || null;
 
   let assignedIds: string[] | null = null;
-  if (!canManageAllWarehouses(user)) {
+  if (!manage) {
     const assignments = await prisma.userWarehouse.findMany({
       where: {
         userId: user.id,
@@ -152,11 +162,14 @@ export async function listWarehouses(user: AuthUser, branchId?: string) {
   const rows = await prisma.warehouse.findMany({
     where: {
       businessId: user.businessId,
-      isActive: true,
+      ...(includeInactive ? {} : { isActive: true }),
       ...(effectiveBranchId ? { branchId: effectiveBranchId } : {}),
       ...(assignedIds ? { id: { in: assignedIds } } : {})
     },
-    include: { branch: true },
+    include: {
+      branch: true,
+      warehouseCategory: true
+    },
     orderBy: { name: 'asc' }
   });
   const blocked = await warehouseIdsWithActivity(
@@ -197,6 +210,8 @@ export async function createWarehouse(user: AuthUser, body: Record<string, any>)
     }
   }
 
+  const category = await resolveWarehouseCategory(user.businessId, body, user.id);
+
   try {
     const created = await prisma.warehouse.create({
       data: {
@@ -205,13 +220,14 @@ export async function createWarehouse(user: AuthUser, body: Record<string, any>)
         branchId,
         name,
         code,
-        category: body.category || 'main',
+        category: category.code,
+        categoryId: category.id,
         managerUserId: body.manager_user_id || body.managerUserId || null,
         capacity: body.capacity ?? null,
         addressLine1: body.address_line1 || body.addressLine1 || null,
         createdById: user.id
       },
-      include: { branch: true }
+      include: { branch: true, warehouseCategory: true }
     });
     await writeAudit({
       user,
@@ -266,11 +282,21 @@ export async function updateWarehouse(user: AuthUser, id: string, body: Record<s
     }
   }
 
+  let categoryPatch: { category: string; categoryId: string } | null = null;
+  if (
+    body.category != null ||
+    body.category_id != null ||
+    body.categoryId != null
+  ) {
+    const category = await resolveWarehouseCategory(user.businessId, body, user.id);
+    categoryPatch = { category: category.code, categoryId: category.id };
+  }
+
   const updated = await prisma.warehouse.update({
     where: { id },
     data: {
       ...(body.name != null ? { name: String(body.name).trim() } : {}),
-      ...(body.category != null ? { category: String(body.category) } : {}),
+      ...(categoryPatch || {}),
       ...(nextBranchId && nextBranchId !== existing.branchId ? { branchId: nextBranchId } : {}),
       ...(body.manager_user_id !== undefined || body.managerUserId !== undefined
         ? { managerUserId: body.manager_user_id || body.managerUserId || null }
@@ -282,7 +308,7 @@ export async function updateWarehouse(user: AuthUser, id: string, body: Record<s
       ...(nextActive !== undefined ? { isActive: nextActive } : {}),
       updatedById: user.id
     },
-    include: { branch: true }
+    include: { branch: true, warehouseCategory: true }
   });
   await writeAudit({
     user,

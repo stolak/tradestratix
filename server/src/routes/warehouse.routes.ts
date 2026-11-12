@@ -7,6 +7,27 @@ const router = Router();
 router.use(authenticate);
 
 router.get(
+  '/categories',
+  requirePermission('warehouses.view', 'sales.view', 'pos.view', 'inventory.view'),
+  warehouseController.listCategories
+);
+router.post(
+  '/categories',
+  requirePermission('warehouses.create', 'warehouses.edit'),
+  warehouseController.createCategory
+);
+router.patch(
+  '/categories/:id',
+  requirePermission('warehouses.edit'),
+  warehouseController.updateCategory
+);
+router.delete(
+  '/categories/:id',
+  requirePermission('warehouses.delete', 'warehouses.edit'),
+  warehouseController.removeCategory
+);
+
+router.get(
   '/',
   requirePermission('warehouses.view', 'sales.view', 'pos.view', 'inventory.view'),
   warehouseController.list

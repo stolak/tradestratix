@@ -931,6 +931,47 @@ async function main() {
     });
   }
 
+  const defaultWhCategories: {
+    code: string;
+    name: string;
+    allowInterBranchTransfer: boolean;
+    allowInterBranchPickup: boolean;
+  }[] = [
+    { code: 'main', name: 'Main', allowInterBranchTransfer: true, allowInterBranchPickup: true },
+    { code: 'retail', name: 'Retail', allowInterBranchTransfer: true, allowInterBranchPickup: true },
+    {
+      code: 'damaged',
+      name: 'Damaged',
+      allowInterBranchTransfer: false,
+      allowInterBranchPickup: false
+    },
+    {
+      code: 'quarantine',
+      name: 'Quarantine',
+      allowInterBranchTransfer: false,
+      allowInterBranchPickup: false
+    }
+  ];
+  const whCategoryByCode: Record<string, string> = {};
+  for (const def of defaultWhCategories) {
+    let cat = await prisma.warehouseCategory.findFirst({
+      where: { businessId: business.id, code: def.code }
+    });
+    if (!cat) {
+      cat = await prisma.warehouseCategory.create({
+        data: {
+          id: id('whc'),
+          businessId: business.id,
+          code: def.code,
+          name: def.name,
+          allowInterBranchTransfer: def.allowInterBranchTransfer,
+          allowInterBranchPickup: def.allowInterBranchPickup
+        }
+      });
+    }
+    whCategoryByCode[def.code] = cat.id;
+  }
+
   let warehouse = await prisma.warehouse.findFirst({
     where: { businessId: business.id, code: 'MAIN' }
   });
@@ -942,8 +983,14 @@ async function main() {
         branchId: branch.id,
         name: 'Main Warehouse',
         code: 'MAIN',
-        category: 'main'
+        category: 'main',
+        categoryId: whCategoryByCode.main
       }
+    });
+  } else if (!warehouse.categoryId) {
+    warehouse = await prisma.warehouse.update({
+      where: { id: warehouse.id },
+      data: { categoryId: whCategoryByCode.main, category: 'main' }
     });
   }
 
@@ -958,8 +1005,14 @@ async function main() {
         branchId: branch2.id,
         name: 'Ikeja Retail Store',
         code: 'IKEJA',
-        category: 'retail'
+        category: 'retail',
+        categoryId: whCategoryByCode.retail
       }
+    });
+  } else if (!warehouse2.categoryId) {
+    warehouse2 = await prisma.warehouse.update({
+      where: { id: warehouse2.id },
+      data: { categoryId: whCategoryByCode.retail, category: 'retail' }
     });
   }
 

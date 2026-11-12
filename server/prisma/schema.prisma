@@ -80,6 +80,7 @@ model Business {
   subscriptions          BusinessSubscription[]
   branches               Branch[]
   warehouses             Warehouse[]
+  warehouseCategories    WarehouseCategory[]
   users                  User[]
   userBranches           UserBranch[]
   userWarehouses         UserWarehouse[]
@@ -220,14 +221,36 @@ model Branch {
   @@map("branches")
 }
 
+model WarehouseCategory {
+  id                       String      @id
+  businessId               String      @map("business_id")
+  name                     String
+  code                     String
+  allowInterBranchTransfer Boolean     @default(true) @map("allow_inter_branch_transfer")
+  allowInterBranchPickup   Boolean     @default(true) @map("allow_inter_branch_pickup")
+  isActive                 Boolean     @default(true) @map("is_active")
+  createdAt                DateTime    @default(now()) @map("created_at")
+  updatedAt                DateTime    @updatedAt @map("updated_at")
+  createdById              String?     @map("created_by_id")
+  updatedById              String?     @map("updated_by_id")
+  business                 Business    @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  warehouses               Warehouse[]
+
+  @@unique([businessId, code])
+  @@unique([businessId, name])
+  @@index([businessId])
+  @@map("warehouse_categories")
+}
+
 model Warehouse {
   id             String             @id
   businessId     String             @map("business_id")
   branchId       String             @map("branch_id")
   name           String
   code           String
-  /// main | retail | damaged | quarantine | other
+  /// Denormalized category code (kept for display / legacy); prefer categoryId
   category       String             @default("main")
+  categoryId     String?            @map("category_id")
   managerUserId  String?            @map("manager_user_id")
   capacity       Decimal?           @db.Decimal(18, 2)
   addressLine1   String?            @map("address_line1")
@@ -238,6 +261,7 @@ model Warehouse {
   updatedById    String?            @map("updated_by_id")
   business       Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
   branch         Branch             @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  warehouseCategory WarehouseCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   stockLots      StockLot[]
   stockMovements StockMovement[]
   transfersFrom  StockTransfer[]    @relation("TransferFrom")
@@ -254,6 +278,7 @@ model Warehouse {
 
   @@unique([businessId, code])
   @@index([branchId])
+  @@index([categoryId])
   @@map("warehouses")
 }
 

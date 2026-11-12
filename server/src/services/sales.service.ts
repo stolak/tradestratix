@@ -411,7 +411,10 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
   const activeWarehouse = async (id: string, label: string) => {
     const wh = await prisma.warehouse.findFirst({
       where: { id, businessId: user.businessId, isActive: true },
-      include: { branch: { select: { isActive: true, name: true } } }
+      include: {
+        branch: { select: { isActive: true, name: true } },
+        warehouseCategory: true
+      }
     });
     if (!wh) throw httpError(400, `${label}: invalid warehouse`);
     if (!wh.branch.isActive) throw httpError(400, `${label}: branch ${wh.branch.name} is inactive`);
@@ -419,6 +422,16 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
       throw httpError(
         400,
         `${label}: goods handed over at the point of sale must come from a warehouse in this branch. Choose "Pickup later" or "Deliver" to fulfil from another branch.`
+      );
+    }
+    if (
+      fulfilmentMode === 'pickup' &&
+      wh.branchId !== sellingBranchId &&
+      wh.warehouseCategory?.allowInterBranchPickup === false
+    ) {
+      throw httpError(
+        400,
+        `${label}: warehouse category "${wh.warehouseCategory.name}" does not allow inter-branch pickup`
       );
     }
     return wh;

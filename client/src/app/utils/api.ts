@@ -102,14 +102,38 @@ export const api = {
       request<any>(`/branches/${id}/members/${userId}`, { method: 'DELETE' })
   },
   warehouses: {
-    list: (branchId?: string) =>
-      request<any[]>(`/warehouses${branchId ? `?branch_id=${branchId}` : ''}`),
+    list: (
+      branchId?: string,
+      opts?: { includeInactive?: boolean; allBranches?: boolean }
+    ) => {
+      const q = new URLSearchParams();
+      if (opts?.allBranches) q.set('all_branches', '1');
+      else if (branchId) q.set('branch_id', branchId);
+      if (opts?.includeInactive) q.set('include_inactive', '1');
+      const qs = q.toString();
+      return request<any[]>(`/warehouses${qs ? `?${qs}` : ''}`);
+    },
     create: (body: Record<string, unknown>) =>
       request<any>('/warehouses', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string, body: Record<string, unknown>) =>
       request<any>(`/warehouses/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     remove: (id: string) =>
-      request<{ deleted: boolean; id: string }>(`/warehouses/${id}`, { method: 'DELETE' })
+      request<{ deleted: boolean; id: string }>(`/warehouses/${id}`, { method: 'DELETE' }),
+    categories: (opts?: { activeOnly?: boolean }) => {
+      const q = opts?.activeOnly ? '?active_only=1' : '';
+      return request<any[]>(`/warehouses/categories${q}`);
+    },
+    createCategory: (body: Record<string, unknown>) =>
+      request<any>('/warehouses/categories', { method: 'POST', body: JSON.stringify(body) }),
+    updateCategory: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/warehouses/categories/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body)
+      }),
+    removeCategory: (id: string) =>
+      request<{ deleted: boolean; id: string }>(`/warehouses/categories/${id}`, {
+        method: 'DELETE'
+      })
   },
   users: {
     list: () => request<any[]>('/users'),

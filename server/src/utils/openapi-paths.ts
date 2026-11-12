@@ -54,6 +54,18 @@ export const apiPaths: Record<string, unknown> = {
       responses: { 201: { description: 'Created' } }
     }
   },
+  '/api/v1/warehouses/categories': {
+    get: {
+      tags: ['Warehouses'],
+      summary: 'List warehouse categories',
+      responses: { 200: { description: 'Category list' } }
+    },
+    post: {
+      tags: ['Warehouses'],
+      summary: 'Create warehouse category',
+      responses: { 201: { description: 'Created' } }
+    }
+  },
   '/api/v1/accounting/accounts': {
     get: {
       tags: ['Accounting'],

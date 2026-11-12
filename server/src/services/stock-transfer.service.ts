@@ -60,8 +60,14 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
   if (!items.length) throw httpError(400, 'Transfer requires at least one item');
 
   const [fromWh, toWh] = await Promise.all([
-    prisma.warehouse.findFirst({ where: { id: fromWarehouseId, businessId: user.businessId } }),
-    prisma.warehouse.findFirst({ where: { id: toWarehouseId, businessId: user.businessId } })
+    prisma.warehouse.findFirst({
+      where: { id: fromWarehouseId, businessId: user.businessId },
+      include: { warehouseCategory: true }
+    }),
+    prisma.warehouse.findFirst({
+      where: { id: toWarehouseId, businessId: user.businessId },
+      include: { warehouseCategory: true }
+    })
   ]);
   if (!fromWh || !toWh) throw httpError(400, 'Invalid warehouse');
 
@@ -69,6 +75,18 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
   await branchAccess.assertBranchActive(user.businessId, fromWh.branchId);
   await branchAccess.assertBranchMembership(user, toWh.branchId);
   await branchAccess.assertBranchActive(user.businessId, toWh.branchId);
+
+  if (fromWh.branchId !== toWh.branchId) {
+    const fromOk = fromWh.warehouseCategory?.allowInterBranchTransfer !== false;
+    const toOk = toWh.warehouseCategory?.allowInterBranchTransfer !== false;
+    if (!fromOk || !toOk) {
+      const blocked = !fromOk ? fromWh.code : toWh.code;
+      throw httpError(
+        400,
+        `Warehouse ${blocked} category does not allow inter-branch transfers`
+      );
+    }
+  }
 
   const transfer = await prisma.stockTransfer.create({
     data: {
