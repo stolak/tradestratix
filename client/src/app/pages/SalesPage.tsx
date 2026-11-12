@@ -6,6 +6,7 @@ import { alertError, alertSuccess } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
 import { SearchSelect } from '../components/SearchSelect';
 import { InvoiceViewModal } from '../components/InvoiceViewModal';
+import { ReceiveCustomerPayment } from '../components/ReceiveCustomerPayment';
 
 type Tab = 'invoices' | 'payments' | 'returns';
 
@@ -180,7 +181,6 @@ export const SalesPage: React.FC = () => {
   const [products, setProducts] = useState<any[]>([]);
   const [reps, setReps] = useState<any[]>([]);
   const [invoices, setInvoices] = useState<any[]>([]);
-  const [payments, setPayments] = useState<any[]>([]);
   const [returns, setReturns] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
 
@@ -191,13 +191,6 @@ export const SalesPage: React.FC = () => {
     notes: ''
   });
   const [lines, setLines] = useState<LineItem[]>([makeLine()]);
-
-  const [payForm, setPayForm] = useState({
-    customer_id: '',
-    amount: '',
-    method: 'cash',
-    reference: ''
-  });
 
   const selectableCustomers = useMemo(
     () =>
@@ -393,7 +386,6 @@ export const SalesPage: React.FC = () => {
       api.products.list(),
       api.salesReps.list(activeBranchId || undefined),
       api.sales.invoices(),
-      api.sales.payments(),
       api.salesReps.me(),
       api.sales.returns()
     ]);
@@ -405,9 +397,8 @@ export const SalesPage: React.FC = () => {
     const p = value<any[]>(2, []);
     const r = value<any[]>(3, []);
     const inv = value<any[]>(4, []);
-    const pay = value<any[]>(5, []);
-    const meRep = value<any | null>(6, null);
-    const rets = value<any[]>(7, []);
+    const meRep = value<any | null>(5, null);
+    const rets = value<any[]>(6, []);
     const resolvedRepId = meRep?.id || user?.sales_rep?.id || '';
     const resolvedIsRep = Boolean(meRep?.id || user?.is_sales_rep || user?.sales_rep?.id);
     setMySalesRep(meRep?.id ? { id: meRep.id } : null);
@@ -419,7 +410,6 @@ export const SalesPage: React.FC = () => {
     setProducts(p);
     setReps(r);
     setInvoices(inv.filter((i: any) => i.channel !== 'pos'));
-    setPayments(pay);
     setReturns(rets);
 
     const failed = settled
@@ -431,7 +421,6 @@ export const SalesPage: React.FC = () => {
               'Products',
               'Sales reps',
               'Invoices',
-              'Payments',
               'My sales rep',
               'Returns'
             ][i]
@@ -482,13 +471,6 @@ export const SalesPage: React.FC = () => {
       });
     });
 
-    setPayForm((f) => ({
-      ...f,
-      customer_id:
-        visibleCustomers.some((x) => x.id === f.customer_id)
-          ? f.customer_id
-          : visibleCustomers[0]?.id || ''
-    }));
   };
 
   useEffect(() => {
@@ -668,23 +650,6 @@ export const SalesPage: React.FC = () => {
       }
       await alertError('Confirm failed', msg);
       return false;
-    }
-  };
-
-  const pay = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await api.sales.recordPayment({
-        customer_id: payForm.customer_id,
-        amount: Number(payForm.amount),
-        method: payForm.method,
-        reference: payForm.reference || undefined
-      });
-      await alertSuccess('Customer payment recorded');
-      setPayForm((f) => ({ ...f, amount: '', reference: '' }));
-      await load();
-    } catch (err: any) {
-      await alertError('Payment failed', err.message);
     }
   };
 
@@ -1317,204 +1282,11 @@ export const SalesPage: React.FC = () => {
       ) : null}
 
       {tab === 'payments' ? (
-        <>
-          <form
-            onSubmit={pay}
-            className="card-surface"
-            style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
-          >
-            <div style={{ fontWeight: 700 }}>Record customer payment</div>
-            <div className="form-grid">
-              <div className="field">
-                <label>Customer</label>
-                <select
-                  value={payForm.customer_id}
-                  onChange={(e) => setPayForm({ ...payForm, customer_id: e.target.value })}
-                  required
-                >
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Amount</label>
-                <input
-                  type="number"
-                  min="0.01"
-                  step="any"
-                  value={payForm.amount}
-                  onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Method</label>
-                <select
-                  value={payForm.method}
-                  onChange={(e) => setPayForm({ ...payForm, method: e.target.value })}
-                >
-                  <option value="cash">Cash</option>
-                  <option value="bank">Bank</option>
-                  <option value="transfer">Transfer</option>
-                </select>
-              </div>
-              <div className="field">
-                <label>Reference</label>
-                <input
-                  value={payForm.reference}
-                  onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })}
-                />
-              </div>
-            </div>
-            <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-              Post payment
-            </button>
-            {can('sales.post') || can('sales.refund') ? (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {can('sales.post') ? (
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={async () => {
-                      if (!payForm.customer_id) return;
-                      try {
-                        const credit = await api.sales.customerCredit(payForm.customer_id);
-                        if (!(credit.total > 0)) {
-                          await alertError('No credit', 'This customer has no unapplied credit.');
-                          return;
-                        }
-                        const open = invoices.filter(
-                          (i) =>
-                            i.customer_id === payForm.customer_id &&
-                            i.status === 'posted' &&
-                            Number(i.balance) > 0
-                        );
-                        if (!open.length) {
-                          await alertError('No open invoices', 'Nothing recognised is outstanding for this customer.');
-                          return;
-                        }
-                        const pick = await Swal.fire({
-                          title: `Apply ${Number(credit.total).toLocaleString()} credit`,
-                          input: 'select',
-                          inputOptions: Object.fromEntries(
-                            open.map((i) => [
-                              i.id,
-                              `${i.invoice_number} · balance ${Number(i.balance).toLocaleString()}`
-                            ])
-                          ),
-                          showCancelButton: true,
-                          confirmButtonText: 'Apply to invoice'
-                        });
-                        if (!pick.isConfirmed) return;
-                        const inv = open.find((i) => i.id === pick.value)!;
-                        const apply = Math.min(Number(credit.total), Number(inv.balance));
-                        await api.sales.applyCredit({
-                          customer_id: payForm.customer_id,
-                          allocations: [{ invoice_id: inv.id, amount: apply }]
-                        });
-                        await alertSuccess('Credit applied');
-                        await load();
-                      } catch (err: any) {
-                        await alertError('Apply credit failed', err.message);
-                      }
-                    }}
-                  >
-                    Apply customer credit
-                  </button>
-                ) : null}
-                {can('sales.refund') ? (
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={async () => {
-                      if (!payForm.customer_id) return;
-                      try {
-                        const credit = await api.sales.customerCredit(payForm.customer_id);
-                        if (!(credit.total > 0)) {
-                          await alertError('No credit', 'This customer has no unapplied credit.');
-                          return;
-                        }
-                        const amt = await Swal.fire({
-                          title: 'Refund customer credit',
-                          input: 'number',
-                          inputValue: credit.total,
-                          inputLabel: `Available ${Number(credit.total).toLocaleString()}`,
-                          showCancelButton: true,
-                          confirmButtonText: 'Refund cash'
-                        });
-                        if (!amt.isConfirmed) return;
-                        const defaults = await api.accounting.defaultAccounts();
-                        const cash = defaults.find((d: any) => d.setting_key === 'cash' || d.key === 'cash');
-                        const accountId = cash?.account_id || cash?.accountId;
-                        if (!accountId) {
-                          await alertError('Cash account missing', 'Map a default Cash account first.');
-                          return;
-                        }
-                        await api.sales.refundCredit({
-                          customer_id: payForm.customer_id,
-                          amount: Number(amt.value),
-                          account_id: accountId,
-                          method: 'cash'
-                        });
-                        await alertSuccess('Credit refunded');
-                        await load();
-                      } catch (err: any) {
-                        await alertError('Refund failed', err.message);
-                      }
-                    }}
-                  >
-                    Refund credit
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
-          </form>
-
-          <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Payment #</th>
-                    <th>Customer</th>
-                    <th>Amount</th>
-                    <th>Method</th>
-                    <th>Allocations</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {payments.map((p) => (
-                    <tr key={p.id}>
-                      <td>{p.payment_number}</td>
-                      <td>{p.customer?.name}</td>
-                      <td>{Number(p.amount).toLocaleString()}</td>
-                      <td>{p.method}</td>
-                      <td>
-                        {(p.allocations || [])
-                          .map(
-                            (a: any) =>
-                              `${a.invoice?.invoice_number}: ${Number(a.amount).toLocaleString()}` +
-                              (Number(a.deposit_amount) > 0
-                                ? ` (deposit ${Number(a.deposit_amount).toLocaleString()})`
-                                : '')
-                          )
-                          .join(' · ') || '—'}
-                        {Number(p.unapplied_amount) > 0 ? (
-                          <div className="line-items__discount-note">
-                            {Number(p.unapplied_amount).toLocaleString()} unapplied customer credit
-                          </div>
-                        ) : null}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>
+        <ReceiveCustomerPayment
+          customers={selectableCustomers}
+          historyScope="all"
+          onDone={() => void load()}
+        />
       ) : null}
 
       {tab === 'returns' ? (

@@ -171,19 +171,32 @@ export async function customerInvoices(user: AuthUser, customerId: string, filte
       balance: balances.get(customerId) ?? 0
     },
     purchases_total: roundMoney(invoices.reduce((s, i) => s + Number(i.totalAmount), 0)),
-    invoices: invoices.map((i) => ({
-      id: i.id,
-      invoice_number: i.invoiceNumber,
-      invoice_date: i.invoiceDate,
-      channel: i.channel,
-      branch: i.branch,
-      sales_rep_name: i.salesRep?.employee?.fullName ?? null,
-      lines: i._count.items,
-      total_amount: i.totalAmount,
-      amount_paid: i.amountPaid,
-      balance: i.balance,
-      payment_status: i.paymentStatus
-    }))
+    invoices: invoices.map((i) => {
+      const payable = roundMoney(
+        Number(i.totalAmount) - Number(i.cancelledAmount || 0) - Number(i.amountPaid)
+      );
+      return {
+        id: i.id,
+        invoice_number: i.invoiceNumber,
+        invoice_date: i.invoiceDate,
+        status: i.status,
+        channel: i.channel,
+        branch: i.branch,
+        sales_rep_name: i.salesRep?.employee?.fullName ?? null,
+        lines: i._count.items,
+        total_amount: i.totalAmount,
+        cancelled_amount: i.cancelledAmount,
+        amount_paid: i.amountPaid,
+        /** Recognised AR still open on this invoice. */
+        balance: i.balance,
+        /** Commercial amount still payable (includes unfulfilled / prepaid gap). */
+        amount_due: Math.max(0, payable),
+        deposit_held: i.depositHeld,
+        payment_status: i.paymentStatus,
+        fulfilment_status: i.fulfilmentStatus,
+        recognised_amount: i.recognisedAmount
+      };
+    })
   });
 }
 

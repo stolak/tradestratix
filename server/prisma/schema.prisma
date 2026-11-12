@@ -504,7 +504,10 @@ model JournalEntry {
   /// Commercial sales representative responsible (not the posting user)
   salesRepresentativeId   String?        @map("sales_representative_id")
   entryNumber             String         @map("entry_number")
+  /// Date the journal was entered / booked in the system (posting day)
   entryDate               DateTime       @map("entry_date")
+  /// Economic / business date of the transaction (may be backdated; never in the future)
+  transactionDate         DateTime       @map("transaction_date")
   memo                    String?        @db.Text
   /// draft | posted | reversed
   status                  String         @default("draft")
@@ -534,6 +537,7 @@ model JournalEntry {
   @@index([businessId, supplierId])
   @@index([businessId, salesRepresentativeId])
   @@index([entryDate])
+  @@index([transactionDate])
   @@map("journal_entries")
 }
 
@@ -545,12 +549,16 @@ model JournalLine {
   debit                   Decimal  @default(0) @db.Decimal(18, 4)
   credit                  Decimal  @default(0) @db.Decimal(18, 4)
   lineNo                  Int      @map("line_no")
+  /// Business/transaction date for the line (normally mirrors the parent journal entry_date)
+  transactionDate         DateTime @map("transaction_date")
   /// Set only on customer control lines (typically AR) — partner balances use this, not the current default-account map
   customerId              String?  @map("customer_id")
   /// Set only on supplier control lines (typically AP)
   supplierId              String?  @map("supplier_id")
   /// Set only on sales-rep control lines (custody / commission payable / recoveries)
   salesRepresentativeId   String?  @map("sales_representative_id")
+  createdAt               DateTime @default(now()) @map("created_at")
+  updatedAt               DateTime @updatedAt @map("updated_at")
   journalEntry            JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
   account                 Account      @relation(fields: [accountId], references: [id])
   customer                Customer?    @relation("JournalLineCustomer", fields: [customerId], references: [id], onDelete: Restrict)
@@ -562,6 +570,7 @@ model JournalLine {
   @@index([customerId])
   @@index([supplierId])
   @@index([salesRepresentativeId])
+  @@index([transactionDate])
   @@map("journal_lines")
 }
 
@@ -1763,7 +1772,7 @@ model CustomerPayment {
   reference      String?
   notes          String?  @db.Text
   journalEntryId String?  @map("journal_entry_id")
-  /// Part of the receipt not allocated to any invoice (customer credit in unapplied receipts)
+  /// Advance / overpay still available to allocate or refund (GL lives on customer AR)
   unappliedAmount Decimal @default(0) @map("unapplied_amount") @db.Decimal(18, 4)
   idempotencyKey String?  @map("idempotency_key")
   createdById    String?  @map("created_by_id")

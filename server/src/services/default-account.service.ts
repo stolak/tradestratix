@@ -25,21 +25,24 @@ export const DEFAULT_ACCOUNT_CATALOG: DefaultAccountKeyMeta[] = [
   {
     key: 'customer_advances',
     label: 'Customer Advances',
-    description: 'Liability for advances received from customers',
+    description:
+      'Legacy liability mapping (unused). Customer advances now credit Accounts Receivable.',
     accountTypes: ['liability'],
     category: 'customer'
   },
   {
     key: 'customer_deposits',
     label: 'Customer Deposits',
-    description: 'Liability for customer deposits held',
+    description:
+      'Legacy liability mapping (unused). Deposits / prepaid orders credit Accounts Receivable.',
     accountTypes: ['liability'],
     category: 'customer'
   },
   {
     key: 'unapplied_customer_receipts',
     label: 'Unapplied Customer Receipts',
-    description: 'Clearing for receipts not yet allocated to invoices',
+    description:
+      'Legacy clearing mapping (unused). Surplus receipts stay on Accounts Receivable as customer credit.',
     accountTypes: ['liability'],
     category: 'customer'
   },

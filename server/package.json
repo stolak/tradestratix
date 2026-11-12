@@ -19,6 +19,7 @@
     "backfill:employee-users": "tsx scripts/backfill-employee-users.ts",
     "backfill:fulfilment": "tsx scripts/backfill-fulfilment-recognition.ts",
     "backfill:journal-line-entities": "tsx scripts/backfill-journal-line-entities.ts",
+    "backfill:journal-line-dates": "tsx scripts/backfill-journal-line-dates.ts",
     "test:fulfilment": "tsx scripts/test-fulfilment.ts",
     "test:branches": "tsx scripts/test-multi-branch.ts",
     "test:journal-entities": "tsx scripts/test-journal-entities.ts",

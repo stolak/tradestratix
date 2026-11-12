@@ -227,6 +227,29 @@ export async function assertPeriodOpen(businessId: string, entryDate: Date | str
   }
 }
 
+/** Calendar day key in local time (YYYY-MM-DD). */
+function localDayKey(d: Date) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/**
+ * Resolve journal transaction_date: explicit input, else now.
+ * Backdating is allowed; future dates are rejected.
+ */
+export function resolveTransactionDate(raw?: string | Date | null): Date {
+  const date = raw != null && raw !== '' ? new Date(raw) : new Date();
+  if (Number.isNaN(date.getTime())) {
+    throw httpError(400, 'Invalid transaction_date');
+  }
+  if (localDayKey(date) > localDayKey(new Date())) {
+    throw httpError(400, 'transaction_date cannot be in the future');
+  }
+  return date;
+}
+
 /**
  * Central posting engine: creates a balanced journal, optionally posts immediately.
  * Idempotent when idempotency_key or sourceType+sourceId is provided for posted entries.
@@ -235,6 +258,9 @@ export async function createJournal(
   user: AuthUser,
   body: {
     entry_date?: string | Date;
+    /** Economic / business date (backdatable). Defaults to today; future dates rejected. */
+    transaction_date?: string | Date;
+    transactionDate?: string | Date;
     memo?: string;
     branch_id?: string;
     branchId?: string;
@@ -262,9 +288,16 @@ export async function createJournal(
   const lines = body.lines || [];
   if (lines.length < 2) throw httpError(400, 'Journal requires at least two lines');
 
-  const entryDateEarly = body.entry_date ? new Date(body.entry_date) : new Date();
+  // entryDate = journal booking date; transactionDate = economic date (may be backdated, never future).
+  // Legacy callers that only send entry_date are treated as supplying the economic date too.
+  const entryDate = body.entry_date ? new Date(body.entry_date) : new Date();
+  if (Number.isNaN(entryDate.getTime())) throw httpError(400, 'Invalid entry_date');
+  const transactionDate = resolveTransactionDate(
+    body.transaction_date ?? body.transactionDate ?? body.entry_date ?? null
+  );
   if (body.post !== false) {
-    await assertPeriodOpen(user.businessId, entryDateEarly);
+    // Period lock follows the economic date being posted into.
+    await assertPeriodOpen(user.businessId, transactionDate);
   }
 
   const customerId = body.customer_id ?? body.customerId ?? null;
@@ -410,7 +443,6 @@ export async function createJournal(
   }
 
   const shouldPost = body.post !== false;
-  const entryDate = body.entry_date ? new Date(body.entry_date) : new Date();
   const requestedBranchId = body.branch_id || body.branchId || user.activeBranchId;
   const branchId =
     opts?.trustedBranch && requestedBranchId
@@ -429,6 +461,7 @@ export async function createJournal(
         salesRepresentativeId,
         entryNumber,
         entryDate,
+        transactionDate,
         memo: body.memo || null,
         status: shouldPost ? 'posted' : 'draft',
         sourceType,
@@ -446,6 +479,7 @@ export async function createJournal(
             debit: toDec(l.debit),
             credit: toDec(l.credit),
             lineNo: l.lineNo,
+            transactionDate,
             customerId: l.customerId,
             supplierId: l.supplierId,
             salesRepresentativeId: l.salesRepresentativeId

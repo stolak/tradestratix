@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Info } from 'lucide-react';
+import { ChevronDown, ChevronRight, Info, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { api } from '../utils/api';
 import { alertError } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
 import { InvoiceViewModal } from './InvoiceViewModal';
+import { ReceiveCustomerPayment } from './ReceiveCustomerPayment';
 
 type Filter = { branch_id: string; from: string; to: string; q: string };
 type SortKey = 'name' | 'balance' | 'purchases';
@@ -142,16 +144,18 @@ const CustomerInvoices: React.FC<{
 };
 
 export const CustomerBalances: React.FC = () => {
-  const { branches } = useAuth();
+  const { branches, can } = useAuth();
   const [draft, setDraft] = useState<Filter>({ branch_id: '', from: '', to: '', q: '' });
   const [applied, setApplied] = useState<Filter>(draft);
   const [data, setData] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
+  const [payCustomer, setPayCustomer] = useState<{ id: string; name: string } | null>(null);
   const [sort, setSort] = useState<SortKey>('balance');
   const [onlyOwing, setOnlyOwing] = useState(false);
   const [onlyBuyers, setOnlyBuyers] = useState(false);
+  const canReceive = can('sales.post') || can('sales.refund');
 
   const load = async (f: Filter) => {
     setLoading(true);
@@ -321,6 +325,7 @@ export const CustomerBalances: React.FC = () => {
                 <th className="num">Purchases</th>
                 <th className="num">Invoices</th>
                 <th>Last purchase</th>
+                {canReceive ? <th style={{ width: 120 }} /> : null}
               </tr>
             </thead>
             <tbody>
@@ -359,10 +364,22 @@ export const CustomerBalances: React.FC = () => {
                       <td className="num">{money(c.purchases_total)}</td>
                       <td className="num">{c.purchases_count}</td>
                       <td>{fmtDate(c.last_purchase_at)}</td>
+                      {canReceive ? (
+                        <td onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            style={{ padding: '0.35rem 0.65rem' }}
+                            onClick={() => setPayCustomer({ id: c.id, name: c.name })}
+                          >
+                            Pay
+                          </button>
+                        </td>
+                      ) : null}
                     </tr>
                     {open ? (
                       <tr className="cust-bal__detail">
-                        <td colSpan={8}>
+                        <td colSpan={canReceive ? 9 : 8}>
                           <CustomerInvoices
                             customerId={c.id}
                             filter={applied}
@@ -376,7 +393,7 @@ export const CustomerBalances: React.FC = () => {
               })}
               {!rows.length ? (
                 <tr>
-                  <td colSpan={8} style={{ color: 'var(--ink-muted)' }}>
+                  <td colSpan={canReceive ? 9 : 8} style={{ color: 'var(--ink-muted)' }}>
                     {loading ? 'Loading…' : 'No customers match.'}
                   </td>
                 </tr>
@@ -389,6 +406,49 @@ export const CustomerBalances: React.FC = () => {
       {viewInvoiceId ? (
         <InvoiceViewModal invoiceId={viewInvoiceId} onClose={() => setViewInvoiceId(null)} />
       ) : null}
+
+      {payCustomer
+        ? createPortal(
+            <div
+              className="modal-backdrop"
+              onMouseDown={(e) => e.target === e.currentTarget && setPayCustomer(null)}
+            >
+              <div className="modal invoice-view" role="dialog" aria-modal="true">
+                <div className="modal__header">
+                  <div>
+                    <div className="invoice-view__eyebrow">Customer payment</div>
+                    <div className="invoice-view__number">{payCustomer.name}</div>
+                  </div>
+                  <div className="modal__actions">
+                    <button
+                      type="button"
+                      className="line-items__remove"
+                      onClick={() => setPayCustomer(null)}
+                      aria-label="Close"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                </div>
+                <div className="modal__body">
+                  <ReceiveCustomerPayment
+                    customerId={payCustomer.id}
+                    hideHistory
+                    onDone={async () => {
+                      await load(applied);
+                    }}
+                  />
+                </div>
+                <div className="modal__footer">
+                  <button type="button" className="btn btn-ghost" onClick={() => setPayCustomer(null)}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 };

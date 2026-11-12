@@ -619,10 +619,6 @@ export async function postInvoice(user: AuthUser, id: string, opts: ConfirmOptio
       throw httpError(400, 'POS sales must be paid in full');
     }
   }
-  if (!immediate && payAmount > 0 && !accountMap.customer_deposits) {
-    throw httpError(400, 'Default account "customer_deposits" is not configured');
-  }
-
   const wantsOverride = opts.override_credit === true || String(opts.override_credit) === 'true';
   const overrideReason = String(opts.override_reason || '').trim();
   if (wantsOverride) {
@@ -814,19 +810,39 @@ export async function recordCustomerPayment(user: AuthUser, body: Record<string,
     (method === 'bank' || method === 'transfer' ? accountMap.bank : accountMap.cash);
   if (!payAccountId) throw httpError(400, 'Payment GL account (cash/bank) is not configured');
 
-  const allowUnallocated = body.allow_unallocated === true || body.allowUnallocated === true;
+  // Surplus always becomes customer credit on AR unless explicitly refused.
+  const allowUnallocated =
+    body.allow_unallocated !== false && body.allowUnallocated !== false;
+  const mode = String(body.mode || body.intent || '')
+    .toLowerCase()
+    .trim();
   const allocationsInput: any[] = Array.isArray(body.allocations) ? body.allocations : [];
   let allocations: { invoiceId: string; amount: number }[] = [];
-  if (allocationsInput.length) {
+
+  const parseAllocations = () => {
+    const out: { invoiceId: string; amount: number }[] = [];
     for (const [i, a] of allocationsInput.entries()) {
       const invoiceId = a.invoice_id || a.invoiceId;
       const allocAmt = roundMoney(Number(a.amount));
       if (!invoiceId || !allocAmt || allocAmt <= 0) {
         throw httpError(400, `allocations[${i}] requires invoice_id and amount`);
       }
-      allocations.push({ invoiceId, amount: allocAmt });
+      out.push({ invoiceId, amount: allocAmt });
+    }
+    return out;
+  };
+
+  if (allocationsInput.length) {
+    // Explicit targets (advance against open / unfilled orders, or legacy allocate).
+    allocations = parseAllocations();
+  } else if (mode === 'advance' || body.leave_unallocated === true || body.leaveUnallocated === true) {
+    // Pure credit on account — no invoice link.
+    allocations = [];
+    if (!allowUnallocated) {
+      throw httpError(400, 'Advance payments require allow_unallocated (customer credit)');
     }
   } else {
+    // Default / clear: FIFO across recognised AR; leftover stays as credit.
     allocations = await autoAllocate(user.businessId, customerId, amount);
     if (!allocations.length && !allowUnallocated) {
       throw httpError(400, 'No open customer invoices to allocate this payment against');

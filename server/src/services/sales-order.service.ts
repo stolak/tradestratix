@@ -10,7 +10,6 @@ import {
 } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
-import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import { createNotification } from './notification.service.js';
 import * as branchAccess from './branch-access.service.js';
 import {
@@ -160,7 +159,6 @@ export async function cancelOrder(user: AuthUser, id: string, body: Record<strin
     );
   }
 
-  const accountMap = await getDefaultAccountMap(user.businessId);
   const cancelId = shortId('scx');
 
   const outcome = await prisma.$transaction(
@@ -232,35 +230,9 @@ export async function cancelOrder(user: AuthUser, id: string, body: Record<strin
       let appliedToBalance = 0;
       let released = 0;
       if (excess > 0.009) {
+        // Prepaid already credits customer AR. Cancel only adjusts invoice memos; surplus stays on AR.
         appliedToBalance = roundMoney(Math.min(excess, balance));
         released = roundMoney(excess - appliedToBalance);
-        for (const key of ['customer_deposits', ...(released > 0 ? ['unapplied_customer_receipts'] : [])]) {
-          if (!accountMap[key]) throw httpError(400, `Default account "${key}" is not configured`);
-        }
-        const lines: any[] = [
-          { account_id: accountMap.customer_deposits, debit: excess, description: `Deposit released — ${inv.invoiceNumber}` }
-        ];
-        if (appliedToBalance > 0) {
-          lines.push({ account_id: accountMap.accounts_receivable, credit: appliedToBalance, description: `Deposit applied to balance ${inv.invoiceNumber}` });
-        }
-        if (released > 0) {
-          lines.push({ account_id: accountMap.unapplied_customer_receipts, credit: released, description: `Customer credit from cancelled ${inv.invoiceNumber}` });
-        }
-        await createJournal(
-          user,
-          {
-            memo: `Order cancellation ${inv.invoiceNumber}: ${reason}`,
-            source_type: 'sales_cancellation',
-            source_id: cancelId,
-            customer_id: inv.customerId,
-            idempotency_key: `sales_cancel:${cancelId}`,
-            branch_id: inv.branchId ?? undefined,
-            post: true,
-            lines
-          },
-          tx,
-          { trustedBranch: true }
-        );
         depositHeld = roundMoney(depositHeld - excess);
         balance = roundMoney(balance - appliedToBalance);
         amountPaid = roundMoney(amountPaid - released);

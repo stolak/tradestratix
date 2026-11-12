@@ -684,34 +684,7 @@ export async function postReturn(user: AuthUser, id: string, body: Record<string
           }
         });
       } else {
-        // credit_note → unapplied customer credit
-        if (!accountMap.unapplied_customer_receipts) {
-          throw httpError(400, 'Default account "unapplied_customer_receipts" is not configured');
-        }
-        const creditJ: any = await createJournal(
-          user,
-          {
-            ...common,
-            memo: `Customer credit from return ${ret.returnNumber}`,
-            idempotency_key: `sales_return_credit:${ret.id}`,
-            branch_id: ret.revenueBranchId,
-            lines: [
-              {
-                account_id: accountMap.accounts_receivable,
-                debit: credit,
-                description: `Clear credit ${invoice.invoiceNumber}`
-              },
-              {
-                account_id: accountMap.unapplied_customer_receipts,
-                credit: credit,
-                description: `Unapplied credit ${ret.returnNumber}`
-              }
-            ]
-          },
-          tx,
-          { trustedBranch: true }
-        );
-        settlementJournalId = creditJ.id;
+        // credit_note → leave credit on customer AR (return already Cr AR via revenue reversal).
         const paymentNumber = await nextDocNumber(
           tx.customerPayment,
           user.businessId,
@@ -732,7 +705,7 @@ export async function postReturn(user: AuthUser, id: string, body: Record<string
             method: 'credit_note',
             reference: ret.returnNumber,
             notes: `Credit from sales return ${ret.returnNumber}`,
-            journalEntryId: creditJ.id,
+            journalEntryId: null,
             unappliedAmount: toDec(credit),
             idempotencyKey: `return_credit:${ret.id}`,
             createdById: user.id

@@ -1848,6 +1848,110 @@ body.modal-open {
   color: var(--ink-muted);
 }
 
+.recv-pay {
+  display: grid;
+  gap: 1rem;
+}
+
+.recv-pay__form {
+  padding: 1.25rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.recv-pay__head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.recv-pay__title {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.recv-pay__hint {
+  margin: 0.3rem 0 0;
+  color: var(--ink-muted);
+  font-size: 0.9rem;
+  max-width: 42rem;
+}
+
+.recv-pay__stats {
+  display: flex;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+}
+
+.recv-pay__stat-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.recv-pay__stat-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-size: 1.1rem;
+}
+
+.recv-pay__modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 0.55rem;
+}
+
+.recv-pay__mode {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  background: #fff;
+}
+
+.recv-pay__mode.is-active {
+  border-color: color-mix(in srgb, var(--brand) 55%, var(--line));
+  background: color-mix(in srgb, var(--brand) 8%, #fff);
+}
+
+.recv-pay__mode input {
+  margin-top: 0.2rem;
+}
+
+.recv-pay__mode strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.recv-pay__mode small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.recv-pay__actions-row,
+.recv-pay__submit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.recv-pay__note {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+
 .pickups__search {
   display: inline-flex;
   align-items: center;

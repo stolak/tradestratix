@@ -30,10 +30,11 @@ export async function lockInvoices(tx: Tx, ids: string[]) {
 /**
  * Record a customer receipt inside an open transaction.
  *
- * Each allocation first settles the invoice's recognised receivable (Cr AR) and holds any excess as a
- * customer deposit against goods not yet handed over (Cr Customer Deposits). A remainder may be kept as
- * unapplied customer credit. Cash is booked in the receiving branch; AR/deposit lines are booked in each
- * invoice's revenue branch, linked through inter-branch clearing when the branches differ.
+ * All customer money credits Accounts Receivable (customer control). Recognised invoice balances are
+ * reduced first; any excess (advance / overpay / deposit against unfulfilled goods) stays as a credit
+ * balance on the same customer AR — there is no separate "unapplied" liability account.
+ * Cash is booked in the receiving branch; AR is booked in each invoice's revenue branch, linked through
+ * inter-branch clearing when the branches differ.
  */
 export async function applyPaymentInTx(
   tx: Tx,
@@ -115,22 +116,17 @@ export async function applyPaymentInTx(
         `Allocation ${apply} exceeds the amount still payable on ${inv.invoiceNumber} (${invoicePayable(inv)})`
       );
     }
+    // Recognised AR settled first; any excess on the invoice is prepaid (still Cr customer AR).
     const ar = roundMoney(Math.min(apply, Math.max(0, Number(inv.balance))));
     const deposit = roundMoney(apply - ar);
-    if (deposit > 0 && !accountMap.customer_deposits) {
-      throw httpError(400, 'Default account "customer_deposits" is not configured');
-    }
     splits.push({ invoiceId: inv.id, branchId: inv.branchId || input.receivingBranchId, ar, deposit, total: apply });
   }
 
   const allocatedTotal = roundMoney(splits.reduce((s, x) => s + x.total, 0));
-  const unapplied = roundMoney(amount - allocatedTotal);
-  if (unapplied < -0.01) throw httpError(400, 'Allocations exceed payment amount');
-  if (unapplied > 0.01 && !input.allowUnallocated) {
+  const surplus = roundMoney(amount - allocatedTotal);
+  if (surplus < -0.01) throw httpError(400, 'Allocations exceed payment amount');
+  if (surplus > 0.01 && !input.allowUnallocated) {
     throw httpError(400, `Payment amount ${amount} does not match allocated ${allocatedTotal}`);
-  }
-  if (unapplied > 0.01 && !accountMap.unapplied_customer_receipts) {
-    throw httpError(400, 'Default account "unapplied_customer_receipts" is not configured');
   }
   if (splits.some((s) => s.branchId !== input.receivingBranchId) && !accountMap.inter_branch_clearing) {
     throw httpError(400, 'Default account "inter_branch_clearing" is not configured');
@@ -144,27 +140,46 @@ export async function applyPaymentInTx(
     customer_id: input.customerId,
     ...(walkInSalesRepId ? { sales_representative_id: walkInSalesRepId } : {}),
     post: true,
-    entry_date: input.paymentDate
+    entry_date: input.paymentDate,
+    transaction_date: input.paymentDate
   };
 
-  const byBranch = new Map<string, { ar: number; deposit: number }>();
+  // Branch totals of customer AR credit (settlement + prepaid on invoices).
+  const byBranch = new Map<string, number>();
   for (const s of splits) {
-    const b = byBranch.get(s.branchId) || { ar: 0, deposit: 0 };
-    b.ar = roundMoney(b.ar + s.ar);
-    b.deposit = roundMoney(b.deposit + s.deposit);
-    byBranch.set(s.branchId, b);
+    byBranch.set(s.branchId, roundMoney((byBranch.get(s.branchId) || 0) + s.total));
+  }
+  // Advance / surplus with no invoice: credit AR at the receiving branch.
+  if (surplus > 0.01) {
+    byBranch.set(
+      input.receivingBranchId,
+      roundMoney((byBranch.get(input.receivingBranchId) || 0) + surplus)
+    );
   }
 
-  const home = byBranch.get(input.receivingBranchId) || { ar: 0, deposit: 0 };
+  const homeAr = byBranch.get(input.receivingBranchId) || 0;
   const remote = [...byBranch.entries()].filter(([b]) => b !== input.receivingBranchId);
-  const remoteTotal = roundMoney(remote.reduce((s, [, v]) => s + v.ar + v.deposit, 0));
+  const remoteTotal = roundMoney(remote.reduce((s, [, v]) => s + v, 0));
   const lines: any[] = [
     { account_id: input.accountId, debit: amount, description: `${input.method} receipt ${paymentNumber}` }
   ];
-  if (home.ar > 0) lines.push({ account_id: accountMap.accounts_receivable, credit: home.ar, description: `AR settlement ${paymentNumber}` });
-  if (home.deposit > 0) lines.push({ account_id: accountMap.customer_deposits, credit: home.deposit, description: `Deposit on order ${paymentNumber}` });
-  if (unapplied > 0.01) lines.push({ account_id: accountMap.unapplied_customer_receipts, credit: unapplied, description: `Unapplied credit ${paymentNumber}` });
-  if (remoteTotal > 0) lines.push({ account_id: accountMap.inter_branch_clearing, credit: remoteTotal, description: `Received for other branches ${paymentNumber}` });
+  if (homeAr > 0.01) {
+    lines.push({
+      account_id: accountMap.accounts_receivable,
+      credit: homeAr,
+      description:
+        surplus > 0.01 && homeAr - surplus < 0.01
+          ? `Customer credit ${paymentNumber}`
+          : `Customer receipt ${paymentNumber}`
+    });
+  }
+  if (remoteTotal > 0) {
+    lines.push({
+      account_id: accountMap.inter_branch_clearing,
+      credit: remoteTotal,
+      description: `Received for other branches ${paymentNumber}`
+    });
+  }
 
   const receiptJournal: any = await createJournal(
     user,
@@ -178,12 +193,7 @@ export async function applyPaymentInTx(
     tx
   );
 
-  for (const [branchId, v] of remote) {
-    const remoteLines: any[] = [
-      { account_id: accountMap.inter_branch_clearing, debit: roundMoney(v.ar + v.deposit), description: `Collected by receiving branch — ${paymentNumber}` }
-    ];
-    if (v.ar > 0) remoteLines.push({ account_id: accountMap.accounts_receivable, credit: v.ar, description: `AR settlement ${paymentNumber}` });
-    if (v.deposit > 0) remoteLines.push({ account_id: accountMap.customer_deposits, credit: v.deposit, description: `Deposit on order ${paymentNumber}` });
+  for (const [branchId, arCredit] of remote) {
     await createJournal(
       user,
       {
@@ -191,7 +201,18 @@ export async function applyPaymentInTx(
         memo: `Customer payment ${paymentNumber} received in another branch — ${input.customerName}`,
         idempotency_key: `customer_payment:${paymentId}:${branchId}`,
         branch_id: branchId,
-        lines: remoteLines
+        lines: [
+          {
+            account_id: accountMap.inter_branch_clearing,
+            debit: arCredit,
+            description: `Collected by receiving branch — ${paymentNumber}`
+          },
+          {
+            account_id: accountMap.accounts_receivable,
+            credit: arCredit,
+            description: `Customer receipt ${paymentNumber}`
+          }
+        ]
       },
       tx,
       { trustedBranch: true }
@@ -221,7 +242,8 @@ export async function applyPaymentInTx(
       paymentNumber,
       paymentDate: input.paymentDate || new Date(),
       amount: toDec(amount),
-      unappliedAmount: toDec(Math.max(0, unapplied)),
+      // Tracks advance / overpay still available to allocate or refund (memo; GL lives on AR).
+      unappliedAmount: toDec(Math.max(0, surplus)),
       method: input.method,
       accountId: input.accountId,
       reference: input.reference || null,
@@ -265,7 +287,54 @@ export async function autoAllocate(businessId: string, customerId: string, amoun
   return out;
 }
 
-/** Sum of unapplied customer credit still available. */
+/**
+ * When fulfilment creates recognised AR, apply free customer credit (unappliedAmount) to the
+ * invoice balance with no GL — cash already sits on AR.
+ */
+export async function consumeCreditAgainstInvoiceBalance(
+  tx: Tx,
+  businessId: string,
+  customerId: string,
+  invoiceId: string
+) {
+  const inv = await tx.salesInvoice.findFirst({
+    where: { id: invoiceId, businessId, customerId, status: 'posted' }
+  });
+  if (!inv) return 0;
+  let due = roundMoney(Math.max(0, Number(inv.balance)));
+  if (due <= 0.01) return 0;
+
+  const credits = await tx.customerPayment.findMany({
+    where: { businessId, customerId, unappliedAmount: { gt: 0 } },
+    orderBy: { paymentDate: 'asc' }
+  });
+  let applied = 0;
+  for (const c of credits) {
+    if (due <= 0.01) break;
+    const take = roundMoney(Math.min(Number(c.unappliedAmount), due));
+    if (take <= 0) continue;
+    await tx.customerPayment.update({
+      where: { id: c.id },
+      data: { unappliedAmount: toDec(roundMoney(Number(c.unappliedAmount) - take)) }
+    });
+    due = roundMoney(due - take);
+    applied = roundMoney(applied + take);
+  }
+  if (applied <= 0.01) return 0;
+
+  const paid = roundMoney(Number(inv.amountPaid) + applied);
+  await tx.salesInvoice.update({
+    where: { id: inv.id },
+    data: {
+      amountPaid: toDec(paid),
+      balance: toDec(Math.max(0, roundMoney(Number(inv.balance) - applied))),
+      paymentStatus: paymentStatusFor(inv, paid)
+    }
+  });
+  return applied;
+}
+
+/** Sum of customer credit still available to allocate or refund (advances / overpays on AR). */
 export async function customerUnappliedCredit(businessId: string, customerId: string) {
   const rows = await prisma.customerPayment.findMany({
     where: { businessId, customerId, unappliedAmount: { gt: 0 } },
@@ -277,8 +346,8 @@ export async function customerUnappliedCredit(businessId: string, customerId: st
 }
 
 /**
- * Apply existing unapplied customer credit to open invoice balances (oldest credit first).
- * No cash moves — Dr unapplied_customer_receipts / Cr AR (per invoice revenue branch).
+ * Allocate existing customer credit (AR credit balance / advance) onto open invoice balances.
+ * No GL move — cash already credited AR; this only assigns the credit to invoices.
  */
 export async function applyUnappliedCredit(
   user: AuthUser,
@@ -299,11 +368,6 @@ export async function applyUnappliedCredit(
         where: { businessId: user.businessId, idempotencyKey: input.idempotencyKey }
       });
       if (existing) return { payment: existing, replayed: true };
-    }
-
-    const accountMap = await getDefaultAccountMap(user.businessId);
-    if (!accountMap.unapplied_customer_receipts || !accountMap.accounts_receivable) {
-      throw httpError(400, 'Default unapplied_customer_receipts and accounts_receivable must be configured');
     }
 
     const merged = new Map<string, number>();
@@ -348,7 +412,7 @@ export async function applyUnappliedCredit(
     });
     const available = roundMoney(credits.reduce((s, c) => s + Number(c.unappliedAmount), 0));
     if (need > available + 0.01) {
-      throw httpError(400, `Only ${available} unapplied credit available (need ${need})`);
+      throw httpError(400, `Only ${available} customer credit available (need ${need})`);
     }
 
     let remaining = need;
@@ -360,45 +424,6 @@ export async function applyUnappliedCredit(
         data: { unappliedAmount: toDec(roundMoney(Number(c.unappliedAmount) - take)) }
       });
       remaining = roundMoney(remaining - take);
-    }
-
-    const byBranch = new Map<string, number>();
-    for (const s of splits) {
-      const b = s.branchId || (user.activeBranchId as string);
-      byBranch.set(b, roundMoney((byBranch.get(b) || 0) + s.ar));
-    }
-
-    const paymentId = shortId('cpay');
-    const paymentNumber = await nextDocNumber(tx.customerPayment, user.businessId, 'paymentNumber', 'CPAY', 5);
-    let firstJournalId: string | null = null;
-    for (const [branchId, ar] of byBranch) {
-      const j: any = await createJournal(
-        user,
-        {
-          source_type: 'customer_credit_apply',
-          source_id: paymentId,
-          customer_id: input.customerId,
-          post: true,
-          memo: `Apply customer credit ${paymentNumber}`,
-          idempotency_key: `credit_apply:${paymentId}:${branchId}`,
-          branch_id: branchId,
-          lines: [
-            {
-              account_id: accountMap.unapplied_customer_receipts,
-              debit: ar,
-              description: `Apply credit ${paymentNumber}`
-            },
-            {
-              account_id: accountMap.accounts_receivable,
-              credit: ar,
-              description: `AR settlement ${paymentNumber}`
-            }
-          ]
-        },
-        tx,
-        { trustedBranch: true }
-      );
-      firstJournalId = firstJournalId || j.id;
     }
 
     for (const s of splits) {
@@ -414,6 +439,8 @@ export async function applyUnappliedCredit(
       });
     }
 
+    const paymentId = shortId('cpay');
+    const paymentNumber = await nextDocNumber(tx.customerPayment, user.businessId, 'paymentNumber', 'CPAY', 5);
     const payment = await tx.customerPayment.create({
       data: {
         id: paymentId,
@@ -426,8 +453,8 @@ export async function applyUnappliedCredit(
         unappliedAmount: toDec(0),
         method: 'credit_apply',
         reference: null,
-        notes: 'Applied unapplied customer credit',
-        journalEntryId: firstJournalId,
+        notes: 'Allocated customer credit to invoices (no GL — already on AR)',
+        journalEntryId: null,
         idempotencyKey: input.idempotencyKey || null,
         createdById: user.id,
         allocations: {
@@ -447,7 +474,7 @@ export async function applyUnappliedCredit(
 }
 
 /**
- * Refund unapplied customer credit as cash/bank. Dr unapplied / Cr cash.
+ * Refund customer credit as cash/bank. Dr AR / Cr cash (reduces the customer's credit balance).
  */
 export async function refundUnappliedCredit(
   user: AuthUser,
@@ -481,8 +508,8 @@ export async function refundUnappliedCredit(
     }
 
     const accountMap = await getDefaultAccountMap(user.businessId);
-    if (!accountMap.unapplied_customer_receipts) {
-      throw httpError(400, 'Default account "unapplied_customer_receipts" is not configured');
+    if (!accountMap.accounts_receivable) {
+      throw httpError(400, 'Default accounts_receivable must be configured');
     }
 
     const credits = await tx.customerPayment.findMany({
@@ -495,7 +522,7 @@ export async function refundUnappliedCredit(
     });
     const available = roundMoney(credits.reduce((s, c) => s + Number(c.unappliedAmount), 0));
     if (amount > available + 0.01) {
-      throw httpError(400, `Only ${available} unapplied credit available`);
+      throw httpError(400, `Only ${available} customer credit available`);
     }
 
     let remaining = amount;
@@ -523,9 +550,9 @@ export async function refundUnappliedCredit(
         branch_id: branchId,
         lines: [
           {
-            account_id: accountMap.unapplied_customer_receipts,
+            account_id: accountMap.accounts_receivable,
             debit: amount,
-            description: `Refund credit ${paymentNumber}`
+            description: `Refund customer credit ${paymentNumber}`
           },
           {
             account_id: input.accountId,
@@ -550,7 +577,7 @@ export async function refundUnappliedCredit(
         method: 'credit_refund',
         accountId: input.accountId,
         reference: input.reference || null,
-        notes: input.notes || `Refund of unapplied credit`,
+        notes: input.notes || `Refund of customer credit`,
         journalEntryId: j.id,
         idempotencyKey: input.idempotencyKey || null,
         createdById: user.id

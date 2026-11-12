@@ -5,6 +5,7 @@ import Swal from 'sweetalert2';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
+import { ReceiveCustomerPayment } from './ReceiveCustomerPayment';
 
 type Props = {
   invoiceId: string;
@@ -94,11 +95,19 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
   const [error, setError] = useState<string | null>(null);
   const [posting, setPosting] = useState(false);
   const [acting, setActing] = useState(false);
+  const [showPay, setShowPay] = useState(false);
+
+  const reloadInvoice = async () => {
+    const row = await api.sales.getInvoice(invoiceId);
+    setInvoice(row);
+    return row;
+  };
 
   useEffect(() => {
     let cancelled = false;
     setInvoice(null);
     setError(null);
+    setShowPay(false);
     api.sales
       .getInvoice(invoiceId)
       .then((row) => {
@@ -174,6 +183,7 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
     can('sales.amend') &&
     isOpenOrder &&
     !(invoice?.fulfilment_mode === 'immediate' && invoice?.fulfilment_status === 'fulfilled');
+  const canPay = can('sales.post') && invoice?.status === 'posted' && Boolean(invoice?.customer_id);
 
   const runAction = async (fn: () => Promise<any>, success: string) => {
     setActing(true);
@@ -786,6 +796,17 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                   <dd className="invoice-view__balance">{money(invoice.balance)}</dd>
                 </dl>
               </div>
+              {showPay && invoice.customer_id ? (
+                <ReceiveCustomerPayment
+                  customerId={invoice.customer_id}
+                  invoiceId={invoice.id}
+                  hideHistory
+                  onDone={async () => {
+                    await reloadInvoice();
+                    onChanged?.();
+                  }}
+                />
+              ) : null}
             </>
           ) : null}
         </div>
@@ -796,7 +817,8 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
           canReallocate ||
           canAllocate ||
           canReturn ||
-          canAmend) ? (
+          canAmend ||
+          canPay) ? (
           <div className="modal__footer no-print">
             {canCancel ? (
               <button
@@ -833,6 +855,15 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                 disabled={acting}
               >
                 Allocate backorder
+              </button>
+            ) : null}
+            {canPay ? (
+              <button
+                type="button"
+                className={`btn ${showPay ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => setShowPay((v) => !v)}
+              >
+                {showPay ? 'Hide payment' : 'Receive payment'}
               </button>
             ) : null}
             <span style={{ flex: 1 }} />

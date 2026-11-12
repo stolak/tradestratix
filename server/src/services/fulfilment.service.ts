@@ -5,6 +5,7 @@ import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { allocateFefo, convertToBaseQty, createStockMovement } from './inventory.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
+import { consumeCreditAgainstInvoiceBalance } from './customer-payment.service.js';
 import * as branchAccess from './branch-access.service.js';
 import {
   parseManualPlan,
@@ -493,20 +494,27 @@ export async function fulfilInTx(
     }
     const total = n(invoice.totalAmount);
     const tax = accountMap.tax_payable && total > 0 ? roundMoney((recognised * n(invoice.taxAmount)) / total) : 0;
+    // Prepaid receipts already Cr customer AR. Recognition still Dr AR / Cr revenue; the two net.
+    // depositHeld only adjusts the invoice.balance memo (recognised − prepaid applied).
     depositApplied = roundMoney(Math.min(n(inv.depositHeld), recognised));
-    if (depositApplied > 0 && !accountMap.customer_deposits) {
-      throw httpError(400, 'Default account "customer_deposits" is not configured');
-    }
     const lines: any[] = [
-      { account_id: accountMap.accounts_receivable, debit: recognised, description: `AR ${invoice.invoiceNumber} — ${fulfilmentNumber}` },
-      { account_id: accountMap.sales_revenue, credit: roundMoney(recognised - tax), description: `Revenue ${invoice.invoiceNumber} (${fulfilmentNumber})` }
+      {
+        account_id: accountMap.accounts_receivable,
+        debit: recognised,
+        description: `AR ${invoice.invoiceNumber} — ${fulfilmentNumber}`
+      },
+      {
+        account_id: accountMap.sales_revenue,
+        credit: roundMoney(recognised - tax),
+        description: `Revenue ${invoice.invoiceNumber} (${fulfilmentNumber})`
+      }
     ];
-    if (tax > 0) lines.push({ account_id: accountMap.tax_payable, credit: tax, description: `Tax ${invoice.invoiceNumber}` });
-    if (depositApplied > 0) {
-      lines.push(
-        { account_id: accountMap.customer_deposits, debit: depositApplied, description: `Deposit applied ${fulfilmentNumber}` },
-        { account_id: accountMap.accounts_receivable, credit: depositApplied, description: `Deposit applied ${fulfilmentNumber}` }
-      );
+    if (tax > 0) {
+      lines.push({
+        account_id: accountMap.tax_payable,
+        credit: tax,
+        description: `Tax ${invoice.invoiceNumber}`
+      });
     }
     const j: any = await createJournal(
       user,
@@ -629,6 +637,11 @@ export async function fulfilInTx(
         : {})
     }
   });
+
+  // Free advances already Cr AR — absorb them into any remaining invoice balance (no GL).
+  if (recognised > 0) {
+    await consumeCreditAgainstInvoiceBalance(tx, user.businessId, invoice.customerId, invoice.id);
+  }
 
   return { id: fulfilmentId, fulfilmentNumber, totalCost, recognised };
 }
