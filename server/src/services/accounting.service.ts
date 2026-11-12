@@ -937,3 +937,325 @@ export async function balanceSheet(user: AuthUser, asOf?: string | Date, opts?: 
     }
   };
 }
+
+/** Default GL keys that form the cash & cash-equivalents pool (excludes sales-rep custody). */
+const CASH_POOL_KEYS = ['cash', 'bank', 'petty_cash', 'cash_in_transit'] as const;
+
+type CashFlowSection = 'operating' | 'investing' | 'financing' | 'internal';
+
+const SOURCE_SECTION: Record<string, CashFlowSection> = {
+  customer_payment: 'operating',
+  customer_credit_refund: 'operating',
+  supplier_payment: 'operating',
+  expense: 'operating',
+  expense_payment: 'operating',
+  payroll: 'operating',
+  payroll_payment: 'operating',
+  sales_rep_cash_retirement: 'operating',
+  sales_fulfilment: 'operating',
+  sales_return: 'operating',
+  grn: 'operating',
+  bank_transfer: 'internal',
+  asset_acquisition: 'investing',
+  depreciation: 'operating',
+  stock_transfer: 'operating'
+};
+
+function humanizeSourceType(sourceType: string | null | undefined) {
+  if (!sourceType) return 'Manual / other';
+  return sourceType
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
+async function resolveCashPoolAccountIds(businessId: string): Promise<{
+  accountIds: Set<string>;
+  accounts: { id: string; code: string; name: string }[];
+}> {
+  const map = await loadDefaultAccountMap(businessId);
+  const ids = new Set<string>();
+  for (const key of CASH_POOL_KEYS) {
+    const id = map[key];
+    if (id) ids.add(id);
+  }
+
+  const bankAccounts = await prisma.bankAccount.findMany({
+    where: { businessId, isActive: true },
+    select: { glAccountId: true }
+  });
+  for (const b of bankAccounts) ids.add(b.glAccountId);
+
+  if (!ids.size) {
+    return { accountIds: ids, accounts: [] };
+  }
+
+  const accounts = await prisma.account.findMany({
+    where: { businessId, id: { in: [...ids] } },
+    select: { id: true, code: true, name: true },
+    orderBy: { code: 'asc' }
+  });
+
+  return { accountIds: new Set(accounts.map((a) => a.id)), accounts };
+}
+
+function classifyCashFlowJournal(opts: {
+  sourceType: string | null;
+  cashNet: number;
+  outsideLines: { accountType: string; accountId: string }[];
+  poolIds: Set<string>;
+}): CashFlowSection {
+  const { sourceType, cashNet, outsideLines, poolIds } = opts;
+  if (!outsideLines.length || cashNet === 0) return 'internal';
+
+  if (sourceType === 'bank_deposit' || sourceType === 'bank_withdrawal') {
+    // Offset entirely inside the pool → till↔bank style move
+    if (outsideLines.every((l) => poolIds.has(l.accountId))) return 'internal';
+    const types = new Set(outsideLines.map((l) => l.accountType));
+    if ([...types].every((t) => t === 'equity' || t === 'liability')) return 'financing';
+    if ([...types].every((t) => t === 'asset')) return 'investing';
+    return 'operating';
+  }
+
+  if (sourceType && SOURCE_SECTION[sourceType]) return SOURCE_SECTION[sourceType];
+
+  const types = new Set(outsideLines.map((l) => l.accountType));
+  if ([...types].every((t) => t === 'equity' || t === 'liability')) return 'financing';
+  if ([...types].some((t) => t === 'asset') && ![...types].some((t) => t === 'expense' || t === 'cogs' || t === 'revenue')) {
+    return 'investing';
+  }
+  return 'operating';
+}
+
+/**
+ * Direct-method cash flow from the cash pool (cash / bank / petty / CIT + bank GLs).
+ * Sales-rep custody is excluded from the pool; retirement into till/bank is operating inflow.
+ */
+export async function cashFlow(
+  user: AuthUser,
+  from?: string | Date,
+  to?: string | Date,
+  opts?: BranchListOpts
+) {
+  const fromDate = from ? new Date(from) : null;
+  const toDate = to ? new Date(to) : new Date();
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: opts?.allowConsolidated
+  });
+
+  const { accountIds: poolIds, accounts: poolAccounts } = await resolveCashPoolAccountIds(
+    user.businessId
+  );
+
+  if (!poolIds.size) {
+    return {
+      from: fromDate?.toISOString() || null,
+      to: toDate.toISOString(),
+      cash_accounts: [],
+      operating: { inflows: [], outflows: [], net: 0 },
+      investing: { inflows: [], outflows: [], net: 0 },
+      financing: { inflows: [], outflows: [], net: 0 },
+      internal_transfers: { lines: [], net: 0 },
+      totals: {
+        opening_cash: 0,
+        operating_net: 0,
+        investing_net: 0,
+        financing_net: 0,
+        internal_net: 0,
+        net_change: 0,
+        closing_cash: 0,
+        closing_reconciles: true
+      }
+    };
+  }
+
+  const openingSource = fromDate
+    ? await prisma.journalLine.findMany({
+        where: {
+          accountId: { in: [...poolIds] },
+          journalEntry: {
+            businessId: user.businessId,
+            status: 'posted',
+            ...scope,
+            entryDate: { lt: fromDate }
+          }
+        }
+      })
+    : [];
+
+  const periodJournals = await prisma.journalEntry.findMany({
+    where: {
+      businessId: user.businessId,
+      status: 'posted',
+      ...scope,
+      ...(fromDate || toDate
+        ? {
+            entryDate: {
+              ...(fromDate ? { gte: fromDate } : {}),
+              ...(toDate ? { lte: toDate } : {})
+            }
+          }
+        : {}),
+      lines: { some: { accountId: { in: [...poolIds] } } }
+    },
+    include: {
+      lines: { include: { account: true } }
+    },
+    orderBy: { entryDate: 'asc' }
+  });
+
+  const closingLines = await prisma.journalLine.findMany({
+    where: {
+      accountId: { in: [...poolIds] },
+      journalEntry: {
+        businessId: user.businessId,
+        status: 'posted',
+        ...scope,
+        entryDate: { lte: toDate }
+      }
+    }
+  });
+
+  const sumPool = (lines: { accountId: string; debit: unknown; credit: unknown }[]) => {
+    const byAccount = new Map<string, number>();
+    for (const id of poolIds) byAccount.set(id, 0);
+    for (const line of lines) {
+      if (!poolIds.has(line.accountId)) continue;
+      const net = roundMoney(Number(line.debit) - Number(line.credit));
+      byAccount.set(line.accountId, roundMoney((byAccount.get(line.accountId) || 0) + net));
+    }
+    return byAccount;
+  };
+
+  const openingByAcct = sumPool(openingSource);
+  const closingByAcct = sumPool(closingLines);
+
+  const cashAccounts = poolAccounts.map((a) => {
+    const opening = openingByAcct.get(a.id) || 0;
+    const closing = closingByAcct.get(a.id) || 0;
+    return {
+      account_id: a.id,
+      code: a.code,
+      name: a.name,
+      opening,
+      closing,
+      net: roundMoney(closing - opening)
+    };
+  });
+
+  const openingCash = roundMoney(cashAccounts.reduce((s, r) => s + r.opening, 0));
+  const closingCash = roundMoney(cashAccounts.reduce((s, r) => s + r.closing, 0));
+
+  type AggRow = { key: string; label: string; amount: number };
+  const buckets: Record<
+    CashFlowSection,
+    { inflows: Map<string, AggRow>; outflows: Map<string, AggRow> }
+  > = {
+    operating: { inflows: new Map(), outflows: new Map() },
+    investing: { inflows: new Map(), outflows: new Map() },
+    financing: { inflows: new Map(), outflows: new Map() },
+    internal: { inflows: new Map(), outflows: new Map() }
+  };
+
+  const bump = (section: CashFlowSection, cashNet: number, sourceType: string | null) => {
+    if (cashNet === 0 && section !== 'internal') return;
+    const label = humanizeSourceType(sourceType);
+    const key = sourceType || 'other';
+    const side = cashNet >= 0 ? 'inflows' : 'outflows';
+    const amount = Math.abs(cashNet);
+    if (section === 'internal') {
+      // Show gross shuffle size on a single net-zero line set using absolute pool movement / 2
+      const map = buckets.internal.inflows;
+      const cur = map.get(key) || { key, label, amount: 0 };
+      cur.amount = roundMoney(cur.amount + amount);
+      map.set(key, cur);
+      return;
+    }
+    const map = buckets[section][side];
+    const cur = map.get(key) || { key, label, amount: 0 };
+    cur.amount = roundMoney(cur.amount + amount);
+    map.set(key, cur);
+  };
+
+  let operatingNet = 0;
+  let investingNet = 0;
+  let financingNet = 0;
+  let internalGross = 0;
+
+  for (const je of periodJournals) {
+    let cashNet = 0;
+    const outside: { accountType: string; accountId: string }[] = [];
+    for (const line of je.lines) {
+      if (poolIds.has(line.accountId)) {
+        cashNet = roundMoney(cashNet + Number(line.debit) - Number(line.credit));
+      } else {
+        outside.push({ accountType: line.account.accountType, accountId: line.accountId });
+      }
+    }
+
+    const section = classifyCashFlowJournal({
+      sourceType: je.sourceType,
+      cashNet,
+      outsideLines: outside,
+      poolIds
+    });
+
+    if (section === 'internal') {
+      // Pool-only moves net to zero; track gross debit into pool for visibility
+      const poolDebit = roundMoney(
+        je.lines
+          .filter((l) => poolIds.has(l.accountId))
+          .reduce((s, l) => s + Number(l.debit), 0)
+      );
+      internalGross = roundMoney(internalGross + poolDebit);
+      bump('internal', poolDebit, je.sourceType);
+      continue;
+    }
+
+    bump(section, cashNet, je.sourceType);
+    if (section === 'operating') operatingNet = roundMoney(operatingNet + cashNet);
+    else if (section === 'investing') investingNet = roundMoney(investingNet + cashNet);
+    else if (section === 'financing') financingNet = roundMoney(financingNet + cashNet);
+  }
+
+  const toList = (m: Map<string, AggRow>) =>
+    [...m.values()].sort((a, b) => a.label.localeCompare(b.label));
+
+  const sectionPayload = (section: Exclude<CashFlowSection, 'internal'>, net: number) => {
+    const inflows = toList(buckets[section].inflows);
+    const outflows = toList(buckets[section].outflows);
+    return {
+      inflows,
+      outflows,
+      net
+    };
+  };
+
+  const netChange = roundMoney(operatingNet + investingNet + financingNet);
+  const expectedClosing = roundMoney(openingCash + netChange);
+
+  return {
+    from: fromDate?.toISOString() || null,
+    to: toDate.toISOString(),
+    cash_accounts: cashAccounts,
+    operating: sectionPayload('operating', operatingNet),
+    investing: sectionPayload('investing', investingNet),
+    financing: sectionPayload('financing', financingNet),
+    internal_transfers: {
+      lines: toList(buckets.internal.inflows),
+      net: 0,
+      gross: internalGross
+    },
+    totals: {
+      opening_cash: openingCash,
+      operating_net: operatingNet,
+      investing_net: investingNet,
+      financing_net: financingNet,
+      internal_net: 0,
+      net_change: netChange,
+      closing_cash: closingCash,
+      closing_reconciles: expectedClosing === closingCash
+    }
+  };
+}

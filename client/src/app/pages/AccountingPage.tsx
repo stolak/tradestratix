@@ -3,7 +3,20 @@ import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
 import { DefaultAccountsPanel } from '../components/DefaultAccountsPanel';
 
-type Tab = 'coa' | 'defaults' | 'journals' | 'trial' | 'pl' | 'bs' | 'periods';
+type Tab = 'coa' | 'defaults' | 'journals' | 'trial' | 'pl' | 'bs' | 'cf' | 'periods';
+
+function yearStartIsoDate() {
+  const d = new Date();
+  return `${d.getFullYear()}-01-01`;
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function money(n: number | undefined | null) {
+  return Number(n ?? 0).toLocaleString();
+}
 
 export const AccountingPage: React.FC = () => {
   const [accounts, setAccounts] = useState<any[]>([]);
@@ -11,17 +24,21 @@ export const AccountingPage: React.FC = () => {
   const [trial, setTrial] = useState<any>(null);
   const [pl, setPl] = useState<any>(null);
   const [bs, setBs] = useState<any>(null);
+  const [cf, setCf] = useState<any>(null);
   const [periods, setPeriods] = useState<any[]>([]);
   const [tab, setTab] = useState<Tab>('defaults');
+  const [cfFrom, setCfFrom] = useState(yearStartIsoDate);
+  const [cfTo, setCfTo] = useState(todayIsoDate);
 
-  const load = async () => {
+  const load = async (from = cfFrom, to = cfTo) => {
     try {
-      const [a, j, t, p, b, per] = await Promise.all([
+      const [a, j, t, p, b, c, per] = await Promise.all([
         api.accounting.accounts(),
         api.accounting.journals(),
         api.accounting.trialBalance(),
         api.accounting.profitLoss(),
         api.accounting.balanceSheet(),
+        api.accounting.cashFlow(from || undefined, to || undefined),
         api.accounting.periods()
       ]);
       setAccounts(a);
@@ -29,6 +46,7 @@ export const AccountingPage: React.FC = () => {
       setTrial(t);
       setPl(p);
       setBs(b);
+      setCf(c);
       setPeriods(per);
     } catch (e: any) {
       await alertError('Accounting', e.message);
@@ -37,6 +55,7 @@ export const AccountingPage: React.FC = () => {
 
   useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleLock = async (id: string, locked: boolean) => {
@@ -56,6 +75,7 @@ export const AccountingPage: React.FC = () => {
     { id: 'trial', label: 'Trial balance' },
     { id: 'pl', label: 'Profit & loss' },
     { id: 'bs', label: 'Balance sheet' },
+    { id: 'cf', label: 'Cash flow' },
     { id: 'periods', label: 'Periods' }
   ];
 
@@ -66,8 +86,8 @@ export const AccountingPage: React.FC = () => {
           Accounting
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Chart of accounts, default posting maps, journals, trial balance, P&amp;L, balance sheet and period
-          locks.
+          Chart of accounts, default posting maps, journals, trial balance, P&amp;L, balance sheet, cash
+          flow and period locks.
         </p>
       </header>
 
@@ -280,6 +300,155 @@ export const AccountingPage: React.FC = () => {
           <div style={{ color: 'var(--ink-muted)' }}>
             Liabilities + equity: {Number(bs.totals.liabilities_and_equity).toLocaleString()}{' '}
             {bs.totals.balanced ? '(balanced)' : '(check net income fold)'}
+          </div>
+        </div>
+      ) : null}
+
+      {tab === 'cf' && cf ? (
+        <div className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 16 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'end' }}>
+            <label style={{ display: 'grid', gap: 4 }}>
+              <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>From</span>
+              <input
+                type="date"
+                value={cfFrom}
+                onChange={(e) => setCfFrom(e.target.value)}
+              />
+            </label>
+            <label style={{ display: 'grid', gap: 4 }}>
+              <span style={{ fontSize: 12, color: 'var(--ink-muted)' }}>To</span>
+              <input type="date" value={cfTo} onChange={(e) => setCfTo(e.target.value)} />
+            </label>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void load(cfFrom, cfTo)}
+            >
+              Apply
+            </button>
+          </div>
+
+          <div>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>Cash pool</div>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Account</th>
+                    <th style={{ textAlign: 'right' }}>Opening</th>
+                    <th style={{ textAlign: 'right' }}>Closing</th>
+                    <th style={{ textAlign: 'right' }}>Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(cf.cash_accounts || []).map((r: any) => (
+                    <tr key={r.account_id}>
+                      <td>
+                        {r.code} — {r.name}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>{money(r.opening)}</td>
+                      <td style={{ textAlign: 'right' }}>{money(r.closing)}</td>
+                      <td style={{ textAlign: 'right' }}>{money(r.net)}</td>
+                    </tr>
+                  ))}
+                  <tr>
+                    <td>
+                      <strong>Total cash</strong>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <strong>{money(cf.totals?.opening_cash)}</strong>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <strong>{money(cf.totals?.closing_cash)}</strong>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <strong>{money(cf.totals?.net_change)}</strong>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {(
+            [
+              ['Operating', cf.operating],
+              ['Investing', cf.investing],
+              ['Financing', cf.financing]
+            ] as const
+          ).map(([title, section]) => (
+            <div key={title}>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>{title}</div>
+              <div className="table-wrap">
+                <table className="table">
+                  <tbody>
+                    {(section?.inflows || []).map((r: any) => (
+                      <tr key={`in-${r.key}`}>
+                        <td>{r.label}</td>
+                        <td style={{ textAlign: 'right' }}>{money(r.amount)}</td>
+                      </tr>
+                    ))}
+                    {(section?.outflows || []).map((r: any) => (
+                      <tr key={`out-${r.key}`}>
+                        <td>{r.label}</td>
+                        <td style={{ textAlign: 'right' }}>({money(r.amount)})</td>
+                      </tr>
+                    ))}
+                    {!section?.inflows?.length && !section?.outflows?.length ? (
+                      <tr>
+                        <td colSpan={2} style={{ color: 'var(--ink-muted)' }}>
+                          No movements
+                        </td>
+                      </tr>
+                    ) : null}
+                    <tr>
+                      <td>
+                        <strong>Net {title.toLowerCase()}</strong>
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        <strong>{money(section?.net)}</strong>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+
+          {(cf.internal_transfers?.lines || []).length ? (
+            <div>
+              <div style={{ fontWeight: 700, marginBottom: 6 }}>Internal transfers</div>
+              <p style={{ color: 'var(--ink-muted)', margin: '0 0 6px', fontSize: 13 }}>
+                Moves within the cash pool (till ↔ bank, bank transfers). Net effect on total cash is
+                zero.
+              </p>
+              <div className="table-wrap">
+                <table className="table">
+                  <tbody>
+                    {cf.internal_transfers.lines.map((r: any) => (
+                      <tr key={r.key}>
+                        <td>{r.label}</td>
+                        <td style={{ textAlign: 'right' }}>{money(r.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.1rem' }}>
+            <strong>Net change in cash</strong>
+            <strong>{money(cf.totals?.net_change)}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.25rem' }}>
+            <strong>Closing cash</strong>
+            <strong>{money(cf.totals?.closing_cash)}</strong>
+          </div>
+          <div style={{ color: 'var(--ink-muted)', fontSize: 13 }}>
+            {cf.totals?.closing_reconciles
+              ? 'Opening + net change reconciles to closing cash.'
+              : 'Opening + net change does not match closing — check unclassified journals.'}
           </div>
         </div>
       ) : null}

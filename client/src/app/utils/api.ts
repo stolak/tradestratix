@@ -186,6 +186,13 @@ export const api = {
     },
     balanceSheet: (asOf?: string) =>
       request<any>(`/accounting/balance-sheet${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ''}`),
+    cashFlow: (from?: string, to?: string) => {
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      const q = params.toString();
+      return request<any>(`/accounting/cash-flow${q ? `?${q}` : ''}`);
+    },
     periods: () => request<any[]>('/accounting/periods'),
     lockPeriod: (id: string, locked: boolean) =>
       request<any>(`/accounting/periods/${id}/lock`, {

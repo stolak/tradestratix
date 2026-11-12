@@ -166,6 +166,16 @@ export async function balanceSheet(req: Request, res: Response, next: NextFuncti
   }
 }
 
+export async function cashFlow(req: Request, res: Response, next: NextFunction) {
+  try {
+    const from = typeof req.query.from === 'string' ? req.query.from : undefined;
+    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+    return res.json(await accountingService.cashFlow(req.user!, from, to, branchListOpts(req)));
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function listPeriods(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(await accountingService.listPeriods(req.user!.businessId));

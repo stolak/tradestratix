@@ -100,6 +100,18 @@ Supplier payments always **debit Accounts Payable** (supplier control) and credi
 
 Catalog keys `supplier_advances` / `supplier_deposits` remain unused for day-to-day payables.
 
+## Cash flow (direct)
+
+`GET /accounting/cash-flow?from=&to=` — direct-method statement from the **cash pool**:
+
+- Pool = default accounts `cash`, `bank`, `petty_cash`, `cash_in_transit`, plus every active `BankAccount` GL.
+- Sales-rep custody is **not** in the pool; retirement into till/bank is an operating inflow.
+- Journals that only shuffle cash within the pool (till↔bank, bank transfers) are listed as internal (net zero).
+- Other cash movements are classified by `source_type` (and offset account type for bank deposit/withdrawal) into operating / investing / financing.
+- Opening + operating + investing + financing must equal closing pool balance (`closing_reconciles`).
+
+UI: **Accounting → Cash flow** (date range defaults to year-to-date).
+
 ## Entity ledgers
 
 - `GET /accounting/journals?customer_id=&supplier_id=&sales_representative_id=&source_type=&from=&to=`

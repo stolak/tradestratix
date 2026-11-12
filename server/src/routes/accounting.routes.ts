@@ -55,6 +55,11 @@ router.get(
   requirePermission('accounting.view', 'reports.view'),
   accountingController.balanceSheet
 );
+router.get(
+  '/cash-flow',
+  requirePermission('accounting.view', 'reports.view'),
+  accountingController.cashFlow
+);
 router.get('/periods', requirePermission('accounting.view'), accountingController.listPeriods);
 router.post(
   '/periods/:id/lock',
