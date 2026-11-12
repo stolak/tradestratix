@@ -832,10 +832,9 @@ function QtyInput({ value, max, onChange }: { value: string; max: number; onChan
       min="0"
       max={max}
       step="any"
-      className="line-items__qty"
+      className="qty-input"
       value={value}
       aria-invalid={bad}
-      style={bad ? { borderColor: 'var(--danger, #c0392b)' } : undefined}
       onChange={(e) => onChange(e.target.value)}
     />
   );
@@ -1101,36 +1100,40 @@ const QuickReleaseModal: React.FC<{ row: any; onClose: () => void; onDone: () =>
         </div>
       ) : null}
       <div className="line-items">
-        <table className="line-items__table">
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th>UoM</th>
-              <th className="num">Ordered</th>
-              <th className="num">Collected</th>
-              <th className="num">Available here</th>
-              <th style={{ width: 120, textAlign: 'center' }}>Release now</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((l) => (
-              <tr key={l.invoice_item_id}>
-                <td>{lineLabel(l)}</td>
-                <td>{l.uom?.code || '—'}</td>
-                <td className="num">{qty(l.quantity)}</td>
-                <td className="num">{qty(l.fulfilled_quantity)}</td>
-                <td className="num">{qty(l.to_pick)}</td>
-                <td>
-                  <QtyInput
-                    value={quantities[l.invoice_item_id] ?? ''}
-                    max={Number(l.to_pick)}
-                    onChange={(v) => setQuantities((s) => ({ ...s, [l.invoice_item_id]: v }))}
-                  />
-                </td>
+        <div className="line-items__scroll">
+          <table className="line-items__table">
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>UoM</th>
+                <th className="num">Ordered</th>
+                <th className="num">Collected</th>
+                <th className="num">Available here</th>
+                <th className="line-items__col-qty" style={{ textAlign: 'center' }}>
+                  Release now
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.invoice_item_id}>
+                  <td>{lineLabel(l)}</td>
+                  <td>{l.uom?.code || '—'}</td>
+                  <td className="num">{qty(l.quantity)}</td>
+                  <td className="num">{qty(l.fulfilled_quantity)}</td>
+                  <td className="num">{qty(l.to_pick)}</td>
+                  <td className="line-items__col-qty">
+                    <QtyInput
+                      value={quantities[l.invoice_item_id] ?? ''}
+                      max={Number(l.to_pick)}
+                      onChange={(v) => setQuantities((s) => ({ ...s, [l.invoice_item_id]: v }))}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
       <CollectorFields value={collector} onChange={setCollector} hasCode={Boolean(row.has_pickup_code)}
         authorised={Array.isArray(row.authorised_collectors) ? row.authorised_collectors : []}
@@ -1224,50 +1227,64 @@ const PickModal: React.FC<{ taskId: string; onClose: () => void; onDone: () => P
         </dl>
       </div>
       <div className="line-items">
-        <table className="line-items__table">
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th>Lots / batches</th>
-              <th className="num">To pick</th>
-              <th style={{ width: 110, textAlign: 'center' }}>Picked</th>
-              <th style={{ width: 110, textAlign: 'center' }}>Damaged</th>
-              <th className="num">Missing</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r: any) => (
-              <tr key={r.i.id}>
-                <td>
-                  {lineLabel(r.i)}
-                  {r.i.invoice_item?.product?.barcode ? (
-                    <div className="invoice-view__sub">Barcode {r.i.invoice_item.product.barcode}</div>
-                  ) : null}
-                </td>
-                <td style={{ fontSize: '0.8rem' }}>
-                  {(r.i.lots || []).map((l: any) => (
-                    <div key={l.lot_id}>
-                      {l.batch_number || 'lot'} · {qty(l.quantity)}
-                      {l.expiry_date ? ` · exp ${fmtDate(l.expiry_date)}` : ''}
-                    </div>
-                  ))}
-                </td>
-                <td className="num">
-                  {qty(r.planned)} {r.i.invoice_item?.uom?.code}
-                </td>
-                <td>
-                  <QtyInput value={picked[r.i.invoice_item_id] ?? ''} max={r.planned} onChange={(v) => setPicked((s) => ({ ...s, [r.i.invoice_item_id]: v }))} />
-                </td>
-                <td>
-                  <QtyInput value={damaged[r.i.invoice_item_id] ?? ''} max={r.planned} onChange={(v) => setDamaged((s) => ({ ...s, [r.i.invoice_item_id]: v }))} />
-                </td>
-                <td className="num" style={r.short > 0 ? { color: 'var(--accent)', fontWeight: 600 } : undefined}>
-                  {qty(r.short)}
-                </td>
+        <div className="line-items__scroll">
+          <table className="line-items__table">
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Lots / batches</th>
+                <th className="num line-items__col-qty">To pick</th>
+                <th className="line-items__col-qty" style={{ textAlign: 'center' }}>
+                  Picked
+                </th>
+                <th className="line-items__col-qty" style={{ textAlign: 'center' }}>
+                  Damaged
+                </th>
+                <th className="num line-items__col-qty">Missing</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r: any) => (
+                <tr key={r.i.id}>
+                  <td>
+                    {lineLabel(r.i)}
+                    {r.i.invoice_item?.product?.barcode ? (
+                      <div className="invoice-view__sub">Barcode {r.i.invoice_item.product.barcode}</div>
+                    ) : null}
+                  </td>
+                  <td style={{ fontSize: '0.8rem' }}>
+                    {(r.i.lots || []).map((l: any) => (
+                      <div key={l.lot_id}>
+                        {l.batch_number || 'lot'} · {qty(l.quantity)}
+                        {l.expiry_date ? ` · exp ${fmtDate(l.expiry_date)}` : ''}
+                      </div>
+                    ))}
+                  </td>
+                  <td className="num">
+                    {qty(r.planned)} {r.i.invoice_item?.uom?.code}
+                  </td>
+                  <td className="line-items__col-qty">
+                    <QtyInput
+                      value={picked[r.i.invoice_item_id] ?? ''}
+                      max={r.planned}
+                      onChange={(v) => setPicked((s) => ({ ...s, [r.i.invoice_item_id]: v }))}
+                    />
+                  </td>
+                  <td className="line-items__col-qty">
+                    <QtyInput
+                      value={damaged[r.i.invoice_item_id] ?? ''}
+                      max={r.planned}
+                      onChange={(v) => setDamaged((s) => ({ ...s, [r.i.invoice_item_id]: v }))}
+                    />
+                  </td>
+                  <td className="num" style={r.short > 0 ? { color: 'var(--accent)', fontWeight: 600 } : undefined}>
+                    {qty(r.short)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
       {shortTotal > 0 ? (
         <>
@@ -1355,32 +1372,36 @@ const CollectModal: React.FC<{ taskId: string; onClose: () => void; onDone: () =
         </div>
       ) : null}
       <div className="line-items">
-        <table className="line-items__table">
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th>UoM</th>
-              <th className="num">Picked</th>
-              <th style={{ width: 120, textAlign: 'center' }}>Hand over</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((i) => (
-              <tr key={i.id}>
-                <td>{lineLabel(i)}</td>
-                <td>{i.invoice_item?.uom?.code || '—'}</td>
-                <td className="num">{qty(i.picked_quantity)}</td>
-                <td>
-                  <QtyInput
-                    value={quantities[i.invoice_item_id] ?? ''}
-                    max={Number(i.picked_quantity)}
-                    onChange={(v) => setQuantities((s) => ({ ...s, [i.invoice_item_id]: v }))}
-                  />
-                </td>
+        <div className="line-items__scroll">
+          <table className="line-items__table">
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>UoM</th>
+                <th className="num">Picked</th>
+                <th className="line-items__col-qty" style={{ textAlign: 'center' }}>
+                  Hand over
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {items.map((i) => (
+                <tr key={i.id}>
+                  <td>{lineLabel(i)}</td>
+                  <td>{i.invoice_item?.uom?.code || '—'}</td>
+                  <td className="num">{qty(i.picked_quantity)}</td>
+                  <td className="line-items__col-qty">
+                    <QtyInput
+                      value={quantities[i.invoice_item_id] ?? ''}
+                      max={Number(i.picked_quantity)}
+                      onChange={(v) => setQuantities((s) => ({ ...s, [i.invoice_item_id]: v }))}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
       <CollectorFields value={collector} onChange={setCollector} hasCode={Boolean(task.invoice?.has_pickup_code)} authorised={authorised} />
       <ProofUploader
@@ -1534,32 +1555,36 @@ const DeliverModal: React.FC<{ taskId: string; onClose: () => void; onDone: () =
         {task.delivery_order?.driver_name ? ` · driver ${task.delivery_order.driver_name}` : ''}
       </p>
       <div className="line-items">
-        <table className="line-items__table">
-          <thead>
-            <tr>
-              <th>Product</th>
-              <th className="num">Dispatched</th>
-              <th style={{ width: 120, textAlign: 'center' }}>Delivered</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((i) => (
-              <tr key={i.id}>
-                <td>{lineLabel(i)}</td>
-                <td className="num">
-                  {qty(i.picked_quantity)} {i.invoice_item?.uom?.code}
-                </td>
-                <td>
-                  <QtyInput
-                    value={quantities[i.invoice_item_id] ?? ''}
-                    max={Number(i.picked_quantity)}
-                    onChange={(v) => setQuantities((s) => ({ ...s, [i.invoice_item_id]: v }))}
-                  />
-                </td>
+        <div className="line-items__scroll">
+          <table className="line-items__table">
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th className="num">Dispatched</th>
+                <th className="line-items__col-qty" style={{ textAlign: 'center' }}>
+                  Delivered
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {items.map((i) => (
+                <tr key={i.id}>
+                  <td>{lineLabel(i)}</td>
+                  <td className="num">
+                    {qty(i.picked_quantity)} {i.invoice_item?.uom?.code}
+                  </td>
+                  <td className="line-items__col-qty">
+                    <QtyInput
+                      value={quantities[i.invoice_item_id] ?? ''}
+                      max={Number(i.picked_quantity)}
+                      onChange={(v) => setQuantities((s) => ({ ...s, [i.invoice_item_id]: v }))}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
       <div className="form-grid">
         <div className="field">

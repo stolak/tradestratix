@@ -928,13 +928,15 @@ export const SalesPage: React.FC = () => {
                 <thead>
                   <tr>
                     <th className="line-items__index">#</th>
-                    <th style={{ width: '32%' }}>Product</th>
-                    <th style={{ width: '26%' }}>Selling UoM</th>
-                    <th style={{ width: 100, textAlign: 'center' }}>Qty</th>
-                    <th className="num" style={{ width: 130 }}>Unit price</th>
-                    <th className="num" style={{ width: 130 }}>Subtotal</th>
-                    {deferred ? <th style={{ width: '22%' }}>Pickup from</th> : null}
-                    <th style={{ width: 52 }} />
+                    <th className="line-items__col-product">Product</th>
+                    <th className="line-items__col-uom">Selling UoM</th>
+                    <th className="line-items__col-qty" style={{ textAlign: 'center' }}>
+                      Qty
+                    </th>
+                    <th className="num line-items__col-price">Unit price</th>
+                    <th className="num line-items__col-subtotal">Subtotal</th>
+                    {deferred ? <th className="line-items__col-pickup">Pickup from</th> : null}
+                    <th className="line-items__col-actions" />
                   </tr>
                 </thead>
                 <tbody>
@@ -975,7 +977,7 @@ export const SalesPage: React.FC = () => {
                             ))}
                           </select>
                         </td>
-                        <td>
+                        <td className="line-items__col-qty">
                           <input
                             type="number"
                             min="0.00"
@@ -988,12 +990,12 @@ export const SalesPage: React.FC = () => {
                             required
                           />
                         </td>
-                        <td>
+                        <td className="line-items__col-price">
                           <input
                             type="number"
                             min="0"
                             step="any"
-                            className="line-items__qty"
+                            className="line-items__price"
                             value={line.unit_price}
                             onChange={(e) => updateLine(line.key, { unit_price: e.target.value })}
                             readOnly={!canChangePrice}

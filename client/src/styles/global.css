@@ -330,18 +330,28 @@ a {
   border: 1px solid var(--line);
   border-radius: 14px;
   background: white;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .line-items__scroll {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
   border-radius: 14px 14px 0 0;
 }
 
 .line-items__table {
-  width: 100%;
-  min-width: 860px;
+  width: max(100%, 1180px);
+  min-width: 1180px;
   border-collapse: separate;
   border-spacing: 0;
+  table-layout: fixed;
 }
 
 .line-items__table th {
@@ -379,6 +389,43 @@ a {
   font-weight: 600;
 }
 
+.line-items__col-product {
+  width: 22%;
+  min-width: 180px;
+}
+
+.line-items__col-uom {
+  width: 20%;
+  min-width: 160px;
+}
+
+.line-items__col-qty {
+  width: 104px;
+  min-width: 104px;
+}
+
+.line-items__table th.line-items__col-qty,
+.line-items__table td.line-items__col-qty {
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+}
+
+.line-items__col-price,
+.line-items__col-subtotal {
+  width: 120px;
+  min-width: 120px;
+}
+
+.line-items__col-pickup {
+  width: 18%;
+  min-width: 160px;
+}
+
+.line-items__col-actions {
+  width: 52px;
+  min-width: 52px;
+}
+
 .line-items__table input,
 .line-items__table select {
   width: 100%;
@@ -390,6 +437,7 @@ a {
   background: white;
   color: var(--ink);
   font-size: 0.9rem;
+  box-sizing: border-box;
 }
 
 .line-items__table .search-select__input {
@@ -405,6 +453,16 @@ a {
 
 .line-items__table input.line-items__qty {
   text-align: center;
+  min-width: 4.75rem;
+  width: 100%;
+  padding-left: 0.4rem;
+  padding-right: 0.4rem;
+}
+
+.line-items__table input.line-items__price {
+  text-align: right;
+  min-width: 5.5rem;
+  width: 100%;
 }
 
 .line-items__table input:focus,
@@ -1521,7 +1579,9 @@ body.modal-open {
 }
 
 .modal {
-  width: min(920px, 100%);
+  width: min(1040px, 100%);
+  max-width: 100%;
+  min-width: 0;
   background: var(--bg-elevated);
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -1537,18 +1597,52 @@ body.modal-open {
   gap: 1rem;
   padding: 1.25rem 1.5rem 1rem;
   border-bottom: 1px solid var(--line);
+  min-width: 0;
 }
 
 .modal__actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex-shrink: 0;
 }
 
 .modal__body {
   padding: 1.25rem 1.5rem;
   display: grid;
   gap: 1.25rem;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.modal .line-items__table {
+  width: max(100%, 860px);
+  min-width: 860px;
+}
+
+.qty-input {
+  width: 100%;
+  min-width: 4.75rem;
+  height: 40px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 0 0.55rem;
+  background: white;
+  color: var(--ink);
+  font-size: 0.9rem;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.qty-input:focus {
+  outline: none;
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(15, 92, 76, 0.14);
+}
+
+.qty-input[aria-invalid='true'] {
+  border-color: var(--danger, #c0392b);
 }
 
 .modal__footer {
