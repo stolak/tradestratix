@@ -1213,6 +1213,9 @@ model SupplierPayment {
   reference      String?
   notes          String?  @db.Text
   journalEntryId String?  @map("journal_entry_id")
+  /// Advance / overpay still available to apply to later bills (GL lives on supplier AP)
+  unappliedAmount Decimal @default(0) @map("unapplied_amount") @db.Decimal(18, 4)
+  idempotencyKey String?  @map("idempotency_key")
   createdById    String?  @map("created_by_id")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
@@ -1224,6 +1227,7 @@ model SupplierPayment {
   allocations SupplierPaymentAllocation[]
 
   @@unique([businessId, paymentNumber])
+  @@unique([businessId, idempotencyKey])
   @@index([businessId, supplierId])
   @@index([branchId])
   @@map("supplier_payments")

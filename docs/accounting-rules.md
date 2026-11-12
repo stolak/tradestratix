@@ -70,6 +70,18 @@ Missing or wrong-type mappings throw a clear configuration error and block posti
 UI: **Accounting → Default accounts** — status summary, category / issue filters, and account assignment
 filtered by each key’s expected account type (`accounting.edit` or `settings.edit` to change).
 
+## Supplier payments (AP)
+
+Supplier payments always **debit Accounts Payable** (supplier control) and credit cash/bank:
+
+- **Clear outstanding** — FIFO across open bills (all branches); leftover stays as prepaid on AP.
+- **Advance / prepaid** — free prepaid, or tick open bills / POs; surplus is prepaid on the same AP.
+- `SupplierPayment.unappliedAmount` is a memo of prepaid still available; GL lives on AP (`supplier_id` stamped).
+- New GRN bills auto-consume prepaid against the bill balance (no second GL).
+- Cross-branch bill settlement uses `inter_branch_clearing` (same pattern as customer receipts).
+
+Catalog keys `supplier_advances` / `supplier_deposits` remain unused for day-to-day payables.
+
 ## Entity ledgers
 
 - `GET /accounting/journals?customer_id=&supplier_id=&sales_representative_id=&source_type=&from=&to=`

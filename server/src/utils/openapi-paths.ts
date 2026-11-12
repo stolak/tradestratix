@@ -112,8 +112,16 @@ export const apiPaths: Record<string, unknown> = {
     },
     post: {
       tags: ['Purchases'],
-      summary: 'Record supplier payment',
+      summary: 'Record supplier payment (clear outstanding or advance/prepaid on AP)',
       responses: { 201: { description: 'Posted' } }
+    }
+  },
+  '/api/v1/purchases/suppliers/{id}/credit': {
+    get: {
+      tags: ['Purchases'],
+      summary: 'Supplier prepaid credit and AP balance',
+      parameters: [{ name: 'id', in: 'path', required: true, schema: { type: 'string' } }],
+      responses: { 200: { description: 'Prepaid total, payments, and ledger balance' } }
     }
   },
   '/api/v1/customers': {

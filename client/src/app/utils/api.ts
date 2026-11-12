@@ -317,16 +317,26 @@ export const api = {
     receipts: () => request<any[]>('/purchases/receipts'),
     receive: (body: Record<string, unknown>) =>
       request<any>('/purchases/receipts', { method: 'POST', body: JSON.stringify(body) }),
-    bills: (supplierId?: string) =>
-      request<any[]>(
-        `/purchases/bills${supplierId ? `?supplier_id=${encodeURIComponent(supplierId)}` : ''}`
-      ),
-    payments: (supplierId?: string) =>
-      request<any[]>(
-        `/purchases/payments${supplierId ? `?supplier_id=${encodeURIComponent(supplierId)}` : ''}`
-      ),
+    bills: (supplierId?: string, opts?: { consolidated?: boolean }) => {
+      const q = new URLSearchParams();
+      if (supplierId) q.set('supplier_id', supplierId);
+      if (opts?.consolidated) q.set('consolidated', '1');
+      const qs = q.toString();
+      return request<any[]>(`/purchases/bills${qs ? `?${qs}` : ''}`);
+    },
+    payments: (supplierId?: string, opts?: { consolidated?: boolean }) => {
+      const q = new URLSearchParams();
+      if (supplierId) q.set('supplier_id', supplierId);
+      if (opts?.consolidated) q.set('consolidated', '1');
+      const qs = q.toString();
+      return request<any[]>(`/purchases/payments${qs ? `?${qs}` : ''}`);
+    },
     recordPayment: (body: Record<string, unknown>) =>
-      request<any>('/purchases/payments', { method: 'POST', body: JSON.stringify(body) })
+      request<any>('/purchases/payments', { method: 'POST', body: JSON.stringify(body) }),
+    supplierCredit: (supplierId: string) =>
+      request<{ total: number; payments: any[]; balance: number }>(
+        `/purchases/suppliers/${encodeURIComponent(supplierId)}/credit`
+      )
   },
   customers: {
     list: (q?: string, status?: 'active' | 'inactive', opts?: { includeWalkIn?: boolean }) => {

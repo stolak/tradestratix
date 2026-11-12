@@ -120,3 +120,11 @@ export async function recordPayment(req: Request, res: Response, next: NextFunct
     return next(err);
   }
 }
+
+export async function supplierCredit(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await procurementService.getSupplierCredit(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}

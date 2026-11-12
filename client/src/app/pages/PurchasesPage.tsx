@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
+import { PaySupplierPayment } from '../components/PaySupplierPayment';
 
 type Tab = 'orders' | 'receive' | 'bills' | 'payments';
 
@@ -12,7 +13,6 @@ export const PurchasesPage: React.FC = () => {
   const [orders, setOrders] = useState<any[]>([]);
   const [receipts, setReceipts] = useState<any[]>([]);
   const [bills, setBills] = useState<any[]>([]);
-  const [payments, setPayments] = useState<any[]>([]);
 
   const [poForm, setPoForm] = useState({
     supplier_id: '',
@@ -54,13 +54,6 @@ export const PurchasesPage: React.FC = () => {
     expiry_date: ''
   });
 
-  const [payForm, setPayForm] = useState({
-    supplier_id: '',
-    amount: '',
-    method: 'bank',
-    reference: ''
-  });
-
   const selectedPo = useMemo(
     () => orders.find((o) => o.id === receiveForm.purchase_order_id),
     [orders, receiveForm.purchase_order_id]
@@ -73,14 +66,13 @@ export const PurchasesPage: React.FC = () => {
 
   const load = async () => {
     try {
-      const [s, w, p, o, r, b, pay] = await Promise.all([
+      const [s, w, p, o, r, b] = await Promise.all([
         api.suppliers.list(),
         api.warehouses.list(),
         api.products.list(),
         api.purchases.orders(),
         api.purchases.receipts(),
-        api.purchases.bills(),
-        api.purchases.payments()
+        api.purchases.bills()
       ]);
       setSuppliers(s);
       setWarehouses(w);
@@ -88,7 +80,6 @@ export const PurchasesPage: React.FC = () => {
       setOrders(o);
       setReceipts(r);
       setBills(b);
-      setPayments(pay);
       setPoForm((f) => {
         const product = p.find((x: any) => x.id === f.product_id) || p[0];
         return {
@@ -102,7 +93,6 @@ export const PurchasesPage: React.FC = () => {
             (product ? String(product.default_purchase_cost ?? 0) : '')
         };
       });
-      setPayForm((f) => ({ ...f, supplier_id: f.supplier_id || s[0]?.id || '' }));
     } catch (e: any) {
       await alertError('Purchases', e.message);
     }
@@ -190,23 +180,6 @@ export const PurchasesPage: React.FC = () => {
       setTab('bills');
     } catch (err: any) {
       await alertError('Receive failed', err.message);
-    }
-  };
-
-  const paySupplier = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await api.purchases.recordPayment({
-        supplier_id: payForm.supplier_id,
-        amount: Number(payForm.amount),
-        method: payForm.method,
-        reference: payForm.reference || undefined
-      });
-      await alertSuccess('Supplier payment recorded');
-      setPayForm((f) => ({ ...f, amount: '', reference: '' }));
-      await load();
-    } catch (err: any) {
-      await alertError('Payment failed', err.message);
     }
   };
 
@@ -566,98 +539,11 @@ export const PurchasesPage: React.FC = () => {
       ) : null}
 
       {tab === 'payments' ? (
-        <>
-          <form
-            onSubmit={paySupplier}
-            className="card-surface"
-            style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
-          >
-            <div style={{ fontWeight: 700 }}>Record supplier payment</div>
-            <div className="form-grid">
-              <div className="field">
-                <label>Supplier</label>
-                <select
-                  value={payForm.supplier_id}
-                  onChange={(e) => setPayForm({ ...payForm, supplier_id: e.target.value })}
-                  required
-                >
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Amount</label>
-                <input
-                  type="number"
-                  min="0.01"
-                  step="any"
-                  value={payForm.amount}
-                  onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Method</label>
-                <select
-                  value={payForm.method}
-                  onChange={(e) => setPayForm({ ...payForm, method: e.target.value })}
-                >
-                  <option value="bank">Bank</option>
-                  <option value="cash">Cash</option>
-                  <option value="transfer">Transfer</option>
-                  <option value="cheque">Cheque</option>
-                </select>
-              </div>
-              <div className="field">
-                <label>Reference</label>
-                <input
-                  value={payForm.reference}
-                  onChange={(e) => setPayForm({ ...payForm, reference: e.target.value })}
-                />
-              </div>
-            </div>
-            <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>
-              Post payment
-            </button>
-          </form>
-
-          <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <div className="table-wrap">
-              <table className="table">
-              <thead>
-                <tr>
-                  <th>Payment #</th>
-                  <th>Supplier</th>
-                  <th>Amount</th>
-                  <th>Method</th>
-                  <th>Allocations</th>
-                </tr>
-              </thead>
-              <tbody>
-                {payments.map((p) => (
-                  <tr key={p.id}>
-                    <td>{p.payment_number}</td>
-                    <td>{p.supplier?.name}</td>
-                    <td>{Number(p.amount).toLocaleString()}</td>
-                    <td>{p.method}</td>
-                    <td>
-                      {(p.allocations || [])
-                        .map(
-                          (a: any) =>
-                            `${a.bill?.bill_number}: ${Number(a.amount).toLocaleString()}`
-                        )
-                        .join(' · ') || '—'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
-          </div>
-        </>
+        <PaySupplierPayment
+          suppliers={suppliers}
+          historyScope="all"
+          onDone={() => void load()}
+        />
       ) : null}
     </div>
   );

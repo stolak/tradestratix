@@ -32,5 +32,10 @@ router.post('/receipts', requirePermission('purchases.create'), procurementContr
 router.get('/bills', requirePermission('purchases.view'), procurementController.listBills);
 router.get('/payments', requirePermission('purchases.view'), procurementController.listPayments);
 router.post('/payments', requirePermission('purchases.post'), procurementController.recordPayment);
+router.get(
+  '/suppliers/:id/credit',
+  requirePermission('purchases.view'),
+  procurementController.supplierCredit
+);
 
 export default router;

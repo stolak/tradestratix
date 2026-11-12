@@ -57,14 +57,16 @@ export const DEFAULT_ACCOUNT_CATALOG: DefaultAccountKeyMeta[] = [
   {
     key: 'supplier_advances',
     label: 'Supplier Advances',
-    description: 'Asset for advances paid to suppliers',
+    description:
+      'Legacy mapping (unused). Day-to-day advances stay on Accounts Payable as supplier prepaid.',
     accountTypes: ['asset'],
     category: 'supplier'
   },
   {
     key: 'supplier_deposits',
     label: 'Supplier Deposits',
-    description: 'Asset for deposits with suppliers',
+    description:
+      'Legacy mapping (unused). Day-to-day deposits stay on Accounts Payable as supplier prepaid.',
     accountTypes: ['asset'],
     category: 'supplier'
   },

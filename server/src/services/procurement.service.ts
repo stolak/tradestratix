@@ -13,6 +13,12 @@ import { writeAudit } from './audit.service.js';
 import { convertToBaseQty, createStockMovement } from './inventory.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import * as branchAccess from './branch-access.service.js';
+import {
+  applySupplierPaymentInTx,
+  autoAllocateBills,
+  consumePrepaidAgainstBillBalance,
+  supplierPrepaidCredit
+} from './supplier-payment.service.js';
 
 type BranchListOpts = {
   branchId?: string | null;
@@ -66,10 +72,6 @@ async function nextGrnNumber(businessId: string) {
 
 async function nextBillNumber(businessId: string) {
   return nextDocNumber(prisma.supplierBill, businessId, 'billNumber', 'BILL', 5);
-}
-
-async function nextPaymentNumber(businessId: string) {
-  return nextDocNumber(prisma.supplierPayment, businessId, 'paymentNumber', 'SPAY', 5);
 }
 
 function addDays(date: Date, days: number) {
@@ -575,6 +577,9 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
       }
     });
 
+    // Absorb existing supplier prepaid into the new bill (memo only; cash already on AP).
+    await consumePrepaidAgainstBillBalance(tx, user.businessId, po.supplierId, billId);
+
     await tx.goodsReceiptNote.update({
       where: { id: grn.id },
       data: { journalEntryId: journalId, billId }
@@ -615,7 +620,11 @@ export async function listSupplierBills(
       ...scope,
       ...(supplierId ? { supplierId } : {})
     },
-    include: { supplier: true, grn: true },
+    include: {
+      supplier: true,
+      grn: true,
+      branch: { select: { id: true, code: true, name: true } }
+    },
     orderBy: { billDate: 'desc' }
   });
   return serialize(rows);
@@ -646,6 +655,16 @@ export async function listSupplierPayments(
   return serialize(rows);
 }
 
+export async function getSupplierCredit(user: AuthUser, supplierId: string) {
+  const supplier = await prisma.supplier.findFirst({
+    where: { id: supplierId, businessId: user.businessId },
+    select: { id: true }
+  });
+  if (!supplier) throw httpError(404, 'Supplier not found');
+  const credit = await supplierPrepaidCredit(user.businessId, supplierId);
+  return serialize(credit);
+}
+
 export async function recordSupplierPayment(user: AuthUser, body: Record<string, any>) {
   const supplierId = requireString(body.supplier_id || body.supplierId, 'supplier_id');
   const amount = roundMoney(Number(body.amount));
@@ -662,10 +681,6 @@ export async function recordSupplierPayment(user: AuthUser, body: Record<string,
   if (!supplier) throw httpError(400, 'Invalid supplier_id');
 
   const accountMap = await getDefaultAccountMap(user.businessId);
-  if (!accountMap.accounts_payable) {
-    throw httpError(400, 'Default accounts_payable account must be configured');
-  }
-
   const method = String(body.method || 'bank').toLowerCase();
   let payAccountId = body.account_id || body.accountId || null;
   if (!payAccountId) {
@@ -673,151 +688,74 @@ export async function recordSupplierPayment(user: AuthUser, body: Record<string,
   }
   if (!payAccountId) throw httpError(400, 'Payment GL account (cash/bank) is not configured');
 
+  const allowUnallocated =
+    body.allow_unallocated !== false && body.allowUnallocated !== false;
+  const mode = String(body.mode || body.intent || '')
+    .toLowerCase()
+    .trim();
   const allocationsInput: any[] = Array.isArray(body.allocations) ? body.allocations : [];
-  let remaining = amount;
-  const allocations: { billId: string; amount: number }[] = [];
+  let allocations: { billId: string; amount: number }[] = [];
 
-  if (allocationsInput.length) {
+  const parseAllocations = () => {
+    const out: { billId: string; amount: number }[] = [];
     for (const [i, a] of allocationsInput.entries()) {
       const billId = a.bill_id || a.billId;
       const allocAmt = roundMoney(Number(a.amount));
       if (!billId || !allocAmt || allocAmt <= 0) {
         throw httpError(400, `allocations[${i}] requires bill_id and amount`);
       }
-      allocations.push({ billId, amount: allocAmt });
-      remaining = roundMoney(remaining - allocAmt);
+      out.push({ billId, amount: allocAmt });
     }
-    if (remaining < -0.01) throw httpError(400, 'Allocations exceed payment amount');
+    return out;
+  };
+
+  if (allocationsInput.length) {
+    allocations = parseAllocations();
+  } else if (mode === 'advance' || body.leave_unallocated === true || body.leaveUnallocated === true) {
+    allocations = [];
+    if (!allowUnallocated) {
+      throw httpError(400, 'Advance payments require allow_unallocated (supplier prepaid)');
+    }
   } else {
-    // Auto-allocate FIFO to open bills
-    const openBills = await prisma.supplierBill.findMany({
-      where: {
-        businessId: user.businessId,
-        branchId,
+    // Default / clear: FIFO across open AP bills; leftover stays as prepaid.
+    allocations = await autoAllocateBills(user.businessId, supplierId, amount);
+    if (!allocations.length && !allowUnallocated) {
+      throw httpError(400, 'No open supplier bills to allocate this payment against');
+    }
+  }
+
+  const { payment, replayed } = await prisma.$transaction(
+    (tx) =>
+      applySupplierPaymentInTx(tx, user, {
         supplierId,
-        status: { in: ['open', 'partial'] },
-        balance: { gt: 0 }
-      },
-      orderBy: { billDate: 'asc' }
-    });
-    for (const bill of openBills) {
-      if (remaining <= 0) break;
-      const bal = Number(bill.balance);
-      const apply = roundMoney(Math.min(bal, remaining));
-      if (apply <= 0) continue;
-      allocations.push({ billId: bill.id, amount: apply });
-      remaining = roundMoney(remaining - apply);
-    }
-  }
-
-  const allocatedTotal = roundMoney(allocations.reduce((s, a) => s + a.amount, 0));
-  if (allocatedTotal <= 0) {
-    throw httpError(400, 'No open supplier bills to allocate this payment against');
-  }
-  if (Math.abs(allocatedTotal - amount) > 0.01) {
-    // Allow unallocated remainder only if explicitly permitted; otherwise require full allocation
-    if (body.allow_unallocated !== true && body.allowUnallocated !== true) {
-      throw httpError(
-        400,
-        `Payment amount ${amount} does not match allocated ${allocatedTotal}. Pass allow_unallocated or adjust amount.`
-      );
-    }
-  }
-
-  const paymentId = shortId('spay');
-  const paymentNumber = await nextPaymentNumber(user.businessId);
-
-  const result = await prisma.$transaction(async (tx) => {
-    for (const a of allocations) {
-      const bill = await tx.supplierBill.findFirst({
-        where: { id: a.billId, businessId: user.businessId, supplierId, branchId }
-      });
-      if (!bill) throw httpError(400, `Bill ${a.billId} not found for supplier`);
-      const bal = Number(bill.balance);
-      if (a.amount > bal + 0.01) {
-        throw httpError(400, `Allocation exceeds balance on bill ${bill.billNumber}`);
-      }
-      const newPaid = roundMoney(Number(bill.amountPaid) + a.amount);
-      const newBal = roundMoney(Number(bill.totalAmount) - newPaid);
-      await tx.supplierBill.update({
-        where: { id: bill.id },
-        data: {
-          amountPaid: toDec(newPaid),
-          balance: toDec(Math.max(0, newBal)),
-          status: newBal <= 0.01 ? 'paid' : 'partial'
-        }
-      });
-    }
-
-    const journal = await createJournal(
-      user,
-      {
-        memo: `Supplier payment ${paymentNumber} — ${supplier.name}`,
-        source_type: 'supplier_payment',
-        source_id: paymentId,
-        idempotency_key: `supplier_payment:${paymentId}`,
-        branch_id: branchId,
-        supplier_id: supplier.id,
-        post: true,
-        lines: [
-          {
-            account_id: accountMap.accounts_payable,
-            debit: allocatedTotal,
-            description: `AP settlement ${paymentNumber}`
-          },
-          {
-            account_id: payAccountId!,
-            credit: allocatedTotal,
-            description: `${method} payment ${paymentNumber}`
-          }
-        ]
-      },
-      tx
-    );
-
-    const payment = await tx.supplierPayment.create({
-      data: {
-        id: paymentId,
-        businessId: user.businessId,
-        branchId,
-        supplierId,
-        paymentNumber,
-        paymentDate: body.payment_date || body.paymentDate
-          ? new Date(body.payment_date || body.paymentDate)
-          : new Date(),
-        amount: toDec(allocatedTotal),
+        supplierName: supplier.name,
+        payingBranchId: branchId,
+        amount,
         method,
         accountId: payAccountId,
+        allocations,
+        allowUnallocated,
         reference: body.reference || null,
         notes: body.notes || null,
-        journalEntryId: (journal as any).id,
-        createdById: user.id,
-        allocations: {
-          create: allocations.map((a) => ({
-            id: shortId('spa'),
-            billId: a.billId,
-            amount: toDec(a.amount)
-          }))
-        }
-      },
-      include: {
-        supplier: true,
-        account: true,
-        allocations: { include: { bill: true } }
-      }
+        paymentDate:
+          body.payment_date || body.paymentDate
+            ? new Date(body.payment_date || body.paymentDate)
+            : undefined,
+        idempotencyKey: body.idempotency_key || body.idempotencyKey || null
+      }),
+    { timeout: 30000, maxWait: 10000 }
+  );
+
+  if (!replayed) {
+    await writeAudit({
+      user,
+      action: 'post',
+      module: 'purchases',
+      entityType: 'SupplierPayment',
+      entityId: payment.id,
+      summary: `Recorded supplier payment ${payment.paymentNumber} (${amount})`
     });
+  }
 
-    return payment;
-  });
-
-  await writeAudit({
-    user,
-    action: 'post',
-    module: 'purchases',
-    entityType: 'SupplierPayment',
-    entityId: paymentId,
-    summary: `Recorded supplier payment ${paymentNumber} (${allocatedTotal})`
-  });
-
-  return serialize(result);
+  return serialize(payment);
 }
