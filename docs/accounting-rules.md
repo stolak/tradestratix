@@ -56,6 +56,9 @@ APIs:
 
 Missing or wrong-type mappings throw a clear configuration error and block posting when resolved as required.
 
+UI: **Accounting → Default accounts** — status summary, category / issue filters, and account assignment
+filtered by each key’s expected account type (`accounting.edit` or `settings.edit` to change).
+
 ## Entity ledgers
 
 - `GET /accounting/journals?customer_id=&supplier_id=&sales_representative_id=&source_type=&from=&to=`

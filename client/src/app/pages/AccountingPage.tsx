@@ -1,29 +1,28 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
+import { DefaultAccountsPanel } from '../components/DefaultAccountsPanel';
 
 type Tab = 'coa' | 'defaults' | 'journals' | 'trial' | 'pl' | 'bs' | 'periods';
 
 export const AccountingPage: React.FC = () => {
   const [accounts, setAccounts] = useState<any[]>([]);
-  const [defaultStatus, setDefaultStatus] = useState<any[]>([]);
   const [journals, setJournals] = useState<any[]>([]);
   const [trial, setTrial] = useState<any>(null);
   const [pl, setPl] = useState<any>(null);
   const [bs, setBs] = useState<any>(null);
   const [periods, setPeriods] = useState<any[]>([]);
-  const [tab, setTab] = useState<Tab>('coa');
+  const [tab, setTab] = useState<Tab>('defaults');
 
   const load = async () => {
     try {
-      const [a, j, t, p, b, per, defaults] = await Promise.all([
+      const [a, j, t, p, b, per] = await Promise.all([
         api.accounting.accounts(),
         api.accounting.journals(),
         api.accounting.trialBalance(),
         api.accounting.profitLoss(),
         api.accounting.balanceSheet(),
-        api.accounting.periods(),
-        api.accounting.defaultAccountStatus()
+        api.accounting.periods()
       ]);
       setAccounts(a);
       setJournals(j);
@@ -31,19 +30,8 @@ export const AccountingPage: React.FC = () => {
       setPl(p);
       setBs(b);
       setPeriods(per);
-      setDefaultStatus(defaults);
     } catch (e: any) {
       await alertError('Accounting', e.message);
-    }
-  };
-
-  const saveDefault = async (key: string, accountId: string) => {
-    try {
-      await api.accounting.upsertDefaultAccount({ setting_key: key, account_id: accountId });
-      await alertSuccess('Default account saved');
-      await load();
-    } catch (e: any) {
-      await alertError('Save failed', e.message);
     }
   };
 
@@ -78,7 +66,8 @@ export const AccountingPage: React.FC = () => {
           Accounting
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Full GL — journals, trial balance, P&amp;L, balance sheet and period locks.
+          Chart of accounts, default posting maps, journals, trial balance, P&amp;L, balance sheet and period
+          locks.
         </p>
       </header>
 
@@ -125,60 +114,7 @@ export const AccountingPage: React.FC = () => {
         </div>
       ) : null}
 
-      {tab === 'defaults' ? (
-        <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>S/N</th>
-                  <th>Key</th>
-                  <th>Category</th>
-                  <th>Status</th>
-                  <th>Mapped account</th>
-                  <th>Assign</th>
-                </tr>
-              </thead>
-              <tbody>
-                {defaultStatus.map((row, index) => (
-                  <tr key={row.key}>
-                    <td>{index + 1}</td>
-                    <td>
-                      <div>{row.label || row.key}</div>
-                      <div style={{ color: 'var(--ink-muted)', fontSize: '0.78rem' }}>{row.key}</div>
-                    </td>
-                    <td>{row.category}</td>
-                    <td>{row.status}</td>
-                    <td>
-                      {row.account
-                        ? `${row.account.code} — ${row.account.name}`
-                        : '—'}
-                    </td>
-                    <td>
-                      <select
-                        defaultValue={row.account?.id || ''}
-                        onChange={(e) => {
-                          if (e.target.value) void saveDefault(row.key, e.target.value);
-                        }}
-                        style={{ maxWidth: 220 }}
-                      >
-                        <option value="">Select account…</option>
-                        {accounts
-                          .filter((a) => a.is_active !== false)
-                          .map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.code} — {a.name}
-                            </option>
-                          ))}
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : null}
+      {tab === 'defaults' ? <DefaultAccountsPanel /> : null}
 
       {tab === 'journals' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>

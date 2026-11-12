@@ -36,7 +36,7 @@ Updated: 2026-11-12
   - Posting engine validates entities, rejects inactive accounts, copies attribution on reverse
   - Sales/procurement journals stamp customer/supplier/rep where applicable
   - APIs: default-accounts catalog/status/upsert; journal filters; entity ledgers
-  - Client: Accounting → Default accounts (status + assign); Journals show customer/supplier/rep
+  - Client: Accounting → Default accounts (status summary, category/issue filters, type-filtered assign); Journals show customer/supplier/rep
   - Backfill: `npm run backfill:journal-entities`
   - Tests: `npm run test:journal-entities` (13 passed)
 - **Multi-branch architecture (cross-cutting)**

@@ -393,7 +393,8 @@ export async function listDefaultAccountSettingsStatus(businessId: string) {
         ...meta,
         status: 'missing' as const,
         account: null,
-        setting_id: null
+        setting_id: null,
+        mapped_description: null
       };
     }
     const account = setting.account;
@@ -406,6 +407,7 @@ export async function listDefaultAccountSettingsStatus(businessId: string) {
       ...meta,
       status,
       setting_id: setting.id,
+      mapped_description: setting.description,
       account: account
         ? {
             id: account.id,
@@ -428,8 +430,9 @@ export async function listDefaultAccountSettingsStatus(businessId: string) {
       description: setting.description || 'Custom mapping',
       accountTypes: account ? [account.accountType] : [],
       category: 'custom',
-      status: !account?.isActive ? 'inactive' : 'valid',
+      status: !account ? 'invalid' : !account.isActive ? 'inactive' : 'valid',
       setting_id: setting.id,
+      mapped_description: setting.description,
       account: account
         ? {
             id: account.id,
