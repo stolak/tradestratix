@@ -4,7 +4,7 @@ Updated: 2026-11-12
 
 ## Completed
 
-- **Multi-branch sales fulfilment — Phases 1–5** (details: `multi-branch-fulfilment.md`)
+- **Multi-branch sales fulfilment — Phases 1–6** (details: `multi-branch-fulfilment.md`)
   - Order lifecycle: draft → confirm (reserves stock + credit, no revenue) → hand-overs → fulfilled; cancel / close short with reason
   - Split-line allocation engine (manual split, preferred warehouse/branch, fewest locations), preview API + Sales page editor
   - Lot-level reservations with guarded concurrency, backorders, reallocation, expiry sweeper (`sales.reservation_days`)
@@ -70,7 +70,7 @@ Updated: 2026-11-12
 
 - Bank reconciliation / statement import
 - Multi-line expense builders (API ready)
-- Inventory valuation reports; sales returns / credit notes; advances
+- Inventory valuation reports; customer advances
 - Fulfilment polish: serial reservation, branch-pair due-to/due-from subledger
 - SMS / WhatsApp, payment gateways, biometrics
 - Native mobile apps (API surface ready)

@@ -12,7 +12,8 @@
     "build": "npm --prefix client run build",
     "build:server": "npm --prefix server run build",
     "seed": "npm --prefix server run seed",
-    "setup:db": "npm --prefix server run setup:db"
+    "setup:db": "npm --prefix server run setup:db",
+    "reset:transactions": "npm --prefix server run reset:transactions"
   },
   "keywords": [
     "erp",

@@ -190,10 +190,10 @@ actions.
 
 ## Tests
 
-`npm run test:fulfilment` (service level, self-cleaning; creates its own product, stock and customer) — 43 checks
-covering: same-branch pickup, cross-branch pickup with deposit and branch restriction, split allocation, shortage
-and backorder, close short with deposit release, full cancellation, reallocation, credit exposure and override,
-concurrent reservations, expiry, cross-branch receipt with idempotency, POS regression, clearing nets to zero.
+From `server/`: `npm run test:fulfilment` (service level, self-cleaning) — **100** checks covering Phases 1–5:
+same/cross-branch pickup, allocation, shortage/backorder, cancel/close short, reallocation, credit override,
+concurrent reservations, expiry, cross-branch receipt/idempotency, picking/POD, returns/credit, amend, reports,
+POS regression, clearing nets to zero. Backfill: `npm run backfill:fulfilment` (also from `server/`).
 
 ## Warehouse fulfilment (Phase 3)
 
@@ -239,8 +239,8 @@ Unapplied credit: `GET /sales/customers/:id/credit`, `POST /sales/credits/apply`
 
 * Quantity down → cancels the uncollected difference (original ordered qty preserved via `cancelledQuantity`).
 * Quantity up → recalculates totals, credit-checks (override supported), reserves the extra (backorder optional).
-* Warehouse move → same path as reallocate.
-* Notes / delivery address fields → header-only updates.
+* Warehouse move → same path as reallocate (Sales **Reallocate** action; not duplicated in the amend dialog).
+* Notes / delivery address / contact / phone → header-only updates (Invoice **Amend** dialog).
 * Cannot change quantities already handed over (use a return). History in `SalesOrderAmendment`.
 
 ## Reports (Phase 5)

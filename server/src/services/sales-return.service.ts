@@ -150,6 +150,12 @@ export async function createReturn(user: AuthUser, body: Record<string, any>) {
             : lineCond === 'quarantine'
               ? true
               : false;
+      if (restock && lineCond === 'saleable' && (warehouse.category === 'damaged' || warehouse.category === 'quarantine')) {
+        throw httpError(
+          400,
+          'Saleable returns must be received into a saleable warehouse (not damaged or quarantine)'
+        );
+      }
       if (restock && lineCond === 'damaged' && warehouse.category !== 'damaged') {
         throw httpError(
           400,

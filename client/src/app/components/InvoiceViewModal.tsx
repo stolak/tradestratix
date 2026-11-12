@@ -173,8 +173,7 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
   const canAmend =
     can('sales.amend') &&
     isOpenOrder &&
-    openQty > 1e-9 &&
-    invoice?.fulfilment_mode !== 'immediate';
+    !(invoice?.fulfilment_mode === 'immediate' && invoice?.fulfilment_status === 'fulfilled');
 
   const runAction = async (fn: () => Promise<any>, success: string) => {
     setActing(true);
@@ -283,15 +282,16 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
     const openLines = items.filter(
       (it) => n(it.quantity) - n(it.fulfilled_quantity) - n(it.cancelled_quantity) > 1e-9
     );
-    if (!openLines.length) {
-      await alertError('Nothing to amend', 'All lines are fully collected or cancelled.');
-      return;
-    }
+    const esc = (v: unknown) =>
+      String(v ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;');
     const rows = openLines
       .map(
         (it) => `
         <tr>
-          <td style="text-align:left">${it.product?.name || ''}</td>
+          <td style="text-align:left">${esc(it.product?.name || '')}</td>
           <td>${q(n(it.fulfilled_quantity))} / ${q(n(it.quantity) - n(it.cancelled_quantity))}</td>
           <td><input class="swal2-input" data-line="${it.id}" type="number" min="${n(it.fulfilled_quantity)}" step="any" value="${
             n(it.quantity) - n(it.cancelled_quantity)
@@ -299,17 +299,28 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
         </tr>`
       )
       .join('');
-    const r = await Swal.fire({
-      title: 'Amend order quantities',
-      width: 560,
-      html: `
-        <div style="text-align:left;display:grid;gap:10px">
-          <p style="margin:0;color:var(--ink-muted);font-size:0.9rem">
+    const qtyBlock = openLines.length
+      ? `<p style="margin:0;color:var(--ink-muted);font-size:0.9rem">
             Lowering quantity cancels the uncollected difference. Raising it reserves more stock (backorder allowed).
             Collected quantities cannot be reduced — use a return.
           </p>
           <table class="table" style="font-size:0.9rem"><thead><tr><th>Product</th><th>Collected / ordered</th><th>New qty</th></tr></thead>
-          <tbody>${rows}</tbody></table>
+          <tbody>${rows}</tbody></table>`
+      : `<p style="margin:0;color:var(--ink-muted);font-size:0.9rem">All lines are fully collected — you can still update notes or delivery details.</p>`;
+    const r = await Swal.fire({
+      title: 'Amend order',
+      width: 560,
+      html: `
+        <div style="text-align:left;display:grid;gap:10px">
+          ${qtyBlock}
+          <label>Notes<textarea id="amd-notes" class="swal2-textarea" style="width:100%;min-height:4rem">${esc(invoice.notes)}</textarea></label>
+          ${
+            isDelivery
+              ? `<label>Delivery address<input id="amd-addr" class="swal2-input" style="width:100%" value="${esc(invoice.delivery_address)}" /></label>
+                 <label>Delivery contact<input id="amd-contact" class="swal2-input" style="width:100%" value="${esc(invoice.delivery_contact)}" /></label>
+                 <label>Delivery phone<input id="amd-phone" class="swal2-input" style="width:100%" value="${esc(invoice.delivery_phone)}" /></label>`
+              : ''
+          }
           <label>Reason<input id="amd-reason" class="swal2-input" style="width:100%" /></label>
         </div>`,
       showCancelButton: true,
@@ -330,19 +341,29 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
           }
           lines.push({ invoice_item_id: input.dataset.line!, quantity });
         }
-        return { reason, lines };
+        return {
+          reason,
+          lines,
+          notes: String((document.getElementById('amd-notes') as HTMLTextAreaElement)?.value ?? ''),
+          delivery_address: String((document.getElementById('amd-addr') as HTMLInputElement)?.value ?? ''),
+          delivery_contact: String((document.getElementById('amd-contact') as HTMLInputElement)?.value ?? ''),
+          delivery_phone: String((document.getElementById('amd-phone') as HTMLInputElement)?.value ?? '')
+        };
       }
     });
     if (!r.isConfirmed || !r.value) return;
-    await runAction(
-      () =>
-        api.sales.amendOrder(invoice.id, {
-          reason: r.value.reason,
-          lines: r.value.lines,
-          allow_backorder: true
-        }),
-      'Order amended'
-    );
+    const payload: Record<string, unknown> = {
+      reason: r.value.reason,
+      notes: r.value.notes,
+      allow_backorder: true
+    };
+    if (r.value.lines.length) payload.lines = r.value.lines;
+    if (isDelivery) {
+      payload.delivery_address = r.value.delivery_address;
+      payload.delivery_contact = r.value.delivery_contact;
+      payload.delivery_phone = r.value.delivery_phone;
+    }
+    await runAction(() => api.sales.amendOrder(invoice.id, payload), 'Order amended');
   };
 
   const returnGoods = async () => {

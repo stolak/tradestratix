@@ -22,6 +22,7 @@
     "test:branches": "tsx scripts/test-multi-branch.ts",
     "test:journal-entities": "tsx scripts/test-journal-entities.ts",
     "test:sales-rep-employees": "tsx scripts/test-sales-rep-employees.ts",
+    "reset:transactions": "tsx scripts/reset-transactions.ts",
     "db:reset": "npx prisma migrate reset"
   },
   "dependencies": {
