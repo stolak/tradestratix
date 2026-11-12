@@ -696,6 +696,96 @@ const CollectorFields: React.FC<{
   );
 };
 
+/** Upload collection / delivery photos or PDFs to S3 via the fulfilment proofs API. */
+const ProofUploader: React.FC<{
+  taskId: string;
+  kind: 'collection' | 'delivery';
+  proofs: any[];
+  onChange: (proofs: any[]) => void;
+  onPrimaryUrl?: (url: string) => void;
+}> = ({ taskId, kind, proofs, onChange, onPrimaryUrl }) => {
+  const [busy, setBusy] = useState(false);
+  const upload = async (file: File | null) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const row = await api.sales.uploadFulfilmentProof(taskId, file, kind);
+      const next = [row, ...proofs];
+      onChange(next);
+      if (onPrimaryUrl && next[0]?.url) onPrimaryUrl(next[0].url);
+    } catch (err: any) {
+      await alertError('Upload failed', err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async (proofId: string) => {
+    setBusy(true);
+    try {
+      await api.sales.deleteFulfilmentProof(taskId, proofId);
+      const next = proofs.filter((p) => p.id !== proofId);
+      onChange(next);
+      if (onPrimaryUrl) onPrimaryUrl(next[0]?.url || '');
+    } catch (err: any) {
+      await alertError('Could not remove proof', err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div style={{ marginTop: '0.75rem' }}>
+      <div className="field">
+        <label>{kind === 'delivery' ? 'Proof of delivery photo / PDF' : 'Collection proof photo / PDF'}</label>
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp,image/gif,application/pdf"
+          disabled={busy}
+          onChange={(e) => {
+            const f = e.target.files?.[0] || null;
+            e.target.value = '';
+            void upload(f);
+          }}
+        />
+        <div className="line-items__discount-note">JPEG, PNG, WebP, GIF or PDF · max 8 MB · stored on S3</div>
+      </div>
+      {proofs.length ? (
+        <ul style={{ listStyle: 'none', padding: 0, margin: '0.5rem 0 0', display: 'grid', gap: 8 }}>
+          {proofs.map((p) => (
+            <li
+              key={p.id}
+              style={{
+                display: 'flex',
+                gap: 10,
+                alignItems: 'center',
+                padding: '0.4rem 0.6rem',
+                background: 'var(--surface-2, #f4f4f2)',
+                borderRadius: 6
+              }}
+            >
+              {String(p.mime_type || '').startsWith('image/') ? (
+                <a href={p.url} target="_blank" rel="noreferrer">
+                  <img src={p.url} alt="" style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 4 }} />
+                </a>
+              ) : (
+                <a href={p.url} target="_blank" rel="noreferrer" className="btn-linkish">
+                  PDF
+                </a>
+              )}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.file_name}</div>
+                <div className="line-items__discount-note">{p.kind}</div>
+              </div>
+              <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void remove(p.id)}>
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+};
+
 function QtyInput({ value, max, onChange }: { value: string; max: number; onChange: (v: string) => void }) {
   const v = Number(value || 0);
   const bad = !Number.isFinite(v) || v < 0 || v > max + 1e-9;
@@ -965,11 +1055,13 @@ const CollectModal: React.FC<{ taskId: string; onClose: () => void; onDone: () =
   const task = useTask(taskId);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [collector, setCollector] = useState<Collector>(() => emptyCollector(null));
+  const [proofs, setProofs] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!task) return;
     setQuantities(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, String(Number(i.picked_quantity))])));
     setCollector(emptyCollector(task.invoice?.customer));
+    setProofs(task.proofs || []);
   }, [task]);
   if (!task) return <Loading onClose={onClose} />;
 
@@ -1056,6 +1148,13 @@ const CollectModal: React.FC<{ taskId: string; onClose: () => void; onDone: () =
         </table>
       </div>
       <CollectorFields value={collector} onChange={setCollector} hasCode={Boolean(task.invoice?.has_pickup_code)} authorised={authorised} />
+      <ProofUploader
+        taskId={taskId}
+        kind="collection"
+        proofs={proofs}
+        onChange={setProofs}
+        onPrimaryUrl={(url) => setCollector((c) => ({ ...c, proof_reference: url || c.proof_reference }))}
+      />
       {(task.verifications || []).some((v: any) => v.result !== 'success') ? (
         <div className="line-items__discount-note" style={{ marginTop: '0.5rem' }}>
           Recent code checks:{' '}
@@ -1139,10 +1238,18 @@ const DeliverModal: React.FC<{ taskId: string; onClose: () => void; onDone: () =
   const task = useTask(taskId);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const [form, setForm] = useState({ received_by: '', signature_name: '', proof_reference: '', pod_notes: '' });
+  const [proofs, setProofs] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!task) return;
     setQuantities(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, String(Number(i.picked_quantity))])));
+    setProofs(task.proofs || []);
+    if (task.proof_reference || task.delivery_order?.pod_reference) {
+      setForm((f) => ({
+        ...f,
+        proof_reference: f.proof_reference || task.proof_reference || task.delivery_order?.pod_reference || ''
+      }));
+    }
   }, [task]);
   if (!task) return <Loading onClose={onClose} />;
   const items: any[] = task.items.filter((i: any) => Number(i.picked_quantity) > 0);
@@ -1241,6 +1348,13 @@ const DeliverModal: React.FC<{ taskId: string; onClose: () => void; onDone: () =
           <input value={form.pod_notes} onChange={(e) => setForm({ ...form, pod_notes: e.target.value })} placeholder="Optional" />
         </div>
       </div>
+      <ProofUploader
+        taskId={taskId}
+        kind="delivery"
+        proofs={proofs}
+        onChange={setProofs}
+        onPrimaryUrl={(url) => setForm((f) => ({ ...f, proof_reference: url || f.proof_reference }))}
+      />
       {returned > 0 ? (
         <div className="pickups__warning" style={{ marginTop: '0.75rem' }}>
           {qty(returned)} not delivered — it returns to {task.warehouse?.name} and stays reserved for the order.

@@ -19,6 +19,7 @@ import * as logistics from '../src/services/logistics.service.js';
 import { reissuePickupCode } from '../src/services/pickup-code.service.js';
 import * as returns from '../src/services/sales-return.service.js';
 import * as customerPayment from '../src/services/customer-payment.service.js';
+import * as reports from '../src/services/reports.service.js';
 import { getDefaultAccountMap } from '../src/services/accounting.service.js';
 import { shortId } from '../src/utils/helpers.js';
 
@@ -532,6 +533,70 @@ async function main() {
   });
   assert(applyReplay.replayed === true, 'apply credit is idempotent');
 
+  // Order amendment: reduce then increase open qty; history recorded.
+  console.log('\nOrder amendment');
+  const invA: any = await order(hq, {
+    warehouse_id: MAIN.id,
+    fulfilment_mode: 'pickup',
+    items: [{ quantity: 4, allocations: [{ warehouse_id: MAIN.id, quantity: 4 }] }]
+  });
+  await sales.postInvoice(hq, invA.id, { allow_backorder: false });
+  const lineA = (await reload(invA.id)).items[0].id;
+  await expectError(
+    () =>
+      orders.amendOrder(hq, invA.id, {
+        reason: 'too low',
+        lines: [{ invoice_item_id: lineA, quantity: -1 }]
+      }),
+    400,
+    'amend refuses quantity below collected'
+  );
+  // Simulate 1 collected so we cannot amend below 1
+  await wf.quickRelease(hq, {
+    invoice_id: invA.id,
+    warehouse_id: MAIN.id,
+    items: [{ invoice_item_id: lineA, quantity: 1 }],
+    collected_by: 'Amend Tester',
+    acknowledged: true,
+    pickup_code: (await reload(invA.id)).pickupCode
+  });
+  await expectError(
+    () =>
+      orders.amendOrder(hq, invA.id, {
+        reason: 'cut collected',
+        lines: [{ invoice_item_id: lineA, quantity: 0 }]
+      }),
+    400,
+    'cannot amend below handed-over quantity'
+  );
+  await orders.amendOrder(hq, invA.id, {
+    reason: 'Customer needs one less',
+    lines: [{ invoice_item_id: lineA, quantity: 3 }],
+    allow_backorder: true
+  });
+  let rA = await reload(invA.id);
+  assert(num(rA.items[0].cancelledQuantity) === 1, 'amend down cancels 1 uncollected unit');
+  assert(num(rA.recognisedAmount) === 100, 'collected unit still recognised');
+  await orders.amendOrder(hq, invA.id, {
+    reason: 'Customer wants two more',
+    lines: [{ invoice_item_id: lineA, quantity: 5 }],
+    allow_backorder: true
+  });
+  rA = await reload(invA.id);
+  assert(num(rA.items[0].quantity) === 5, 'amend up raises ordered quantity to 5');
+  assert(num(rA.totalAmount) === 500, 'order total recalculated to 500');
+  const amd = await prisma.salesOrderAmendment.findMany({ where: { invoiceId: invA.id } });
+  assert(amd.length >= 2, 'amendment history rows recorded');
+
+  // Reports: clearing company net ~0; sales by branch; fulfilment summary.
+  console.log('\nFulfilment reports');
+  const clearing = await reports.interBranchClearing(hq, { allowConsolidated: true });
+  assert(clearing.balanced === true || Math.abs(Number(clearing.company_net)) < 0.01, 'clearing report company net ~0');
+  const salesBr = await reports.salesByBranch(hq, { allowConsolidated: true });
+  assert(Number(salesBr.totals.recognised) > 0, 'sales-by-branch shows recognised revenue');
+  const fulSum = await reports.fulfilmentSummary(hq, { allowConsolidated: true });
+  assert(typeof fulSum.status_counts === 'object', 'fulfilment summary returns status counts');
+
   // POS regression: counter sale is recognised, paid and handed over at once.
   console.log('\nPOS regression');
   const walkRep = await prisma.salesRep.findFirst({ where: { businessId, status: 'active', employee: { userId: owner.id } } });
@@ -565,6 +630,7 @@ async function cleanup() {
     await prisma.journalEntry.deleteMany({ where: { customerId: created.customerId } });
   }
   if (ids.length) {
+    await prisma.salesOrderAmendment.deleteMany({ where: { invoiceId: { in: ids } } });
     await prisma.salesReturnItem.deleteMany({ where: { returnRow: { invoiceId: { in: ids } } } });
     await prisma.salesReturn.deleteMany({ where: { invoiceId: { in: ids } } });
     await prisma.salesCommission.deleteMany({ where: { invoiceId: { in: ids } } });

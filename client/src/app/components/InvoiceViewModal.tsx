@@ -170,6 +170,11 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
     0
   );
   const canReturn = can('sales.return') && returnableQty > 1e-9;
+  const canAmend =
+    can('sales.amend') &&
+    isOpenOrder &&
+    openQty > 1e-9 &&
+    invoice?.fulfilment_mode !== 'immediate';
 
   const runAction = async (fn: () => Promise<any>, success: string) => {
     setActing(true);
@@ -272,6 +277,72 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
     } catch (err: any) {
       await alertError('Reissue failed', err.message);
     }
+  };
+
+  const amendOrder = async () => {
+    const openLines = items.filter(
+      (it) => n(it.quantity) - n(it.fulfilled_quantity) - n(it.cancelled_quantity) > 1e-9
+    );
+    if (!openLines.length) {
+      await alertError('Nothing to amend', 'All lines are fully collected or cancelled.');
+      return;
+    }
+    const rows = openLines
+      .map(
+        (it) => `
+        <tr>
+          <td style="text-align:left">${it.product?.name || ''}</td>
+          <td>${q(n(it.fulfilled_quantity))} / ${q(n(it.quantity) - n(it.cancelled_quantity))}</td>
+          <td><input class="swal2-input" data-line="${it.id}" type="number" min="${n(it.fulfilled_quantity)}" step="any" value="${
+            n(it.quantity) - n(it.cancelled_quantity)
+          }" style="width:5.5rem;margin:0" /></td>
+        </tr>`
+      )
+      .join('');
+    const r = await Swal.fire({
+      title: 'Amend order quantities',
+      width: 560,
+      html: `
+        <div style="text-align:left;display:grid;gap:10px">
+          <p style="margin:0;color:var(--ink-muted);font-size:0.9rem">
+            Lowering quantity cancels the uncollected difference. Raising it reserves more stock (backorder allowed).
+            Collected quantities cannot be reduced — use a return.
+          </p>
+          <table class="table" style="font-size:0.9rem"><thead><tr><th>Product</th><th>Collected / ordered</th><th>New qty</th></tr></thead>
+          <tbody>${rows}</tbody></table>
+          <label>Reason<input id="amd-reason" class="swal2-input" style="width:100%" /></label>
+        </div>`,
+      showCancelButton: true,
+      confirmButtonText: 'Save amendment',
+      confirmButtonColor: '#0f5c4c',
+      preConfirm: () => {
+        const reason = String((document.getElementById('amd-reason') as HTMLInputElement)?.value || '').trim();
+        if (!reason) {
+          Swal.showValidationMessage('A reason is required');
+          return;
+        }
+        const lines: { invoice_item_id: string; quantity: number }[] = [];
+        for (const input of Array.from(document.querySelectorAll<HTMLInputElement>('input[data-line]'))) {
+          const quantity = Number(input.value);
+          if (!(quantity >= 0)) {
+            Swal.showValidationMessage('Enter a valid quantity');
+            return;
+          }
+          lines.push({ invoice_item_id: input.dataset.line!, quantity });
+        }
+        return { reason, lines };
+      }
+    });
+    if (!r.isConfirmed || !r.value) return;
+    await runAction(
+      () =>
+        api.sales.amendOrder(invoice.id, {
+          reason: r.value.reason,
+          lines: r.value.lines,
+          allow_backorder: true
+        }),
+      'Order amended'
+    );
   };
 
   const returnGoods = async () => {
@@ -703,7 +774,8 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
           canCancel ||
           canReallocate ||
           canAllocate ||
-          canReturn) ? (
+          canReturn ||
+          canAmend) ? (
           <div className="modal__footer no-print">
             {canCancel ? (
               <button
@@ -715,6 +787,11 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                 {invoice.status === 'posted' && items.some((it) => n(it.fulfilled_quantity) > 0)
                   ? 'Close balance'
                   : 'Cancel order'}
+              </button>
+            ) : null}
+            {canAmend ? (
+              <button type="button" className="btn btn-ghost" onClick={() => void amendOrder()} disabled={acting}>
+                Amend
               </button>
             ) : null}
             {canReturn ? (

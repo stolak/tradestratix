@@ -57,7 +57,10 @@ app.use((_req, res) => {
 
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
-  const status = err.status || 500;
+  if (err?.code === 'LIMIT_FILE_SIZE') {
+    return res.status(400).json({ error: 'File is too large (max 8 MB)' });
+  }
+  const status = err.status || err.statusCode || 500;
   res.status(status).json({
     error: status >= 500 ? 'Internal server error' : err.message || 'Request failed'
   });

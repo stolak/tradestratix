@@ -23,5 +23,20 @@ router.get(
   requirePermission('reports.view', 'suppliers.view'),
   reportsController.supplierStatement
 );
+router.get(
+  '/inter-branch-clearing',
+  requirePermission('reports.view', 'accounting.view'),
+  reportsController.interBranchClearing
+);
+router.get(
+  '/fulfilment-summary',
+  requirePermission('reports.view', 'sales.view', 'sales.fulfil'),
+  reportsController.fulfilmentSummary
+);
+router.get(
+  '/sales-by-branch',
+  requirePermission('reports.view', 'sales.view'),
+  reportsController.salesByBranch
+);
 
 export default router;

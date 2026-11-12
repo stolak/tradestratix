@@ -1,7 +1,8 @@
 # Multi-branch sales fulfilment
 
-Status: **Phases 1–4 implemented** (order lifecycle, allocation, reservations, revenue at hand-over, warehouse
-picking / pickup codes / delivery with POD, sales returns and customer credit). Later phases are listed at the end.
+Status: **Phases 1–6 implemented** (order lifecycle, allocation, reservations, revenue at hand-over, warehouse
+picking / pickup codes / delivery with POD + S3 proof attachments, sales returns and customer credit, order
+amendment, fulfilment and clearing reports). Remaining polish is listed at the end.
 
 ## Concepts
 
@@ -208,6 +209,12 @@ lock the code until the selling/revenue branch reissues it (`POST /invoices/:id/
 collector details and acknowledgement. Delivery creates a linked `DeliveryOrder` and requires proof of delivery
 (`received_by`) before stock and revenue post.
 
+Proof files (JPEG / PNG / WebP / GIF / PDF, max 8 MB) upload to S3 via
+`GET|POST /fulfilments/:id/proofs` and `DELETE /fulfilments/:id/proofs/:proofId`. Objects live under
+`tradestratix/{businessId}/fulfilment/{fulfilmentId}/` using `AWS_*` env vars; the first URL fills
+`SalesFulfilment.proofReference` / `DeliveryOrder.podReference` when empty. UI: **Pickups** Collect / Deliver
+modals.
+
 APIs: `POST /fulfilments/picking`, `…/:id/pick`, `…/:id/release`, `…/:id/dispatch`, `…/:id/deliver`,
 `GET /fulfilments/dashboard`. UI: **Pickups** page.
 
@@ -226,9 +233,27 @@ APIs: `POST /fulfilments/picking`, `…/:id/pick`, `…/:id/release`, `…/:id/d
 Unapplied credit: `GET /sales/customers/:id/credit`, `POST /sales/credits/apply`, `POST /sales/credits/refund`
 (`sales.refund`). Sales page: Returns tab, **Return goods** on the invoice, Apply / Refund credit on Payments.
 
+## Order amendment (Phase 5)
+
+`POST /sales/invoices/:id/amend` (`sales.amend`, reason required) on confirmed `at_fulfilment` orders:
+
+* Quantity down → cancels the uncollected difference (original ordered qty preserved via `cancelledQuantity`).
+* Quantity up → recalculates totals, credit-checks (override supported), reserves the extra (backorder optional).
+* Warehouse move → same path as reallocate.
+* Notes / delivery address fields → header-only updates.
+* Cannot change quantities already handed over (use a return). History in `SalesOrderAmendment`.
+
+## Reports (Phase 5)
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /reports/inter-branch-clearing` | Clearing account lines by source pair; company net and open imbalances |
+| `GET /reports/fulfilment-summary` | Pipeline counts (awaiting pick → delivered) and open pickup/delivery orders |
+| `GET /reports/sales-by-branch` | Recognised revenue, returns, COGS and margin by revenue branch |
+
+UI: Reports page tabs. Prefer `consolidated=1` for company-wide views.
+
 ## Not yet implemented (later phases)
 
-* Inter-branch clearing reconciliation and fulfilment / consolidated reports.
-* Order amendment after confirmation (qty / warehouse changes without cancel + re-order).
 * Serial-number reservation (serial tracking does not exist yet).
-* Photo / file attachments for proof of delivery (string reference only today).
+* Deeper branch-pair due-to / due-from subledger (today: single clearing account + source pairing).

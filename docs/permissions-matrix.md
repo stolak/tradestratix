@@ -16,6 +16,7 @@ Business Owner receives all permissions. Other roles are seeded with module-appr
 | `sales.override_credit_limit` | Confirm beyond the customer's credit limit (reason required) | roles with `sales.*` |
 | `sales.return` | Create and post sales returns | roles with `sales.*`; warehouse manager, inventory officer, cashier |
 | `sales.refund` | Refund unapplied customer credit as cash/bank | roles with `sales.*` |
+| `sales.amend` | Amend confirmed order qty / warehouse / notes (reason required) | roles with `sales.*` |
 | `fulfilment.reallocate` | Reallocate reservations, allocate backorders, run reservation expiry | GM, branch manager, warehouse manager, sales manager |
 | `fulfilment.pick` | Open picking lists and record short/damaged | warehouse roles + GM / branch manager (`fulfilment.*`) |
 | `fulfilment.dispatch` | Dispatch and confirm delivery with POD | warehouse manager + GM / branch manager |

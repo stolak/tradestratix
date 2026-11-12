@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as salesController from '../controllers/sales.controller.js';
 import { authenticate, requirePermission } from '../middlewares/auth.js';
+import { proofUpload } from '../middlewares/upload.js';
 
 const router = Router();
 
@@ -24,6 +25,7 @@ router.post(
   salesController.postInvoice
 );
 router.post('/invoices/:id/cancel', requirePermission('sales.cancel'), salesController.cancelOrder);
+router.post('/invoices/:id/amend', requirePermission('sales.amend'), salesController.amendOrder);
 router.post(
   '/invoices/:id/reallocate',
   requirePermission('fulfilment.reallocate'),
@@ -64,6 +66,22 @@ router.post('/fulfilments/:id/release', requirePermission('sales.fulfil'), sales
 router.post('/fulfilments/:id/cancel', requirePermission('fulfilment.pick', 'sales.fulfil'), salesController.cancelFulfilment);
 router.post('/fulfilments/:id/dispatch', requirePermission('fulfilment.dispatch'), salesController.dispatchFulfilment);
 router.post('/fulfilments/:id/deliver', requirePermission('fulfilment.dispatch'), salesController.deliverFulfilment);
+router.get(
+  '/fulfilments/:id/proofs',
+  requirePermission('sales.fulfil', 'fulfilment.pick', 'fulfilment.dispatch'),
+  salesController.listFulfilmentProofs
+);
+router.post(
+  '/fulfilments/:id/proofs',
+  requirePermission('sales.fulfil', 'fulfilment.dispatch'),
+  proofUpload.single('file'),
+  salesController.uploadFulfilmentProof
+);
+router.delete(
+  '/fulfilments/:id/proofs/:proofId',
+  requirePermission('sales.fulfil', 'fulfilment.dispatch'),
+  salesController.deleteFulfilmentProof
+);
 router.post(
   '/invoices/:id/pickup-code',
   requirePermission('sales.post', 'sales.approve'),

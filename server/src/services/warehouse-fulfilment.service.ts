@@ -181,7 +181,8 @@ const taskInclude = {
       vehicle: { select: { id: true, name: true, plateNumber: true } }
     }
   },
-  verifications: { orderBy: { createdAt: 'desc' as const }, take: 20 }
+  verifications: { orderBy: { createdAt: 'desc' as const }, take: 20 },
+  proofs: { orderBy: { createdAt: 'desc' as const }, take: 20 }
 };
 
 /** Warehouse view of a fulfilment: picking list with lots; no prices or customer balances. */

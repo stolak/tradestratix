@@ -4,7 +4,7 @@ Updated: 2026-11-12
 
 ## Completed
 
-- **Multi-branch sales fulfilment — Phases 1–4** (details: `multi-branch-fulfilment.md`)
+- **Multi-branch sales fulfilment — Phases 1–5** (details: `multi-branch-fulfilment.md`)
   - Order lifecycle: draft → confirm (reserves stock + credit, no revenue) → hand-overs → fulfilled; cancel / close short with reason
   - Split-line allocation engine (manual split, preferred warehouse/branch, fewest locations), preview API + Sales page editor
   - Lot-level reservations with guarded concurrency, backorders, reallocation, expiry sweeper (`sales.reservation_days`)
@@ -14,9 +14,11 @@ Updated: 2026-11-12
   - Credit exposure = recognised balances + open order value; override with permission + reason
   - **Phase 3:** picking → ready / dispatch → release / deliver; pickup codes; POD; Pickups warehouse UI
   - **Phase 4:** sales returns at any branch (restock / write-off), credit notes, apply & refund unapplied credit
-  - Permissions: `sales.cancel`, `sales.override_credit_limit`, `sales.return`, `sales.refund`, `fulfilment.reallocate`, `fulfilment.pick`, `fulfilment.dispatch`, `fulfilment.override_pickup_code`
+  - **Phase 5:** order amendment after confirm; inter-branch clearing, fulfilment summary, sales-by-branch reports
+  - **Phase 6 (POD S3):** `FulfilmentProof` attachments uploaded to S3 (`AWS_*` env); Collect / Deliver upload UI
+  - Permissions: `sales.cancel`, `sales.override_credit_limit`, `sales.return`, `sales.refund`, `sales.amend`, `fulfilment.*`
   - Backfill: `npm run backfill:fulfilment` (legacy invoices → `on_posting`)
-  - Tests: `npm run test:fulfilment` (90 passed)
+  - Tests: `npm run test:fulfilment` (100 passed)
 
 - **System role privilege + menu seeding**
   - `ROLE_ACCESS` matrix grants each system role appropriate permissions and menus
@@ -69,8 +71,8 @@ Updated: 2026-11-12
 - Bank reconciliation / statement import
 - Multi-line expense builders (API ready)
 - Inventory valuation reports; sales returns / credit notes; advances
-- Fulfilment Phases 5+: clearing reconciliation reports, order amendment after confirmation, POD file attachments
-- SMS / WhatsApp, payment gateways, biometrics, S3 uploads
+- Fulfilment polish: serial reservation, branch-pair due-to/due-from subledger
+- SMS / WhatsApp, payment gateways, biometrics
 - Native mobile apps (API surface ready)
 
 ## Known issues

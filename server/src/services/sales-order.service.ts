@@ -1,5 +1,13 @@
 import { prisma } from '../utils/prisma.js';
-import { httpError, requireString, roundMoney, serialize, shortId, toDec } from '../utils/helpers.js';
+import {
+  httpError,
+  nextDocNumber,
+  requireString,
+  roundMoney,
+  serialize,
+  shortId,
+  toDec
+} from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
@@ -19,6 +27,9 @@ import { lockInvoices, paymentStatusFor } from './customer-payment.service.js';
 import { planAllocation, roundQty } from './stock-allocation.service.js';
 import { getInvoice, reservationDays } from './sales.service.js';
 import { cancelTasksInTx, openTaskIds } from './warehouse-fulfilment.service.js';
+import { convertToBaseQty } from './inventory.service.js';
+import { getCustomerExposure } from './customer.service.js';
+import { userHasAnyPermission } from './permission.service.js';
 
 const EPS = 1e-6;
 const n = (v: unknown) => Number(v || 0);
@@ -488,4 +499,314 @@ export async function runExpiry(user: AuthUser) {
     summary: `Reservation expiry run: ${result.expired} order(s) released`
   });
   return result;
+}
+
+type AmendChange = {
+  field: string;
+  invoice_item_id?: string;
+  from: unknown;
+  to: unknown;
+};
+
+/**
+ * Controlled amendment of a confirmed (at_fulfilment) order.
+ * - Quantity down → cancels the unfulfilled difference (preserves original ordered qty).
+ * - Quantity up → raises line/order totals, credit-checks, reserves the extra.
+ * - Warehouse / allocations → reallocate path.
+ * - Notes / delivery fields → header updates only.
+ * Already handed-over quantities cannot be changed (use a return).
+ */
+export async function amendOrder(user: AuthUser, id: string, body: Record<string, any>) {
+  const reason = requireString(body.reason, 'reason');
+  const linesInput: any[] = Array.isArray(body.lines) ? body.lines : [];
+  const allowBackorder = body.allow_backorder === true || body.allowBackorder === true;
+  const wantsOverride = body.override_credit === true || body.overrideCredit === true;
+  const overrideReason = String(body.override_reason || body.overrideReason || '').trim();
+
+  const header = await prisma.salesInvoice.findFirst({
+    where: { id, businessId: user.businessId },
+    include: { items: true, customer: true }
+  });
+  if (!header) throw httpError(404, 'Invoice not found');
+  await assertOrderBranch(user, header);
+  if (header.status !== 'posted') throw httpError(400, 'Only confirmed orders can be amended');
+  if (header.recognitionPolicy !== 'at_fulfilment') {
+    throw httpError(400, 'Legacy on_posting invoices cannot be amended; use a credit note / return');
+  }
+  if (header.fulfilmentMode === 'immediate' && header.fulfilmentStatus === 'fulfilled') {
+    throw httpError(400, 'Fully handed-over counter sales cannot be amended; use a return');
+  }
+
+  const changes: AmendChange[] = [];
+  const decreases: { invoice_item_id: string; quantity: number }[] = [];
+  const increases: {
+    invoiceItemId: string;
+    newQty: number;
+    addQty: number;
+    warehouseId?: string | null;
+    allocations?: { warehouse_id: string; quantity: number }[] | null;
+  }[] = [];
+
+  for (const [i, raw] of linesInput.entries()) {
+    const invoiceItemId = raw.invoice_item_id || raw.invoiceItemId;
+    if (!invoiceItemId) throw httpError(400, `lines[${i}].invoice_item_id is required`);
+    const line = header.items.find((it) => it.id === invoiceItemId);
+    if (!line) throw httpError(400, `Line ${invoiceItemId} is not on this order`);
+
+    const hasQty = raw.quantity != null || raw.new_quantity != null || raw.newQuantity != null;
+    if (hasQty) {
+      const newQty = roundQty(Number(raw.quantity ?? raw.new_quantity ?? raw.newQuantity));
+      const minQty = roundQty(n(line.fulfilledQuantity));
+      if (newQty + EPS < minQty) {
+        throw httpError(
+          400,
+          `Cannot reduce below ${minQty} already handed over on this line — return goods instead`
+        );
+      }
+      const effectiveOrdered = roundQty(n(line.quantity) - n(line.cancelledQuantity));
+      if (newQty + EPS < effectiveOrdered) {
+        const cut = roundQty(effectiveOrdered - newQty);
+        decreases.push({ invoice_item_id: line.id, quantity: cut });
+        changes.push({
+          field: 'quantity',
+          invoice_item_id: line.id,
+          from: effectiveOrdered,
+          to: newQty
+        });
+      } else if (newQty > effectiveOrdered + EPS) {
+        const addQty = roundQty(newQty - effectiveOrdered);
+        increases.push({
+          invoiceItemId: line.id,
+          newQty,
+          addQty,
+          warehouseId: raw.warehouse_id || raw.warehouseId || null,
+          allocations: Array.isArray(raw.allocations) ? raw.allocations : null
+        });
+        changes.push({
+          field: 'quantity',
+          invoice_item_id: line.id,
+          from: effectiveOrdered,
+          to: newQty
+        });
+      }
+    }
+
+    const toWh = raw.to_warehouse_id || raw.toWarehouseId || raw.warehouse_id || raw.warehouseId;
+    const fromWh = raw.from_warehouse_id || raw.fromWarehouseId;
+    if (toWh && fromWh && String(toWh) !== String(fromWh)) {
+      await reallocateOrder(user, id, {
+        from_warehouse_id: fromWh,
+        to_warehouse_id: toWh,
+        invoice_item_id: line.id,
+        reason: `Amendment: ${reason}`,
+        allow_backorder: allowBackorder
+      });
+      changes.push({
+        field: 'warehouse',
+        invoice_item_id: line.id,
+        from: fromWh,
+        to: toWh
+      });
+    }
+  }
+
+  if (decreases.length) {
+    await cancelOrder(user, id, {
+      reason: `Amendment: ${reason}`,
+      lines: decreases
+    });
+  }
+
+  if (increases.length) {
+    await prisma.$transaction(
+      async (tx) => {
+        await lockInvoices(tx, [id]);
+        let invoice = (await invoiceForFulfilment(tx, user.businessId, id))!;
+        const inv = await tx.salesInvoice.findUniqueOrThrow({
+          where: { id },
+          include: { customer: true }
+        });
+
+        let subtotal = n(inv.subtotal);
+        for (const inc of increases) {
+          const line = invoice.items.find((i) => i.id === inc.invoiceItemId)!;
+          const oldQty = n(line.quantity);
+          const unit = n(line.unitPrice);
+          const newLineTotal = roundMoney(unit * inc.newQty);
+          const oldLineTotal = n(line.lineTotal);
+          subtotal = roundMoney(subtotal - oldLineTotal + newLineTotal);
+          const product = await tx.product.findFirst({
+            where: { id: line.productId },
+            select: { baseUomId: true }
+          });
+          const baseQuantity = roundQty(
+            await convertToBaseQty(tx, line.productId, line.uomId, inc.newQty, product?.baseUomId)
+          );
+          const plan =
+            inc.allocations?.map((a) => ({
+              warehouse_id: a.warehouse_id || (a as any).warehouseId,
+              quantity: Number(a.quantity)
+            })) || null;
+          await tx.salesInvoiceItem.update({
+            where: { id: line.id },
+            data: {
+              quantity: toDec(inc.newQty),
+              lineTotal: toDec(newLineTotal),
+              baseQuantity: toDec(baseQuantity),
+              ...(inc.warehouseId ? { fulfilmentWarehouseId: inc.warehouseId } : {}),
+              ...(plan ? { allocationPlan: plan } : {})
+            }
+          });
+          line.quantity = toDec(inc.newQty) as any;
+          line.lineTotal = toDec(newLineTotal) as any;
+          line.baseQuantity = toDec(baseQuantity) as any;
+        }
+
+        const discountPct = n(inv.discountPercent);
+        const discountAmount =
+          discountPct > 0 ? roundMoney((subtotal * discountPct) / 100) : n(inv.discountAmount);
+        const taxAmount =
+          n(inv.subtotal) > 0
+            ? roundMoney((n(inv.taxAmount) * subtotal) / n(inv.subtotal))
+            : n(inv.taxAmount);
+        const totalAmount = roundMoney(subtotal - discountAmount + taxAmount);
+
+        // Credit check on the incremental open-order value
+        const extraCredit = roundMoney(totalAmount - n(inv.totalAmount));
+        if (extraCredit > 0.009 && inv.customer.creditLimit != null) {
+          const limit = Number(inv.customer.creditLimit);
+          const exposure = await getCustomerExposure(tx, user.businessId, inv.customerId, inv.id);
+          const openThis = Math.max(
+            0,
+            roundMoney(totalAmount - n(inv.cancelledAmount) - n(inv.recognisedAmount) - n(inv.depositHeld))
+          );
+          if (roundMoney(exposure.receivable + openThis) > limit + 0.009) {
+            if (!wantsOverride) {
+              throw httpError(
+                400,
+                `Credit limit exceeded after amendment for ${inv.customer.name}. Collect a deposit or ask a manager to override.`
+              );
+            }
+            if (!(await userHasAnyPermission(user.id, ['sales.override_credit_limit']))) {
+              throw httpError(403, 'You do not have permission to override credit limits');
+            }
+            if (!overrideReason) throw httpError(400, 'override_reason is required to override the credit limit');
+            await tx.salesInvoice.update({
+              where: { id },
+              data: {
+                creditOverrideById: user.id,
+                creditOverrideReason: overrideReason
+              }
+            });
+          }
+        }
+
+        await tx.salesInvoice.update({
+          where: { id },
+          data: {
+            subtotal: toDec(subtotal),
+            discountAmount: toDec(discountAmount),
+            taxAmount: toDec(taxAmount),
+            totalAmount: toDec(totalAmount),
+            paymentStatus: paymentStatusFor(
+              { totalAmount, cancelledAmount: inv.cancelledAmount },
+              n(inv.amountPaid)
+            )
+          }
+        });
+
+        invoice = (await invoiceForFulfilment(tx, user.businessId, id))!;
+        // Cancel open pick tasks for increased lines so they can be re-picked with the new qty
+        const openTasks = await openTaskIds(
+          tx,
+          id,
+          undefined,
+          increases.map((i) => i.invoiceItemId)
+        );
+        if (openTasks.some((t) => t.status === 'dispatched')) {
+          throw httpError(400, 'Cannot increase quantity while goods are out for delivery');
+        }
+        await cancelTasksInTx(tx, user.id, openTasks.map((t) => t.id), `Amended: ${reason}`);
+
+        const quantities = new Map(increases.map((i) => [i.invoiceItemId, i.addQty]));
+        const manual = new Map<string, { warehouseId: string; quantity: number }[]>();
+        for (const inc of increases) {
+          if (inc.allocations?.length) {
+            manual.set(
+              inc.invoiceItemId,
+              inc.allocations.map((a) => ({
+                warehouseId: a.warehouse_id || (a as any).warehouseId,
+                quantity: Number(a.quantity)
+              }))
+            );
+          }
+        }
+        await reserveInvoiceStock(tx, user, invoice, {
+          allowBackorder: allowBackorder || invoice.fulfilmentMode !== 'immediate',
+          restrictToBranchId:
+            invoice.fulfilmentMode === 'immediate' ? invoice.sellingBranchId || invoice.branchId : null,
+          onlyItemIds: increases.map((i) => i.invoiceItemId),
+          quantities,
+          ...(manual.size ? { manual, method: 'manual' as const } : {})
+        });
+      },
+      { timeout: 30000, maxWait: 10000 }
+    );
+  }
+
+  const headerUpdates: Record<string, unknown> = {};
+  if (body.notes != null && String(body.notes) !== String(header.notes || '')) {
+    changes.push({ field: 'notes', from: header.notes, to: body.notes });
+    headerUpdates.notes = String(body.notes);
+  }
+  for (const [key, col] of [
+    ['delivery_address', 'deliveryAddress'],
+    ['delivery_contact', 'deliveryContact'],
+    ['delivery_phone', 'deliveryPhone']
+  ] as const) {
+    if (body[key] != null || body[col] != null) {
+      const next = String(body[key] ?? body[col] ?? '');
+      const prev = String((header as any)[col] || '');
+      if (next !== prev) {
+        changes.push({ field: key, from: prev || null, to: next || null });
+        headerUpdates[col] = next || null;
+      }
+    }
+  }
+  if (Object.keys(headerUpdates).length) {
+    await prisma.salesInvoice.update({ where: { id }, data: headerUpdates });
+  }
+
+  if (!changes.length) throw httpError(400, 'No changes to apply');
+
+  const amendmentNumber = await nextDocNumber(
+    prisma.salesOrderAmendment,
+    user.businessId,
+    'amendmentNumber',
+    'AMD',
+    5
+  );
+  await prisma.salesOrderAmendment.create({
+    data: {
+      id: shortId('amd'),
+      businessId: user.businessId,
+      invoiceId: id,
+      amendmentNumber,
+      reason,
+      changes,
+      createdById: user.id
+    }
+  });
+
+  await writeAudit({
+    user,
+    action: 'amend',
+    module: 'sales',
+    entityType: 'SalesInvoice',
+    entityId: id,
+    summary: `Amended ${header.invoiceNumber} (${amendmentNumber}): ${reason}`,
+    metadata: { changes }
+  });
+
+  return getInvoice(user, id);
 }

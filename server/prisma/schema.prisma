@@ -106,6 +106,7 @@ model Business {
   branchProductDiscounts BranchProductDiscount[]
   salesReservations      SalesReservation[]
   salesFulfilments       SalesFulfilment[]
+  fulfilmentProofs       FulfilmentProof[]
   pickupVerifications    PickupVerification[]
   salesReturns           SalesReturn[]
   suppliers              Supplier[]
@@ -1382,11 +1383,31 @@ model SalesInvoice {
   fulfilments SalesFulfilment[]
   pickupVerifications PickupVerification[]
   returns     SalesReturn[]
+  amendments  SalesOrderAmendment[]
 
   @@unique([businessId, invoiceNumber])
   @@index([businessId, status])
   @@index([customerId])
   @@map("sales_invoices")
+}
+
+/// Audit trail for controlled changes to a confirmed order (qty, warehouse, notes, delivery).
+model SalesOrderAmendment {
+  id               String   @id
+  businessId       String   @map("business_id")
+  invoiceId        String   @map("invoice_id")
+  amendmentNumber  String   @map("amendment_number")
+  reason           String   @db.Text
+  /// [{ field, invoice_item_id?, from, to }]
+  changes          Json
+  createdById      String?  @map("created_by_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  invoice SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@unique([businessId, amendmentNumber])
+  @@index([invoiceId, createdAt])
+  @@map("sales_order_amendments")
 }
 
 model SalesInvoiceItem {
@@ -1535,6 +1556,7 @@ model SalesFulfilment {
   branch    Branch                @relation(fields: [branchId], references: [id])
   items     SalesFulfilmentItem[]
   verifications PickupVerification[]
+  proofs    FulfilmentProof[]
   deliveryOrder DeliveryOrder?
   returns   SalesReturn[]
 
@@ -1542,6 +1564,31 @@ model SalesFulfilment {
   @@index([invoiceId])
   @@index([businessId, warehouseId, status])
   @@map("sales_fulfilments")
+}
+
+/// Photo / PDF proof of collection or delivery stored on S3.
+model FulfilmentProof {
+  id            String   @id
+  businessId    String   @map("business_id")
+  fulfilmentId  String   @map("fulfilment_id")
+  /// collection | delivery | discrepancy | other
+  kind          String   @default("collection")
+  fileName      String   @map("file_name")
+  mimeType      String   @map("mime_type")
+  sizeBytes     Int      @map("size_bytes")
+  /// S3 object key
+  storageKey    String   @map("storage_key")
+  /// Public CDN / S3 URL
+  url           String   @db.Text
+  uploadedById  String?  @map("uploaded_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  business   Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  fulfilment SalesFulfilment @relation(fields: [fulfilmentId], references: [id], onDelete: Cascade)
+
+  @@index([fulfilmentId, createdAt])
+  @@index([businessId])
+  @@map("fulfilment_proofs")
 }
 
 model SalesFulfilmentItem {

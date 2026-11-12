@@ -2,6 +2,7 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, roundMoney, serialize } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import * as branchAccess from './branch-access.service.js';
+import { getDefaultAccountMap } from './accounting.service.js';
 
 type BranchListOpts = {
   branchId?: string | null;
@@ -416,5 +417,475 @@ export async function supplierStatement(
     open_balance: openBalance,
     bills,
     payments
+  });
+}
+
+function parseDateBound(from?: string | null, to?: string | null) {
+  const fromDate = from ? new Date(from) : null;
+  const toDate = to ? new Date(to) : null;
+  if (fromDate && Number.isNaN(fromDate.getTime())) throw httpError(400, 'from is not a valid date');
+  if (toDate && Number.isNaN(toDate.getTime())) throw httpError(400, 'to is not a valid date');
+  if (toDate) toDate.setHours(23, 59, 59, 999);
+  return { fromDate, toDate };
+}
+
+/**
+ * Inter-branch clearing reconciliation: lines on the clearing account grouped by source,
+ * with per-branch nets. Company-wide net should be ~0; non-zero pairs are open / unmatched.
+ */
+export async function interBranchClearing(
+  user: AuthUser,
+  filter: { from?: string; to?: string } & BranchListOpts = {}
+) {
+  const accountMap = await getDefaultAccountMap(user.businessId);
+  const clearingId = accountMap.inter_branch_clearing;
+  if (!clearingId) throw httpError(400, 'Default account "inter_branch_clearing" is not configured');
+
+  const { fromDate, toDate } = parseDateBound(filter.from, filter.to);
+  const authorised = await branchAccess.listAuthorisedBranchIds(user.id, user.businessId, user.role);
+  const canAll = branchAccess.canAccessAllBranches(user);
+  const focusBranch =
+    filter.branchId && !filter.allowConsolidated
+      ? filter.branchId
+      : !filter.allowConsolidated && user.activeBranchId
+        ? user.activeBranchId
+        : null;
+
+  const lines = await prisma.journalLine.findMany({
+    where: {
+      accountId: clearingId,
+      journalEntry: {
+        businessId: user.businessId,
+        status: 'posted',
+        ...(fromDate || toDate
+          ? { entryDate: { ...(fromDate ? { gte: fromDate } : {}), ...(toDate ? { lte: toDate } : {}) } }
+          : {}),
+        ...(focusBranch
+          ? { branchId: focusBranch }
+          : canAll
+            ? {}
+            : { branchId: { in: authorised } })
+      }
+    },
+    include: {
+      journalEntry: {
+        select: {
+          id: true,
+          entryNumber: true,
+          entryDate: true,
+          memo: true,
+          branchId: true,
+          sourceType: true,
+          sourceId: true,
+          customerId: true,
+          branch: { select: { id: true, code: true, name: true } },
+          customer: { select: { id: true, name: true, code: true } }
+        }
+      }
+    },
+    orderBy: { journalEntry: { entryDate: 'asc' } }
+  });
+
+  type Pair = {
+    source_type: string | null;
+    source_id: string | null;
+    customer: { id: string; name: string; code: string | null } | null;
+    branches: Record<string, { branch_id: string; branch_code: string; branch_name: string; debit: number; credit: number; net: number }>;
+    debit: number;
+    credit: number;
+    net: number;
+    balanced: boolean;
+    entries: { entry_number: string; entry_date: string; branch_id: string | null; memo: string | null; debit: number; credit: number }[];
+  };
+
+  const pairs = new Map<string, Pair>();
+  const byBranch = new Map<string, { branch_id: string; branch_code: string; branch_name: string; debit: number; credit: number; net: number }>();
+
+  for (const line of lines) {
+    const je = line.journalEntry;
+    const key = `${je.sourceType || 'none'}:${je.sourceId || je.id}`;
+    const debit = Number(line.debit);
+    const credit = Number(line.credit);
+    let pair = pairs.get(key);
+    if (!pair) {
+      pair = {
+        source_type: je.sourceType,
+        source_id: je.sourceId,
+        customer: je.customer,
+        branches: {},
+        debit: 0,
+        credit: 0,
+        net: 0,
+        balanced: true,
+        entries: []
+      };
+      pairs.set(key, pair);
+    }
+    pair.debit = roundMoney(pair.debit + debit);
+    pair.credit = roundMoney(pair.credit + credit);
+    pair.net = roundMoney(pair.debit - pair.credit);
+    pair.entries.push({
+      entry_number: je.entryNumber,
+      entry_date: je.entryDate.toISOString(),
+      branch_id: je.branchId,
+      memo: je.memo,
+      debit,
+      credit
+    });
+    if (je.branchId) {
+      const b = je.branch;
+      const row = pair.branches[je.branchId] || {
+        branch_id: je.branchId,
+        branch_code: b?.code || '',
+        branch_name: b?.name || '',
+        debit: 0,
+        credit: 0,
+        net: 0
+      };
+      row.debit = roundMoney(row.debit + debit);
+      row.credit = roundMoney(row.credit + credit);
+      row.net = roundMoney(row.debit - row.credit);
+      pair.branches[je.branchId] = row;
+
+      const br = byBranch.get(je.branchId) || {
+        branch_id: je.branchId,
+        branch_code: b?.code || '',
+        branch_name: b?.name || '',
+        debit: 0,
+        credit: 0,
+        net: 0
+      };
+      br.debit = roundMoney(br.debit + debit);
+      br.credit = roundMoney(br.credit + credit);
+      br.net = roundMoney(br.debit - br.credit);
+      byBranch.set(je.branchId, br);
+    }
+  }
+
+  const rows = [...pairs.values()].map((p) => {
+    p.balanced = Math.abs(p.net) < 0.01;
+    return {
+      ...p,
+      branches: Object.values(p.branches)
+    };
+  });
+  const open = rows.filter((r) => !r.balanced);
+  const companyNet = roundMoney(rows.reduce((s, r) => s + r.net, 0));
+
+  return serialize({
+    from: fromDate?.toISOString() || null,
+    to: toDate?.toISOString() || null,
+    clearing_account_id: clearingId,
+    company_net: companyNet,
+    balanced: Math.abs(companyNet) < 0.01,
+    open_count: open.length,
+    by_branch: [...byBranch.values()].sort((a, b) => a.branch_name.localeCompare(b.branch_name)),
+    pairs: rows.sort((a, b) => Number(a.balanced) - Number(b.balanced)),
+    open_pairs: open
+  });
+}
+
+/** Warehouse fulfilment pipeline: awaiting pick, in progress, ready, out for delivery, done. */
+export async function fulfilmentSummary(
+  user: AuthUser,
+  filter: { from?: string; to?: string; status?: string; warehouse_id?: string } & BranchListOpts = {}
+) {
+  const { fromDate, toDate } = parseDateBound(filter.from, filter.to);
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: filter.branchId,
+    allowConsolidated: filter.allowConsolidated ?? true
+  });
+
+  const branchFilter = scope.branchId as string | { in: string[] } | undefined;
+  const invoices = await prisma.salesInvoice.findMany({
+    where: {
+      businessId: user.businessId,
+      status: 'posted',
+      fulfilmentMode: { in: ['pickup', 'delivery'] },
+      ...(branchFilter
+        ? {
+            OR: [{ branchId: branchFilter as any }, { sellingBranchId: branchFilter as any }]
+          }
+        : {}),
+      ...(fromDate || toDate
+        ? { postedAt: { ...(fromDate ? { gte: fromDate } : {}), ...(toDate ? { lte: toDate } : {}) } }
+        : {})
+    },
+    include: {
+      customer: { select: { id: true, name: true, code: true } },
+      branch: { select: { id: true, name: true, code: true } },
+      sellingBranch: { select: { id: true, name: true, code: true } },
+      items: { select: { id: true, quantity: true, fulfilledQuantity: true, cancelledQuantity: true, lineTotal: true } },
+      fulfilments: {
+        where: filter.status ? { status: filter.status } : undefined,
+        include: {
+          warehouse: { select: { id: true, code: true, name: true } },
+          branch: { select: { id: true, code: true, name: true } }
+        }
+      }
+    },
+    orderBy: { postedAt: 'desc' },
+    take: 500
+  });
+
+  const warehouseFilter = filter.warehouse_id || null;
+  const statusCounts: Record<string, number> = {
+    awaiting_pick: 0,
+    picking: 0,
+    ready_for_collection: 0,
+    picked: 0,
+    dispatched: 0,
+    released: 0,
+    delivered: 0,
+    discrepancy: 0,
+    cancelled: 0
+  };
+
+  const tasks = await prisma.salesFulfilment.findMany({
+    where: {
+      businessId: user.businessId,
+      ...scope,
+      ...(warehouseFilter ? { warehouseId: warehouseFilter } : {}),
+      ...(filter.status ? { status: filter.status } : {}),
+      ...(fromDate || toDate
+        ? { createdAt: { ...(fromDate ? { gte: fromDate } : {}), ...(toDate ? { lte: toDate } : {}) } }
+        : {})
+    },
+    select: { status: true, recognisedAmount: true, totalCost: true }
+  });
+  for (const t of tasks) {
+    statusCounts[t.status] = (statusCounts[t.status] || 0) + 1;
+  }
+
+  const openReservations = await prisma.salesReservation.findMany({
+    where: {
+      businessId: user.businessId,
+      status: 'active',
+      ...(warehouseFilter ? { warehouseId: warehouseFilter } : {}),
+      ...(scope.branchId ? { branchId: scope.branchId as any } : {})
+    },
+    select: { invoiceItemId: true, quantity: true, fulfilledQuantity: true, releasedQuantity: true, warehouseId: true }
+  });
+  const reservedOnTask = new Set(
+    (
+      await prisma.salesFulfilmentItem.findMany({
+        where: {
+          fulfilment: {
+            businessId: user.businessId,
+            status: { in: ['picking', 'ready_for_collection', 'picked', 'dispatched'] }
+          }
+        },
+        select: { invoiceItemId: true }
+      })
+    ).map((i) => i.invoiceItemId)
+  );
+  let awaitingPick = 0;
+  for (const r of openReservations) {
+    const left = Number(r.quantity) - Number(r.fulfilledQuantity) - Number(r.releasedQuantity);
+    if (left > 1e-6 && !reservedOnTask.has(r.invoiceItemId)) awaitingPick += 1;
+  }
+  statusCounts.awaiting_pick = awaitingPick;
+
+  const rows = invoices.map((inv) => {
+    const ordered = inv.items.reduce((s, i) => s + Number(i.quantity), 0);
+    const fulfilled = inv.items.reduce((s, i) => s + Number(i.fulfilledQuantity), 0);
+    const cancelled = inv.items.reduce((s, i) => s + Number(i.cancelledQuantity), 0);
+    return {
+      id: inv.id,
+      invoice_number: inv.invoiceNumber,
+      customer: inv.customer,
+      revenue_branch: inv.branch,
+      selling_branch: inv.sellingBranch,
+      fulfilment_mode: inv.fulfilmentMode,
+      fulfilment_status: inv.fulfilmentStatus,
+      ordered_qty: ordered,
+      fulfilled_qty: fulfilled,
+      cancelled_qty: cancelled,
+      open_qty: Math.max(0, ordered - fulfilled - cancelled),
+      recognised_amount: Number(inv.recognisedAmount),
+      deposit_held: Number(inv.depositHeld),
+      balance: Number(inv.balance),
+      tasks: inv.fulfilments
+        .filter((f) => !warehouseFilter || f.warehouseId === warehouseFilter)
+        .map((f) => ({
+          id: f.id,
+          fulfilment_number: f.fulfilmentNumber,
+          status: f.status,
+          warehouse: f.warehouse,
+          branch: f.branch,
+          recognised_amount: Number(f.recognisedAmount)
+        }))
+    };
+  });
+
+  return serialize({
+    from: fromDate?.toISOString() || null,
+    to: toDate?.toISOString() || null,
+    status_counts: statusCounts,
+    recognised_total: roundMoney(tasks.reduce((s, t) => s + Number(t.recognisedAmount), 0)),
+    cogs_total: roundMoney(tasks.reduce((s, t) => s + Number(t.totalCost), 0)),
+    orders: rows
+  });
+}
+
+/**
+ * Sales by revenue branch for the period (recognised revenue, deposits held, returns, COGS).
+ * Consolidated view sums branches without double-counting clearing.
+ */
+export async function salesByBranch(
+  user: AuthUser,
+  filter: { from?: string; to?: string } & BranchListOpts = {}
+) {
+  const { fromDate, toDate } = parseDateBound(filter.from, filter.to);
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: filter.branchId,
+    allowConsolidated: filter.allowConsolidated ?? true
+  });
+
+  const fulfilments = await prisma.salesFulfilment.findMany({
+    where: {
+      businessId: user.businessId,
+      status: { in: ['released', 'delivered'] },
+      ...(fromDate || toDate
+        ? { fulfilledAt: { ...(fromDate ? { gte: fromDate } : {}), ...(toDate ? { lte: toDate } : {}) } }
+        : {})
+    },
+    include: {
+      invoice: {
+        select: {
+          id: true,
+          branchId: true,
+          invoiceNumber: true,
+          branch: { select: { id: true, code: true, name: true } }
+        }
+      },
+      branch: { select: { id: true, code: true, name: true } }
+    }
+  });
+
+  const returns = await prisma.salesReturn.findMany({
+    where: {
+      businessId: user.businessId,
+      status: 'posted',
+      ...(fromDate || toDate
+        ? { postedAt: { ...(fromDate ? { gte: fromDate } : {}), ...(toDate ? { lte: toDate } : {}) } }
+        : {})
+    },
+    select: {
+      revenueBranchId: true,
+      recognisedReversal: true,
+      cogsReversal: true,
+      creditIssued: true,
+      refundAmount: true,
+      revenueBranch: { select: { id: true, code: true, name: true } }
+    }
+  });
+
+  type Row = {
+    branch_id: string;
+    branch_code: string;
+    branch_name: string;
+    handovers: number;
+    recognised: number;
+    cogs: number;
+    returns: number;
+    returns_cogs: number;
+    credit_issued: number;
+    refunds: number;
+    gross_margin: number;
+  };
+  const byBranch = new Map<string, Row>();
+  const ensure = (id: string, code: string, name: string) => {
+    let row = byBranch.get(id);
+    if (!row) {
+      row = {
+        branch_id: id,
+        branch_code: code,
+        branch_name: name,
+        handovers: 0,
+        recognised: 0,
+        cogs: 0,
+        returns: 0,
+        returns_cogs: 0,
+        credit_issued: 0,
+        refunds: 0,
+        gross_margin: 0
+      };
+      byBranch.set(id, row);
+    }
+    return row;
+  };
+
+  const authorised = await branchAccess.listAuthorisedBranchIds(user.id, user.businessId, user.role);
+  const canAll = branchAccess.canAccessAllBranches(user);
+  const allowBranch = (id: string | null | undefined) => {
+    if (!id) return false;
+    if (canAll) return true;
+    if (filter.branchId && !filter.allowConsolidated) return id === filter.branchId;
+    if (scope.branchId && typeof scope.branchId === 'string') return id === scope.branchId;
+    if (scope.branchId && typeof scope.branchId === 'object' && 'in' in (scope.branchId as object)) {
+      return ((scope.branchId as { in: string[] }).in || []).includes(id);
+    }
+    return authorised.includes(id);
+  };
+
+  for (const f of fulfilments) {
+    const revenueBranchId = f.invoice.branchId || f.branchId;
+    if (!allowBranch(revenueBranchId)) continue;
+    const meta = f.invoice.branch || f.branch;
+    const row = ensure(revenueBranchId, meta.code, meta.name);
+    row.handovers += 1;
+    row.recognised = roundMoney(row.recognised + Number(f.recognisedAmount));
+    row.cogs = roundMoney(row.cogs + Number(f.totalCost));
+  }
+
+  for (const r of returns) {
+    if (!allowBranch(r.revenueBranchId)) continue;
+    const row = ensure(r.revenueBranchId, r.revenueBranch.code, r.revenueBranch.name);
+    row.returns = roundMoney(row.returns + Number(r.recognisedReversal));
+    row.returns_cogs = roundMoney(row.returns_cogs + Number(r.cogsReversal));
+    row.credit_issued = roundMoney(row.credit_issued + Number(r.creditIssued));
+    row.refunds = roundMoney(row.refunds + Number(r.refundAmount));
+  }
+
+  const branches = [...byBranch.values()]
+    .map((r) => ({
+      ...r,
+      net_recognised: roundMoney(r.recognised - r.returns),
+      gross_margin: roundMoney(r.recognised - r.returns - (r.cogs - r.returns_cogs))
+    }))
+    .sort((a, b) => a.branch_name.localeCompare(b.branch_name));
+
+  const totals = branches.reduce(
+    (s, r) => ({
+      handovers: s.handovers + r.handovers,
+      recognised: roundMoney(s.recognised + r.recognised),
+      cogs: roundMoney(s.cogs + r.cogs),
+      returns: roundMoney(s.returns + r.returns),
+      returns_cogs: roundMoney(s.returns_cogs + r.returns_cogs),
+      credit_issued: roundMoney(s.credit_issued + r.credit_issued),
+      refunds: roundMoney(s.refunds + r.refunds),
+      net_recognised: roundMoney(s.net_recognised + r.net_recognised),
+      gross_margin: roundMoney(s.gross_margin + r.gross_margin)
+    }),
+    {
+      handovers: 0,
+      recognised: 0,
+      cogs: 0,
+      returns: 0,
+      returns_cogs: 0,
+      credit_issued: 0,
+      refunds: 0,
+      net_recognised: 0,
+      gross_margin: 0
+    }
+  );
+
+  return serialize({
+    from: fromDate?.toISOString() || null,
+    to: toDate?.toISOString() || null,
+    consolidated: Boolean(filter.allowConsolidated || !filter.branchId),
+    totals,
+    branches
   });
 }

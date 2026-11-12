@@ -19,6 +19,21 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+/** Multipart upload (do not set Content-Type — the browser adds the boundary). */
+async function uploadForm<T>(path: string, form: FormData): Promise<T> {
+  const token = storage.getToken();
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const branchId = storage.getActiveBranchId();
+  if (branchId) headers['X-Branch-Id'] = branchId;
+  const res = await fetch(`${API_URL}${path}`, { method: 'POST', headers, body: form });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || data.message || `Upload failed (${res.status})`);
+  }
+  return data as T;
+}
+
 export const api = {
   auth: {
     login: (username: string, password: string) =>
@@ -191,7 +206,31 @@ export const api = {
     customerStatement: (customerId: string) =>
       request<any>(`/reports/customers/${customerId}/statement`),
     supplierStatement: (supplierId: string) =>
-      request<any>(`/reports/suppliers/${supplierId}/statement`)
+      request<any>(`/reports/suppliers/${supplierId}/statement`),
+    interBranchClearing: (filter: { from?: string; to?: string; consolidated?: boolean } = {}) => {
+      const params = new URLSearchParams();
+      if (filter.from) params.set('from', filter.from);
+      if (filter.to) params.set('to', filter.to);
+      if (filter.consolidated) params.set('consolidated', '1');
+      const qs = params.toString();
+      return request<any>(`/reports/inter-branch-clearing${qs ? `?${qs}` : ''}`);
+    },
+    fulfilmentSummary: (filter: { from?: string; to?: string; consolidated?: boolean } = {}) => {
+      const params = new URLSearchParams();
+      if (filter.from) params.set('from', filter.from);
+      if (filter.to) params.set('to', filter.to);
+      if (filter.consolidated) params.set('consolidated', '1');
+      const qs = params.toString();
+      return request<any>(`/reports/fulfilment-summary${qs ? `?${qs}` : ''}`);
+    },
+    salesByBranch: (filter: { from?: string; to?: string; consolidated?: boolean } = {}) => {
+      const params = new URLSearchParams();
+      if (filter.from) params.set('from', filter.from);
+      if (filter.to) params.set('to', filter.to);
+      if (filter.consolidated !== false) params.set('consolidated', '1');
+      const qs = params.toString();
+      return request<any>(`/reports/sales-by-branch${qs ? `?${qs}` : ''}`);
+    }
   },
   audit: {
     list: () => request<any[]>('/audit')
@@ -357,6 +396,8 @@ export const api = {
       }),
     cancelOrder: (id: string, body: { reason: string; lines?: { invoice_item_id: string; quantity: number }[] }) =>
       request<any>(`/sales/invoices/${id}/cancel`, { method: 'POST', body: JSON.stringify(body) }),
+    amendOrder: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/sales/invoices/${id}/amend`, { method: 'POST', body: JSON.stringify(body) }),
     reallocateOrder: (
       id: string,
       body: { from_warehouse_id: string; to_warehouse_id?: string; invoice_item_id?: string; reason: string; allow_backorder?: boolean }
@@ -413,6 +454,17 @@ export const api = {
       request<any>(`/sales/fulfilments/${id}/dispatch`, { method: 'POST', body: JSON.stringify(body) }),
     deliverFulfilment: (id: string, body: Record<string, unknown>) =>
       request<any>(`/sales/fulfilments/${id}/deliver`, { method: 'POST', body: JSON.stringify(body) }),
+    listFulfilmentProofs: (id: string) => request<any[]>(`/sales/fulfilments/${id}/proofs`),
+    uploadFulfilmentProof: (id: string, file: File, kind?: string) => {
+      const form = new FormData();
+      form.append('file', file);
+      if (kind) form.append('kind', kind);
+      return uploadForm<any>(`/sales/fulfilments/${id}/proofs`, form);
+    },
+    deleteFulfilmentProof: (id: string, proofId: string) =>
+      request<{ deleted: boolean; id: string }>(`/sales/fulfilments/${id}/proofs/${proofId}`, {
+        method: 'DELETE'
+      }),
     reissuePickupCode: (id: string, reason: string) =>
       request<{ pickup_code: string; pickup_code_expires_at: string | null }>(`/sales/invoices/${id}/pickup-code`, {
         method: 'POST',

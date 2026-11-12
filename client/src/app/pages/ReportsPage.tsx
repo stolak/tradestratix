@@ -4,7 +4,10 @@ import { alertError } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
 import { StockBalanceReport } from '../components/StockBalanceReport';
 
-type Tab = 'ar' | 'ap' | 'stock';
+type Tab = 'ar' | 'ap' | 'stock' | 'clearing' | 'fulfilment' | 'sales';
+
+const money = (v: unknown) =>
+  Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export const ReportsPage: React.FC = () => {
   const { can } = useAuth();
@@ -13,7 +16,14 @@ export const ReportsPage: React.FC = () => {
       [
         can('reports.view', 'sales.view') ? { id: 'ar' as const, label: 'AR aging' } : null,
         can('reports.view', 'purchases.view') ? { id: 'ap' as const, label: 'AP aging' } : null,
-        can('reports.view', 'inventory.view') ? { id: 'stock' as const, label: 'Stock balance' } : null
+        can('reports.view', 'inventory.view') ? { id: 'stock' as const, label: 'Stock balance' } : null,
+        can('reports.view', 'accounting.view')
+          ? { id: 'clearing' as const, label: 'Inter-branch clearing' }
+          : null,
+        can('reports.view', 'sales.view', 'sales.fulfil')
+          ? { id: 'fulfilment' as const, label: 'Fulfilment' }
+          : null,
+        can('reports.view', 'sales.view') ? { id: 'sales' as const, label: 'Sales by branch' } : null
       ].filter(Boolean) as { id: Tab; label: string }[],
     [can]
   );
@@ -22,8 +32,13 @@ export const ReportsPage: React.FC = () => {
 
   const [ar, setAr] = useState<any>(null);
   const [ap, setAp] = useState<any>(null);
+  const [clearing, setClearing] = useState<any>(null);
+  const [fulfilment, setFulfilment] = useState<any>(null);
+  const [sales, setSales] = useState<any>(null);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
 
-  const load = async () => {
+  const loadAging = async () => {
     try {
       const [a, p] = await Promise.all([
         can('reports.view', 'sales.view') ? api.reports.arAging() : Promise.resolve(null),
@@ -36,8 +51,29 @@ export const ReportsPage: React.FC = () => {
     }
   };
 
+  const loadPeriod = async () => {
+    try {
+      const filter = { from: from || undefined, to: to || undefined, consolidated: true };
+      const [c, f, s] = await Promise.all([
+        can('reports.view', 'accounting.view')
+          ? api.reports.interBranchClearing(filter)
+          : Promise.resolve(null),
+        can('reports.view', 'sales.view', 'sales.fulfil')
+          ? api.reports.fulfilmentSummary(filter)
+          : Promise.resolve(null),
+        can('reports.view', 'sales.view') ? api.reports.salesByBranch(filter) : Promise.resolve(null)
+      ]);
+      setClearing(c);
+      setFulfilment(f);
+      setSales(s);
+    } catch (e: any) {
+      await alertError('Reports', e.message);
+    }
+  };
+
   useEffect(() => {
-    void load();
+    void loadAging();
+    void loadPeriod();
   }, []);
 
   const data = activeTab === 'ar' ? ar : ap;
@@ -50,8 +86,8 @@ export const ReportsPage: React.FC = () => {
           Reports
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          AR / AP aging from open invoices and supplier bills, and live stock balances by branch and
-          warehouse.
+          Aging, stock, fulfilment pipeline, sales by revenue branch, and inter-branch clearing
+          reconciliation.
         </p>
       </header>
 
@@ -77,7 +113,7 @@ export const ReportsPage: React.FC = () => {
       {activeTab === 'ar' || activeTab === 'ap' ? (
         <>
           <div>
-            <button type="button" className="btn btn-ghost" onClick={() => void load()}>
+            <button type="button" className="btn btn-ghost" onClick={() => void loadAging()}>
               Refresh
             </button>
           </div>
@@ -134,6 +170,216 @@ export const ReportsPage: React.FC = () => {
                     <tr>
                       <td colSpan={7} style={{ color: 'var(--ink-muted)' }}>
                         No open balances
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      {activeTab === 'clearing' || activeTab === 'fulfilment' || activeTab === 'sales' ? (
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'end' }}>
+          <div className="field">
+            <label>From</label>
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>To</label>
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          </div>
+          <button type="button" className="btn btn-ghost" onClick={() => void loadPeriod()}>
+            Refresh
+          </button>
+        </div>
+      ) : null}
+
+      {activeTab === 'clearing' && clearing ? (
+        <>
+          <div className="card-surface kpi-grid" style={{ padding: '1rem 1.25rem' }}>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>Company net</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{money(clearing.company_net)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>Balanced</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{clearing.balanced ? 'Yes' : 'No'}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>Open pairs</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{clearing.open_count}</div>
+            </div>
+          </div>
+          <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Branch</th>
+                    <th className="num">Debit</th>
+                    <th className="num">Credit</th>
+                    <th className="num">Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(clearing.by_branch || []).map((b: any) => (
+                    <tr key={b.branch_id}>
+                      <td>
+                        {b.branch_name} ({b.branch_code})
+                      </td>
+                      <td className="num">{money(b.debit)}</td>
+                      <td className="num">{money(b.credit)}</td>
+                      <td className="num">{money(b.net)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {(clearing.open_pairs || []).length ? (
+            <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+              <div style={{ padding: '0.75rem 1rem', fontWeight: 600 }}>Open / unmatched pairs</div>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th>Customer</th>
+                      <th className="num">Net</th>
+                      <th>Branches</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clearing.open_pairs.map((p: any, i: number) => (
+                      <tr key={`${p.source_type}-${p.source_id}-${i}`}>
+                        <td>
+                          {p.source_type || '—'} · {(p.source_id || '').slice(0, 12)}
+                        </td>
+                        <td>{p.customer?.name || '—'}</td>
+                        <td className="num">{money(p.net)}</td>
+                        <td>
+                          {(p.branches || [])
+                            .map((b: any) => `${b.branch_code}: ${money(b.net)}`)
+                            .join(' · ')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {activeTab === 'fulfilment' && fulfilment ? (
+        <>
+          <div className="card-surface kpi-grid" style={{ padding: '1rem 1.25rem' }}>
+            {Object.entries(fulfilment.status_counts || {}).map(([k, v]) => (
+              <div key={k}>
+                <div style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
+                  {k.replace(/_/g, ' ')}
+                </div>
+                <div style={{ fontWeight: 700, marginTop: 4 }}>{Number(v)}</div>
+              </div>
+            ))}
+          </div>
+          <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Invoice</th>
+                    <th>Customer</th>
+                    <th>Mode</th>
+                    <th>Status</th>
+                    <th className="num">Open qty</th>
+                    <th className="num">Recognised</th>
+                    <th>Tasks</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(fulfilment.orders || []).map((o: any) => (
+                    <tr key={o.id}>
+                      <td>{o.invoice_number}</td>
+                      <td>{o.customer?.name}</td>
+                      <td>{o.fulfilment_mode}</td>
+                      <td>{o.fulfilment_status}</td>
+                      <td className="num">{Number(o.open_qty).toLocaleString()}</td>
+                      <td className="num">{money(o.recognised_amount)}</td>
+                      <td>
+                        {(o.tasks || [])
+                          .map((t: any) => `${t.fulfilment_number} (${t.status})`)
+                          .join(' · ') || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                  {!(fulfilment.orders || []).length ? (
+                    <tr>
+                      <td colSpan={7} style={{ color: 'var(--ink-muted)' }}>
+                        No pickup / delivery orders in range
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      ) : null}
+
+      {activeTab === 'sales' && sales ? (
+        <>
+          <div className="card-surface kpi-grid" style={{ padding: '1rem 1.25rem' }}>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>Net recognised</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{money(sales.totals?.net_recognised)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>COGS</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{money(sales.totals?.cogs)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>Returns</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{money(sales.totals?.returns)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>Gross margin</div>
+              <div style={{ fontWeight: 700, marginTop: 4 }}>{money(sales.totals?.gross_margin)}</div>
+            </div>
+          </div>
+          <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Revenue branch</th>
+                    <th className="num">Handovers</th>
+                    <th className="num">Recognised</th>
+                    <th className="num">Returns</th>
+                    <th className="num">COGS</th>
+                    <th className="num">Gross margin</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(sales.branches || []).map((b: any) => (
+                    <tr key={b.branch_id}>
+                      <td>
+                        {b.branch_name} ({b.branch_code})
+                      </td>
+                      <td className="num">{b.handovers}</td>
+                      <td className="num">{money(b.recognised)}</td>
+                      <td className="num">{money(b.returns)}</td>
+                      <td className="num">{money(b.cogs)}</td>
+                      <td className="num">{money(b.gross_margin)}</td>
+                    </tr>
+                  ))}
+                  {!(sales.branches || []).length ? (
+                    <tr>
+                      <td colSpan={6} style={{ color: 'var(--ink-muted)' }}>
+                        No hand-overs in range
                       </td>
                     </tr>
                   ) : null}

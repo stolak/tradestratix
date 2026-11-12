@@ -6,6 +6,7 @@ import * as warehouseService from '../services/warehouse-fulfilment.service.js';
 import * as pickupCodeService from '../services/pickup-code.service.js';
 import * as returnService from '../services/sales-return.service.js';
 import * as customerPayment from '../services/customer-payment.service.js';
+import * as proofService from '../services/fulfilment-proof.service.js';
 import { httpError, serialize } from '../utils/helpers.js';
 
 const queryString = (v: unknown) => (typeof v === 'string' && v ? v : undefined);
@@ -100,6 +101,38 @@ export const dispatchFulfilment = taskAction(warehouseService.dispatchTask);
 export const deliverFulfilment = taskAction(warehouseService.deliverTask);
 export const reissuePickupCode = taskAction(pickupCodeService.reissuePickupCode);
 
+export async function listFulfilmentProofs(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await proofService.listProofs(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function uploadFulfilmentProof(req: Request, res: Response, next: NextFunction) {
+  try {
+    const file = (req as any).file as
+      | { buffer: Buffer; mimetype: string; originalname: string; size: number }
+      | undefined;
+    if (!file) throw httpError(400, 'file is required (multipart field name: file)');
+    return res.status(201).json(
+      await proofService.uploadProof(req.user!, req.params.id, file, req.body || {})
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function deleteFulfilmentProof(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await proofService.deleteProof(req.user!, req.params.id, req.params.proofId)
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
 function branchListOpts(req: Request) {
   return {
     branchId: typeof req.query.branch_id === 'string' ? req.query.branch_id : undefined,
@@ -191,6 +224,14 @@ export async function allocateBackorders(req: Request, res: Response, next: Next
 export async function expireReservations(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(await salesOrderService.runExpiry(req.user!));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function amendOrder(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await salesOrderService.amendOrder(req.user!, req.params.id, req.body || {}));
   } catch (err) {
     return next(err);
   }

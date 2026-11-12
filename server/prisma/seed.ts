@@ -628,6 +628,11 @@ async function main() {
       description: 'Refund unapplied customer credit as cash or bank'
     },
     {
+      module: 'sales',
+      action: 'amend',
+      description: 'Amend confirmed orders (quantity, warehouse, notes, delivery) with a recorded reason'
+    },
+    {
       module: 'fulfilment',
       action: 'reallocate',
       description: 'Move order reservations between warehouses, allocate backorders and run reservation expiry'

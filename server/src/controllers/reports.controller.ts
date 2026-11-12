@@ -77,3 +77,47 @@ export async function supplierStatement(req: Request, res: Response, next: NextF
     return next(err);
   }
 }
+
+export async function interBranchClearing(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await reportsService.interBranchClearing(req.user!, {
+        from: typeof req.query.from === 'string' ? req.query.from : undefined,
+        to: typeof req.query.to === 'string' ? req.query.to : undefined,
+        ...branchListOpts(req)
+      })
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function fulfilmentSummary(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await reportsService.fulfilmentSummary(req.user!, {
+        from: typeof req.query.from === 'string' ? req.query.from : undefined,
+        to: typeof req.query.to === 'string' ? req.query.to : undefined,
+        status: typeof req.query.status === 'string' ? req.query.status : undefined,
+        warehouse_id: typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : undefined,
+        ...branchListOpts(req)
+      })
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function salesByBranch(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await reportsService.salesByBranch(req.user!, {
+        from: typeof req.query.from === 'string' ? req.query.from : undefined,
+        to: typeof req.query.to === 'string' ? req.query.to : undefined,
+        ...branchListOpts(req)
+      })
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
