@@ -16,6 +16,16 @@ router.post('/login', authController.login);
 
 /**
  * @openapi
+ * /api/v1/auth/demo-users:
+ *   get:
+ *     tags: [Auth]
+ *     security: []
+ *     summary: List seeded demo accounts for one-click login
+ */
+router.get('/demo-users', authController.demoUsers);
+
+/**
+ * @openapi
  * /api/v1/auth/me:
  *   get:
  *     tags: [Auth]

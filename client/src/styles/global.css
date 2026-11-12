@@ -46,6 +46,18 @@ textarea {
   font: inherit;
 }
 
+/* Hide native number spinners (Chrome/Safari/Edge + Firefox) */
+input[type='number']::-webkit-outer-spin-button,
+input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+input[type='number'] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -885,6 +897,98 @@ a {
   flex-direction: column;
   justify-content: flex-end;
   min-height: 42vh;
+}
+
+.login-shell__panel {
+  display: grid;
+  place-items: center;
+  padding: clamp(1.25rem, 4vw, 2rem);
+  background: var(--bg);
+  overflow: auto;
+}
+
+.login-form {
+  width: min(520px, 100%);
+  padding: 2rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.login-demo {
+  display: grid;
+  gap: 0.65rem;
+  margin-top: 0.35rem;
+  padding-top: 1rem;
+  border-top: 1px solid color-mix(in srgb, var(--ink-muted) 28%, transparent);
+}
+
+.login-demo__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.login-demo__title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.login-demo__hint {
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.login-demo__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.5rem;
+}
+
+.login-demo__chip {
+  display: grid;
+  gap: 0.15rem;
+  text-align: left;
+  padding: 0.65rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--ink-muted) 32%, transparent);
+  background: color-mix(in srgb, var(--surface, #fff) 92%, var(--bg));
+  color: inherit;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+
+.login-demo__chip:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent, #0f5c4c) 55%, transparent);
+  background: color-mix(in srgb, var(--accent, #0f5c4c) 8%, transparent);
+  transform: translateY(-1px);
+}
+
+.login-demo__chip:disabled {
+  opacity: 0.65;
+  cursor: wait;
+}
+
+.login-demo__label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.login-demo__meta {
+  font-size: 0.72rem;
+  color: var(--ink-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media (max-width: 900px) {

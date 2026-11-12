@@ -51,6 +51,16 @@ export const api = {
         body: JSON.stringify({ username, password })
       }),
     me: () => request<any>('/auth/me'),
+    demoUsers: () =>
+      request<{
+        accounts: Array<{
+          username: string;
+          fullName: string;
+          label: string;
+          role: string;
+          password: string;
+        }>;
+      }>('/auth/demo-users'),
     switchBranch: (branchId: string) =>
       request<{ token: string; active_branch_id: string; branches: any[] }>(
         '/auth/switch-branch',

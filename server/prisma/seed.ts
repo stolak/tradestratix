@@ -2,6 +2,11 @@ import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
+import {
+  DEMO_LOGIN_PASSWORD,
+  DEMO_USERS,
+  type DemoUserSpec
+} from '../src/constants/demo-users.js';
 
 dotenv.config();
 
@@ -67,7 +72,9 @@ const SYSTEM_ROLES = [
   { code: 'hr_manager', name: 'HR Manager', sortOrder: 13 },
   { code: 'payroll_officer', name: 'Payroll Officer', sortOrder: 14 },
   { code: 'auditor', name: 'Auditor', sortOrder: 15 },
-  { code: 'delivery_officer', name: 'Delivery Officer', sortOrder: 16 }
+  { code: 'delivery_officer', name: 'Delivery Officer', sortOrder: 16 },
+  { code: 'customer_portal', name: 'Customer', sortOrder: 17 },
+  { code: 'supplier_portal', name: 'Supplier', sortOrder: 18 }
 ];
 
 const MENUS = [
@@ -511,6 +518,25 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'customers.view',
       'notifications.view'
     ]
+  },
+  customer_portal: {
+    menus: ['dashboard', 'sales', 'customers'],
+    permissions: [
+      'dashboard.view',
+      'sales.view',
+      'customers.view',
+      'customers.balances',
+      'notifications.view'
+    ]
+  },
+  supplier_portal: {
+    menus: ['dashboard', 'purchases', 'suppliers'],
+    permissions: [
+      'dashboard.view',
+      'purchases.view',
+      'suppliers.view',
+      'notifications.view'
+    ]
   }
 };
 
@@ -926,72 +952,196 @@ async function main() {
     });
   }
 
-  // Owner user
-  const passwordHash = await bcrypt.hash('password123', 10);
-  let owner = await prisma.user.findFirst({
-    where: { businessId: business.id, username: 'owner' }
-  });
-  if (!owner) {
-    owner = await prisma.user.create({
-      data: {
-        id: id('usr'),
-        businessId: business.id,
-        username: 'owner',
-        passwordHash,
-        fullName: 'Ada Okoro',
-        role: 'business_owner',
-        email: 'owner@demodistro.local',
-        defaultBranchId: branch.id,
-        userRoles: { create: [{ roleId: ownerRoleId }] },
-        userBranches: {
-          create: [
-            {
-              branchId: branch.id,
-              businessId: business.id,
-              status: 'active'
-            },
-            {
-              branchId: branch2.id,
-              businessId: business.id,
-              status: 'active'
-            }
-          ]
-        }
-      }
-    });
-  } else {
-    for (const b of [branch, branch2]) {
+  // Demo users (all system roles + customer/supplier portals). Password: password123
+  const passwordHash = await bcrypt.hash(DEMO_LOGIN_PASSWORD, 10);
+  const yearEarly = new Date().getFullYear();
+
+  async function ensureBranchMemberships(
+    userId: string,
+    branchIds: string[],
+    assignedById: string
+  ) {
+    for (const branchId of branchIds) {
       const membership = await prisma.userBranch.findUnique({
-        where: { userId_branchId: { userId: owner.id, branchId: b.id } }
+        where: { userId_branchId: { userId, branchId } }
       });
       if (!membership) {
         await prisma.userBranch.create({
           data: {
-            userId: owner.id,
+            userId,
             businessId: business.id,
-            branchId: b.id,
+            branchId,
             status: 'active',
-            assignedById: owner.id
+            assignedById
           }
         });
       } else {
         await prisma.userBranch.update({
-          where: { userId_branchId: { userId: owner.id, branchId: b.id } },
+          where: { userId_branchId: { userId, branchId } },
           data: {
             businessId: business.id,
             status: 'active',
-            assignedById: membership.assignedById || owner.id
+            assignedById: membership.assignedById || assignedById
           }
         });
       }
     }
-    if (!owner.defaultBranchId) {
-      owner = await prisma.user.update({
-        where: { id: owner.id },
-        data: { defaultBranchId: branch.id }
-      });
-    }
   }
+
+  async function ensureDemoUser(spec: DemoUserSpec, assignedById?: string) {
+    const roleId = roleIds[spec.role];
+    if (!roleId) {
+      console.warn(`Demo user ${spec.username}: missing role ${spec.role}`);
+      return null;
+    }
+    const branchIds =
+      spec.branches === 'all'
+        ? [branch.id, branch2.id]
+        : spec.branches === 'ikeja'
+          ? [branch2.id]
+          : [branch.id];
+    const defaultBranchId = branchIds[0];
+
+    let user =
+      (await prisma.user.findFirst({
+        where: { businessId: business.id, username: spec.username }
+      })) ||
+      (spec.username === 'amaka.sales'
+        ? await prisma.user.findFirst({
+            where: { businessId: business.id, username: 'amaka' }
+          })
+        : null);
+
+    if (!user) {
+      user = await prisma.user.create({
+        data: {
+          id: id('usr'),
+          businessId: business.id,
+          username: spec.username,
+          passwordHash,
+          fullName: spec.fullName,
+          role: spec.role,
+          email: spec.email || null,
+          phone: spec.phone || null,
+          department: spec.department || null,
+          defaultBranchId,
+          createdById: assignedById || null,
+          userRoles: { create: [{ roleId }] },
+          userBranches: {
+            create: branchIds.map((branchId) => ({
+              branchId,
+              businessId: business.id,
+              status: 'active',
+              assignedById: assignedById || null
+            }))
+          }
+        }
+      });
+    } else {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          username: spec.username,
+          passwordHash,
+          fullName: spec.fullName,
+          role: spec.role,
+          email: spec.email || user.email,
+          phone: spec.phone || user.phone,
+          department: spec.department || user.department,
+          defaultBranchId: user.defaultBranchId || defaultBranchId,
+          status: 'active'
+        }
+      });
+      await prisma.userRole.deleteMany({ where: { userId: user.id } });
+      await prisma.userRole.create({ data: { userId: user.id, roleId } });
+      await ensureBranchMemberships(user.id, branchIds, assignedById || user.id);
+    }
+
+    if (spec.employeeCode) {
+      let emp =
+        (await prisma.employee.findFirst({
+          where: { businessId: business.id, userId: user.id }
+        })) ||
+        (await prisma.employee.findFirst({
+          where: { businessId: business.id, code: spec.employeeCode }
+        }));
+      if (!emp) {
+        emp = await prisma.employee.create({
+          data: {
+            id: id('emp'),
+            businessId: business.id,
+            branchId: defaultBranchId,
+            userId: user.id,
+            code: spec.employeeCode,
+            fullName: spec.fullName,
+            phone: spec.phone || null,
+            department: spec.department || null,
+            jobTitle: spec.jobTitle || spec.label,
+            hireDate: new Date(`${yearEarly}-01-15`),
+            baseSalary: 150000,
+            status: 'active',
+            createdById: assignedById || user.id
+          }
+        });
+      } else {
+        emp = await prisma.employee.update({
+          where: { id: emp.id },
+          data: {
+            userId: user.id,
+            branchId: emp.branchId || defaultBranchId,
+            fullName: spec.fullName,
+            department: spec.department || emp.department,
+            jobTitle: spec.jobTitle || emp.jobTitle,
+            status: 'active'
+          }
+        });
+      }
+
+      if (spec.asSalesRep) {
+        let salesRep = await prisma.salesRep.findFirst({
+          where: {
+            businessId: business.id,
+            OR: [{ employeeId: emp.id }, { code: 'REP-01' }, { code: spec.employeeCode }]
+          }
+        });
+        if (!salesRep) {
+          await prisma.salesRep.create({
+            data: {
+              id: id('rep'),
+              businessId: business.id,
+              employeeId: emp.id,
+              code: 'REP-01',
+              status: 'active',
+              commissionPercent: 5,
+              createdById: assignedById || user.id
+            }
+          });
+        } else {
+          await prisma.salesRep.update({
+            where: { id: salesRep.id },
+            data: {
+              employeeId: salesRep.employeeId || emp.id,
+              status: 'active'
+            }
+          });
+        }
+      }
+    }
+
+    return user;
+  }
+
+  // Owner first (needed as createdBy / assignedBy for others)
+  let owner = await ensureDemoUser(DEMO_USERS.find((u) => u.username === 'owner')!);
+  if (!owner) throw new Error('Failed to seed owner demo user');
+
+  for (const spec of DEMO_USERS) {
+    if (spec.username === 'owner') continue;
+    await ensureDemoUser(spec, owner.id);
+  }
+  console.log(
+    `Demo users ready (${DEMO_USERS.length}): ${DEMO_USERS.map((u) => u.username).join(', ')} — password ${DEMO_LOGIN_PASSWORD}`
+  );
 
   // Chart of accounts for business
   const accountByCode: Record<string, string> = {};
@@ -1474,118 +1624,16 @@ async function main() {
     });
   }
 
-  // Sales rep = employee first + login; commercial SalesRep profile is separate
-  let salesRepUser = await prisma.user.findFirst({
-    where: {
-      businessId: business.id,
-      OR: [{ username: 'amaka.sales' }, { username: 'amaka' }]
-    },
-    orderBy: { username: 'desc' }
-  });
-  if (!salesRepUser) {
-    const salesRepRole = await prisma.role.findFirst({
-      where: {
-        code: 'sales_representative',
-        OR: [{ businessId: business.id }, { businessId: null }]
-      }
-    });
-    salesRepUser = await prisma.user.create({
-      data: {
-        id: id('usr'),
-        businessId: business.id,
-        username: 'amaka.sales',
-        passwordHash: await bcrypt.hash('password123', 10),
-        fullName: 'Amaka Sales',
-        role: 'sales_representative',
-        phone: '+2348011122233',
-        department: 'Sales',
-        defaultBranchId: branch.id,
-        createdById: owner.id,
-        ...(salesRepRole ? { userRoles: { create: [{ roleId: salesRepRole.id }] } } : {}),
-        userBranches: {
-          create: [
-            {
-              branchId: branch.id,
-              businessId: business.id,
-              status: 'active',
-              assignedById: owner.id
-            }
-          ]
-        }
-      }
-    });
-  }
-
-  let salesRepEmployee =
-    (await prisma.employee.findFirst({
-      where: { businessId: business.id, userId: salesRepUser.id }
+  // Sales rep profile is created with demo user amaka.sales (ensureDemoUser)
+  const salesRep =
+    (await prisma.salesRep.findFirst({
+      where: { businessId: business.id, code: 'REP-01' }
     })) ||
-    (await prisma.employee.findFirst({
-      where: {
-        businessId: business.id,
-        userId: null,
-        OR: [{ code: 'REP-01' }, { code: 'EMP-REP-01' }]
-      }
+    (await prisma.salesRep.findFirst({
+      where: { businessId: business.id },
+      orderBy: { createdAt: 'asc' }
     }));
-  if (!salesRepEmployee) {
-    salesRepEmployee = await prisma.employee.create({
-      data: {
-        id: id('emp'),
-        businessId: business.id,
-        branchId: branch.id,
-        userId: salesRepUser.id,
-        code: 'EMP-REP-01',
-        fullName: 'Amaka Sales',
-        phone: '+2348011122233',
-        department: 'Sales',
-        jobTitle: 'Sales Representative',
-        hireDate: new Date(`${year}-01-15`),
-        baseSalary: 150000,
-        status: 'active',
-        createdById: owner.id
-      }
-    });
-  } else if (salesRepEmployee.userId !== salesRepUser.id) {
-    salesRepEmployee = await prisma.employee.update({
-      where: { id: salesRepEmployee.id },
-      data: {
-        userId: salesRepUser.id,
-        branchId: salesRepEmployee.branchId || branch.id,
-        status: 'active'
-      }
-    });
-  }
 
-  let salesRep = await prisma.salesRep.findFirst({
-    where: {
-      businessId: business.id,
-      OR: [{ employeeId: salesRepEmployee.id }, { code: 'REP-01' }, { code: 'EMP-REP-01' }]
-    }
-  });
-  if (!salesRep) {
-    salesRep = await prisma.salesRep.create({
-      data: {
-        id: id('rep'),
-        businessId: business.id,
-        employeeId: salesRepEmployee.id,
-        code: 'REP-01',
-        status: 'active',
-        commissionPercent: 5,
-        createdById: owner.id
-      }
-    });
-  } else {
-    salesRep = await prisma.salesRep.update({
-      where: { id: salesRep.id },
-      data: {
-        employeeId: salesRep.employeeId || salesRepEmployee.id,
-        status: 'active'
-      }
-    });
-  }
-
-  console.log('Seed complete.');
-  console.log('Login: owner / password123');
   console.log(`Business: ${business.name} (${business.id})`);
   console.log(
     `Branches: ${branch.code}, ${branch2.code} | Warehouses: ${warehouse.code}, ${warehouse2.code}`
@@ -1595,7 +1643,7 @@ async function main() {
     `Phase 3 samples: Supplier ${supplier.code}, approved PO ${samplePo?.poNumber || 'n/a'}`
   );
   console.log(
-    `Phase 4 samples: ${walkIn.code}, ${retailCustomer.code}, rep ${salesRep.code}`
+    `Phase 4 samples: ${walkIn.code}, ${retailCustomer.code}, rep ${salesRep?.code || 'n/a'}`
   );
 
   // Phase 5 — primary bank account linked to GL bank (1120)
@@ -1677,69 +1725,10 @@ async function main() {
     });
   }
 
-  // Phase 7 — sample employee (+ login)
-  let warehouseUser = await prisma.user.findFirst({
-    where: { businessId: business.id, username: 'tunde' }
-  });
-  if (!warehouseUser) {
-    const invRole = await prisma.role.findFirst({
-      where: {
-        code: 'inventory_officer',
-        OR: [{ businessId: business.id }, { businessId: null }]
-      }
-    });
-    warehouseUser = await prisma.user.create({
-      data: {
-        id: id('usr'),
-        businessId: business.id,
-        username: 'tunde',
-        passwordHash: await bcrypt.hash('password123', 10),
-        fullName: 'Tunde Warehouse',
-        role: 'inventory_officer',
-        department: 'Operations',
-        defaultBranchId: branch.id,
-        createdById: owner.id,
-        ...(invRole ? { userRoles: { create: [{ roleId: invRole.id }] } } : {}),
-        userBranches: {
-          create: [
-            {
-              branchId: branch.id,
-              businessId: business.id,
-              status: 'active',
-              assignedById: owner.id
-            }
-          ]
-        }
-      }
-    });
-  }
-
-  let employee = await prisma.employee.findFirst({
+  // Phase 7 — sample employee (Store Keeper / tunde is seeded with demo users)
+  const employee = await prisma.employee.findFirst({
     where: { businessId: business.id, code: 'EMP-01' }
   });
-  if (!employee) {
-    employee = await prisma.employee.create({
-      data: {
-        id: id('emp'),
-        businessId: business.id,
-        branchId: branch.id,
-        userId: warehouseUser.id,
-        code: 'EMP-01',
-        fullName: 'Tunde Warehouse',
-        department: 'Operations',
-        jobTitle: 'Store Keeper',
-        hireDate: new Date(`${year}-02-01`),
-        baseSalary: 180000,
-        status: 'active',
-        createdById: owner.id
-      }
-    });
-  } else if (!employee.userId) {
-    employee = await prisma.employee.update({
-      where: { id: employee.id },
-      data: { userId: warehouseUser.id, branchId: employee.branchId || branch.id }
-    });
-  }
 
   // Phase 8 — sample vehicle
   let van = await prisma.vehicle.findFirst({
@@ -1823,8 +1812,11 @@ async function main() {
   console.log(`User warehouse assignments synced (${whAssignments} rows touched)`);
 
   console.log(
-    `Phase 6–9 samples: asset ${forklift.code}, budget ${opexBudget.name}, emp ${employee.code}, van ${van.code}, plan ${starter.code}`
+    `Phase 6–9 samples: asset ${forklift.code}, budget ${opexBudget.name}, emp ${employee?.code || 'n/a'}, van ${van.code}, plan ${starter.code}`
   );
+  console.log('Seed complete.');
+  console.log(`Demo login password for all users: ${DEMO_LOGIN_PASSWORD}`);
+  console.log('Click any demo user on the login page, or use e.g. owner / password123');
 }
 
 main()

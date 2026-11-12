@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as authService from '../services/auth.service.js';
+import { publicDemoAccounts } from '../constants/demo-users.js';
 
 export async function login(req: Request, res: Response, next: NextFunction) {
   try {
@@ -12,6 +13,15 @@ export async function login(req: Request, res: Response, next: NextFunction) {
       userAgent: req.get('user-agent') || undefined
     });
     return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+/** Public list of seeded demo accounts for one-click login (demo / local only UX). */
+export async function demoUsers(_req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json({ accounts: publicDemoAccounts() });
   } catch (err) {
     return next(err);
   }
