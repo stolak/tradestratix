@@ -91,6 +91,7 @@ export const PickupsPage: React.FC = () => {
     | null
   >(null);
   const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
+  const [codePanelKey, setCodePanelKey] = useState(0);
 
   const load = async () => {
     setLoading(true);
@@ -256,11 +257,31 @@ export const PickupsPage: React.FC = () => {
           Warehouse fulfilment
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Orders confirmed in any branch with stock reserved in your warehouses. Pick the goods, then hand them over
-          against the customer’s pickup code or dispatch them for delivery. Stock, revenue and cost of goods post only
-          when the goods are handed over or delivered.
+          Customer walks in with a pickup code — look it up below and release what is reserved here. The same code works
+          for part-collections and other branches that hold the balance. Stock and revenue post only at hand-over.
         </p>
       </header>
+
+      {(canRelease || canPick) && (
+        <CodeLookupBar
+          key={codePanelKey}
+          canRelease={canRelease}
+          canPick={canPick}
+          onQuick={(row) => setModal({ kind: 'quick', row })}
+          onPick={async (invoiceId, warehouseId) => {
+            try {
+              const task = await api.sales.startPicking({ invoice_id: invoiceId, warehouse_id: warehouseId });
+              await load();
+              setModal({ kind: 'pick', taskId: task.id });
+            } catch (err: any) {
+              await alertError('Could not start picking', err.message);
+            }
+          }}
+          onCollect={(taskId) => setModal({ kind: 'collect', taskId })}
+          onViewInvoice={(id) => setViewInvoiceId(id)}
+          onDone={() => void load()}
+        />
+      )}
 
       <div className="cust-bal__cards">
         {cards.map((c) => (
@@ -449,13 +470,29 @@ export const PickupsPage: React.FC = () => {
       </div>
 
       {modal?.kind === 'quick' ? (
-        <QuickReleaseModal row={modal.row} onClose={() => setModal(null)} onDone={async () => { setModal(null); await load(); }} />
+        <QuickReleaseModal
+          row={modal.row}
+          onClose={() => setModal(null)}
+          onDone={async () => {
+            setModal(null);
+            setCodePanelKey((k) => k + 1);
+            await load();
+          }}
+        />
       ) : null}
       {modal?.kind === 'pick' ? (
         <PickModal taskId={modal.taskId} onClose={() => setModal(null)} onDone={async () => { setModal(null); await load(); }} />
       ) : null}
       {modal?.kind === 'collect' ? (
-        <CollectModal taskId={modal.taskId} onClose={() => setModal(null)} onDone={async () => { setModal(null); await load(); }} />
+        <CollectModal
+          taskId={modal.taskId}
+          onClose={() => setModal(null)}
+          onDone={async () => {
+            setModal(null);
+            setCodePanelKey((k) => k + 1);
+            await load();
+          }}
+        />
       ) : null}
       {modal?.kind === 'dispatch' ? (
         <DispatchModal task={modal.task} vehicles={vehicles} onClose={() => setModal(null)} onDone={async () => { setModal(null); await load(); }} />
@@ -804,6 +841,193 @@ function QtyInput({ value, max, onChange }: { value: string; max: number; onChan
   );
 }
 
+/** Customer quotes pickup code — find order and release what is reserved at this branch. */
+const CodeLookupBar: React.FC<{
+  canRelease: boolean;
+  canPick: boolean;
+  onQuick: (row: any) => void;
+  onPick: (invoiceId: string, warehouseId: string) => Promise<void>;
+  onCollect: (taskId: string) => void;
+  onViewInvoice: (id: string) => void;
+  onDone: () => void;
+}> = ({ canRelease, canPick, onQuick, onPick, onCollect, onViewInvoice, onDone }) => {
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [hit, setHit] = useState<any | null>(null);
+
+  const lookup = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const c = code.replace(/\s+/g, '');
+    if (!c) return;
+    setBusy(true);
+    try {
+      setHit(await api.sales.lookupPickupByCode(c));
+    } catch (err: any) {
+      setHit(null);
+      await alertError('Pickup code', err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toQuickRow = (loc: any) => ({
+    invoice_id: hit.invoice_id,
+    invoice_number: hit.invoice_number,
+    amount_due: hit.amount_due,
+    has_pickup_code: true,
+    suggested_pickup_code: code.replace(/\s+/g, ''),
+    authorised_collectors: hit.authorised_collectors || [],
+    customer: hit.customer,
+    warehouse: loc.warehouse,
+    lines: (loc.lines || []).map((l: any) => ({
+      invoice_item_id: l.invoice_item_id,
+      product: l.product,
+      variant: l.variant,
+      uom: l.uom,
+      quantity: l.ordered,
+      fulfilled_quantity: l.collected,
+      to_pick: l.to_collect
+    }))
+  });
+
+  return (
+    <div className="card-surface" style={{ padding: '1rem 1.25rem', display: 'grid', gap: 12 }}>
+      <div>
+        <div style={{ fontWeight: 700 }}>Customer with a pickup code</div>
+        <div className="line-items__discount-note">
+          Works at any branch that holds reserved stock. Part collect now — same code for the balance later or at another
+          branch.
+        </div>
+      </div>
+      <form onSubmit={(e) => void lookup(e)} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value.replace(/[^\d\s]/g, '').slice(0, 10))}
+          placeholder="6-digit code"
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          style={{ width: 140, letterSpacing: '0.12em', fontWeight: 700 }}
+          aria-label="Pickup code"
+        />
+        <button type="submit" className="btn btn-primary" disabled={busy || !code.trim()}>
+          {busy ? 'Looking up…' : 'Find order'}
+        </button>
+        {hit ? (
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              setHit(null);
+              setCode('');
+              onDone();
+            }}
+          >
+            Clear
+          </button>
+        ) : null}
+      </form>
+
+      {hit ? (
+        <div style={{ display: 'grid', gap: 12 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'baseline' }}>
+            <button type="button" className="btn-linkish" style={{ fontWeight: 700, fontSize: '1.05rem' }} onClick={() => onViewInvoice(hit.invoice_id)}>
+              {hit.invoice_number}
+            </button>
+            <span className={`invoice-chip invoice-chip--${hit.fulfilment_status}`}>{hit.fulfilment_status}</span>
+            <span>
+              {hit.customer?.name}
+              {hit.customer?.phone ? ` · ${hit.customer.phone}` : ''}
+            </span>
+            <span className="line-items__discount-note">Sold at {hit.selling_branch?.name || '—'}</span>
+          </div>
+          <div className="line-items__discount-note">{hit.message}</div>
+
+          {(hit.collect_here || []).length ? (
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Collect here</th>
+                    <th>Lines</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {hit.collect_here.map((loc: any) => (
+                    <tr key={loc.warehouse.id}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{loc.warehouse.name}</div>
+                        <div className="line-items__discount-note">{loc.warehouse.branch?.name}</div>
+                      </td>
+                      <td>
+                        {(loc.lines || [])
+                          .map(
+                            (l: any) =>
+                              `${qty(l.to_collect)} ${l.uom?.code || ''} ${l.product?.name}${
+                                l.variant?.name ? ` (${l.variant.name})` : ''
+                              }`
+                          )
+                          .join(' · ')}
+                      </td>
+                      <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                        {loc.ready_task_id && canRelease ? (
+                          <button type="button" className="btn btn-primary" onClick={() => onCollect(loc.ready_task_id)}>
+                            Hand over
+                          </button>
+                        ) : null}
+                        {!loc.ready_task_id && canRelease ? (
+                          <button type="button" className="btn btn-primary" onClick={() => onQuick(toQuickRow(loc))}>
+                            Release now
+                          </button>
+                        ) : null}
+                        {!loc.ready_task_id && canPick ? (
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            style={{ marginLeft: 6 }}
+                            onClick={() => void onPick(hit.invoice_id, loc.warehouse.id)}
+                          >
+                            Start picking
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+
+          {(hit.elsewhere || []).length ? (
+            <div className="pickups__warning">
+              Also reserved elsewhere (customer can use the same code there):{' '}
+              {(hit.elsewhere as any[])
+                .map(
+                  (loc) =>
+                    `${loc.warehouse.branch?.name || ''} · ${loc.warehouse.name} (${(loc.lines || [])
+                      .map((l: any) => `${qty(l.to_collect)} ${l.uom?.code || ''}`)
+                      .join(', ')})`
+                )
+                .join(' · ')}
+            </div>
+          ) : null}
+
+          {(hit.lines || []).some((l: any) => Number(l.backordered) > 1e-9) ? (
+            <div className="line-items__discount-note">
+              Backordered:{' '}
+              {(hit.lines as any[])
+                .filter((l) => Number(l.backordered) > 1e-9)
+                .map((l) => `${qty(l.backordered)} ${l.uom?.code || ''} ${l.product?.name}`)
+                .join(' · ')}
+              . Allocate stock before the customer can collect that balance.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
 // ─── quick release (no picking step) ───────────────────────────────────────
 
 const QuickReleaseModal: React.FC<{ row: any; onClose: () => void; onDone: () => Promise<void> | void }> = ({ row, onClose, onDone }) => {
@@ -811,7 +1035,10 @@ const QuickReleaseModal: React.FC<{ row: any; onClose: () => void; onDone: () =>
   const [quantities, setQuantities] = useState<Record<string, string>>(() =>
     Object.fromEntries(lines.map((l) => [l.invoice_item_id, String(l.to_pick)]))
   );
-  const [collector, setCollector] = useState<Collector>(() => emptyCollector(row.customer));
+  const [collector, setCollector] = useState<Collector>(() => ({
+    ...emptyCollector(row.customer),
+    pickup_code: row.suggested_pickup_code || ''
+  }));
   const [busy, setBusy] = useState(false);
   const invalid = lines.some((l) => {
     const v = Number(quantities[l.invoice_item_id] || 0);
@@ -833,7 +1060,15 @@ const QuickReleaseModal: React.FC<{ row: any; onClose: () => void; onDone: () =>
           .map((l) => ({ invoice_item_id: l.invoice_item_id, quantity: Number(quantities[l.invoice_item_id] || 0) }))
           .filter((i) => i.quantity > 0)
       });
-      await alertSuccess(`${res.fulfilment_number} released`, `${row.invoice_number}: goods handed to ${collector.collected_by}.`);
+      const left = lines.some(
+        (l) => Number(quantities[l.invoice_item_id] || 0) < Number(l.to_pick) - 1e-9
+      );
+      await alertSuccess(
+        `${res.fulfilment_number} released`,
+        left
+          ? `${row.invoice_number}: part collected. Customer can return with the same pickup code for the balance.`
+          : `${row.invoice_number}: goods handed to ${collector.collected_by}.`
+      );
       await onDone();
     } catch (err: any) {
       await alertError('Release failed', err.message);

@@ -61,6 +61,19 @@ export async function fulfil(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function lookupPickupByCode(req: Request, res: Response, next: NextFunction) {
+  try {
+    const code =
+      queryString(req.query.code) ||
+      (typeof req.body?.code === 'string' ? req.body.code : undefined) ||
+      (typeof req.body?.pickup_code === 'string' ? req.body.pickup_code : undefined);
+    if (!code) throw httpError(400, 'code is required');
+    return res.json(await warehouseService.lookupPickupByCode(req.user!, code));
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function warehouseDashboard(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(

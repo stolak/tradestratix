@@ -42,7 +42,13 @@ async function main() {
   const branch = await prisma.branch.findFirst({
     where: { businessId: business.id, isActive: true }
   });
-  const customer = await prisma.customer.findFirst({ where: { businessId: business.id } });
+  const customer = await prisma.customer.findFirst({
+    where: {
+      businessId: business.id,
+      customerType: { not: 'walk_in' },
+      OR: [{ code: null }, { code: { not: 'WALK-IN' } }]
+    }
+  });
   const supplier = await prisma.supplier.findFirst({ where: { businessId: business.id } });
   const salesRep = await prisma.salesRep.findFirst({ where: { businessId: business.id } });
   const cash = await prisma.defaultAccountSetting.findFirst({

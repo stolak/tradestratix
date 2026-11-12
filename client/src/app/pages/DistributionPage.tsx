@@ -37,7 +37,7 @@ export const DistributionPage: React.FC = () => {
       const [v, d, c, w, p, inv] = await Promise.all([
         api.distribution.vehicles(),
         api.distribution.deliveries(),
-        api.customers.list(),
+        api.customers.list(undefined, undefined, { includeWalkIn: true }),
         api.warehouses.list(),
         api.products.list(),
         api.sales.invoices('posted')

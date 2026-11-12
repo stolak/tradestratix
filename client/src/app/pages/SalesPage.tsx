@@ -388,7 +388,7 @@ export const SalesPage: React.FC = () => {
 
   const load = async () => {
     const settled = await Promise.allSettled([
-      api.customers.list(),
+      api.customers.list(undefined, undefined, { includeWalkIn: true }),
       api.warehouses.list(activeBranchId || undefined),
       api.products.list(),
       api.salesReps.list(activeBranchId || undefined),

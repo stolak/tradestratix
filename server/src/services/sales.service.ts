@@ -17,7 +17,7 @@ import * as branchAccess from './branch-access.service.js';
 import { assertSalesRepInBranch } from './sales-rep.service.js';
 import { userHasAnyPermission } from './permission.service.js';
 import { issuePickupCode } from './pickup-code.service.js';
-import { getCustomerExposure } from './customer.service.js';
+import { getCustomerExposure, isWalkInCustomer } from './customer.service.js';
 import {
   applyDiscount,
   getBranchDiscountMap,
@@ -436,9 +436,7 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
     linePlans.push(plan.length ? plan : null);
   }
 
-  const isWalkIn =
-    customer.customerType === 'walk_in' ||
-    String(customer.code || '').toUpperCase() === 'WALK-IN';
+  const isWalkIn = isWalkInCustomer(customer);
 
   const myRep = await prisma.salesRep.findFirst({
     where: {

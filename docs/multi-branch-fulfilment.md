@@ -215,8 +215,13 @@ Proof files (JPEG / PNG / WebP / GIF / PDF, max 8 MB) upload to S3 via
 `SalesFulfilment.proofReference` / `DeliveryOrder.podReference` when empty. UI: **Pickups** Collect / Deliver
 modals.
 
-APIs: `POST /fulfilments/picking`, `…/:id/pick`, `…/:id/release`, `…/:id/dispatch`, `…/:id/deliver`,
-`GET /fulfilments/dashboard`. UI: **Pickups** page.
+Customer collection: walk into **any** branch that holds reserved stock for the order, show the pickup code
+(`POST /sales/pickups/by-code`). Staff release what is reserved **here**; partial collection is allowed — the same
+code works on a later visit or at another branch for the balance. Locations without access are listed so the
+customer can be directed. Backordered qty must be allocated before it can be collected.
+
+APIs: `POST /pickups/by-code`, `POST /fulfilments/picking`, `…/:id/pick`, `…/:id/release`, `…/:id/dispatch`,
+`…/:id/deliver`, `GET /fulfilments/dashboard`. UI: **Pickups** → “Customer with a pickup code”.
 
 ## Sales returns and customer credit (Phase 4)
 

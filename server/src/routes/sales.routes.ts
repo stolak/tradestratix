@@ -57,6 +57,16 @@ router.get(
 const WAREHOUSE_VIEW = ['sales.fulfil', 'fulfilment.pick', 'fulfilment.dispatch'];
 router.get('/fulfilments/pending', requirePermission(...WAREHOUSE_VIEW), salesController.pendingPickups);
 router.get('/fulfilments/dashboard', requirePermission(...WAREHOUSE_VIEW), salesController.warehouseDashboard);
+router.get(
+  '/pickups/by-code',
+  requirePermission('sales.fulfil', 'fulfilment.pick'),
+  salesController.lookupPickupByCode
+);
+router.post(
+  '/pickups/by-code',
+  requirePermission('sales.fulfil', 'fulfilment.pick'),
+  salesController.lookupPickupByCode
+);
 router.get('/fulfilments', requirePermission(...WAREHOUSE_VIEW), salesController.listFulfilments);
 router.get('/fulfilments/:id', requirePermission(...WAREHOUSE_VIEW), salesController.getFulfilment);
 router.post('/fulfilments', requirePermission('sales.fulfil'), salesController.fulfil);

@@ -1,8 +1,9 @@
 import { prisma } from '../utils/prisma.js';
-import { httpError, serialize, shortId } from '../utils/helpers.js';
+import { httpError, roundMoney, serialize, shortId } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
+import { partnerLineBalances } from './accounting.service.js';
 
 const employeeSelect = {
   id: true,
@@ -187,7 +188,7 @@ export async function findSalesRepForUser(businessId: string, userId: string) {
 /** Active sales reps whose linked login can operate in the given branch. */
 export async function listSalesReps(
   businessId: string,
-  opts?: { branchId?: string | null; activeOnly?: boolean }
+  opts?: { branchId?: string | null; activeOnly?: boolean; withBalances?: boolean }
 ) {
   const branchId = opts?.branchId || null;
   const rows = await prisma.salesRep.findMany({
@@ -209,7 +210,16 @@ export async function listSalesReps(
     include: repInclude,
     orderBy: { employee: { fullName: 'asc' } }
   });
-  return serialize(rows.map(presentRep));
+  const presented = rows.map(presentRep);
+  if (!opts?.withBalances) return serialize(presented);
+
+  const balances = await partnerLineBalances(businessId, 'sales_representative');
+  return serialize(
+    presented.map((r) => ({
+      ...r,
+      balance: roundMoney(balances.get(r.id) ?? 0)
+    }))
+  );
 }
 
 export async function assertSalesRepInBranch(

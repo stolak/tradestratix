@@ -279,6 +279,22 @@ export async function createJournal(
   });
 
   const controlAccounts = await controlAccountIdSets(user.businessId);
+  let walkInCustomer = false;
+  if (customerId) {
+    const cust = await prisma.customer.findFirst({
+      where: { id: customerId, businessId: user.businessId },
+      select: { customerType: true, code: true }
+    });
+    walkInCustomer =
+      String(cust?.customerType || '').toLowerCase() === 'walk_in' ||
+      String(cust?.code || '').toUpperCase() === 'WALK-IN';
+    if (walkInCustomer && !salesRepresentativeId) {
+      throw httpError(
+        400,
+        'Walk-in transactions must be attributed to a sales representative (sales_representative_id)'
+      );
+    }
+  }
 
   const normalized = lines.map((l, idx) => {
     const accountId = l.account_id || l.accountId;
@@ -304,10 +320,21 @@ export async function createJournal(
     if (!lineSalesRepId && salesRepresentativeId && controlAccounts.salesRep.has(accountId)) {
       lineSalesRepId = salesRepresentativeId;
     }
+    // Walk-in AR also carries the sales rep so each rep can account for their balance.
+    if (
+      !lineSalesRepId &&
+      walkInCustomer &&
+      salesRepresentativeId &&
+      controlAccounts.customer.has(accountId)
+    ) {
+      lineSalesRepId = salesRepresentativeId;
+    }
 
-    const stamped = [lineCustomerId, lineSupplierId, lineSalesRepId].filter(Boolean).length;
-    if (stamped > 1) {
-      throw httpError(400, `lines[${idx}] can reference at most one of customer, supplier, sales representative`);
+    if (lineSupplierId && (lineCustomerId || lineSalesRepId)) {
+      throw httpError(
+        400,
+        `lines[${idx}] cannot combine supplier with customer or sales representative`
+      );
     }
 
     return {

@@ -3,14 +3,25 @@ import * as salesRepService from '../services/sales-rep.service.js';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
-    const branchId =
+    const scoped =
       typeof req.query.branch_id === 'string'
         ? req.query.branch_id
-        : req.user?.activeBranchId || req.user?.defaultBranchId || undefined;
+        : undefined;
+    const allStatuses =
+      req.query.all === '1' ||
+      req.query.all === 'true' ||
+      req.query.include_inactive === '1' ||
+      req.query.include_inactive === 'true';
+    const withBalances =
+      req.query.with_balances === '1' ||
+      req.query.with_balances === 'true' ||
+      req.query.balances === '1';
     return res.json(
       await salesRepService.listSalesReps(req.user!.businessId, {
-        branchId,
-        activeOnly: true
+        // Sales/POS pickers stay branch-scoped + active; management page uses all=1
+        branchId: allStatuses ? null : scoped || req.user?.activeBranchId || undefined,
+        activeOnly: !allStatuses,
+        withBalances
       })
     );
   } catch (err) {

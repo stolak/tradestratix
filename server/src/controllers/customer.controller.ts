@@ -5,7 +5,14 @@ export async function list(req: Request, res: Response, next: NextFunction) {
   try {
     const q = typeof req.query.q === 'string' ? req.query.q : undefined;
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    return res.json(await customerService.listCustomers(req.user!.businessId, q, status));
+    const includeWalkIn =
+      req.query.include_walk_in === '1' ||
+      req.query.include_walk_in === 'true' ||
+      req.query.includeWalkIn === '1' ||
+      req.query.includeWalkIn === 'true';
+    return res.json(
+      await customerService.listCustomers(req.user!.businessId, q, status, { includeWalkIn })
+    );
   } catch (err) {
     return next(err);
   }

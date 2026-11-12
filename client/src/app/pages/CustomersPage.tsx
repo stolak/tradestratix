@@ -176,8 +176,8 @@ export const CustomersPage: React.FC = () => {
             Customers
           </h1>
           <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-            Customers are shared across branches; invoices and journals belong to the branch that
-            made them.
+            Customers are shared across branches. Walk-in is a system account (hidden here) — only
+            sales representatives can sell to it from Sales / POS.
           </p>
         </div>
         {activeTab === 'directory' ? (
@@ -266,7 +266,6 @@ export const CustomersPage: React.FC = () => {
               <option value="retail">Retail</option>
               <option value="wholesale">Wholesale</option>
               <option value="distributor">Distributor</option>
-              <option value="walk_in">Walk-in</option>
             </select>
           </div>
           <div className="field">

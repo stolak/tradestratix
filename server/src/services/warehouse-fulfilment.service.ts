@@ -989,3 +989,226 @@ export async function warehouseDashboard(
     }))
   });
 }
+
+/**
+ * Customer walks in with a pickup code: find the open order and show remaining stock by warehouse.
+ * Staff can collect whatever is reserved (or ready) in warehouses they can access; the same code
+ * works for later visits and other branches that hold the balance.
+ * Wrong codes here do not count toward lock-out (only release verification does).
+ */
+export async function lookupPickupByCode(user: AuthUser, rawCode: string) {
+  const code = String(rawCode || '').replace(/\s+/g, '');
+  if (!/^\d{4,8}$/.test(code)) {
+    throw httpError(400, 'Enter the pickup code the customer received (digits only)');
+  }
+
+  const inv = await prisma.salesInvoice.findFirst({
+    where: {
+      businessId: user.businessId,
+      pickupCode: code,
+      status: 'posted',
+      fulfilmentMode: 'pickup'
+    },
+    include: {
+      customer: { select: { id: true, name: true, code: true, phone: true } },
+      branch: { select: { id: true, name: true, code: true } },
+      sellingBranch: { select: { id: true, name: true, code: true } },
+      items: {
+        include: {
+          product: { select: { id: true, name: true, sku: true } },
+          variant: { select: { id: true, name: true } },
+          uom: { select: { id: true, code: true, name: true } }
+        }
+      }
+    }
+  });
+  if (!inv) throw httpError(404, 'No open pickup order matches that code');
+  if (inv.fulfilmentStatus === 'fulfilled') {
+    throw httpError(400, `${inv.invoiceNumber} is already fully collected`);
+  }
+  if (inv.pickupCodeFailures >= 5) {
+    throw httpError(423, 'Pickup code locked after repeated wrong entries. Ask the selling branch to reissue it.');
+  }
+  if (inv.pickupCodeExpiresAt && inv.pickupCodeExpiresAt < new Date()) {
+    throw httpError(400, 'The pickup code has expired. Ask the selling branch to reissue it.');
+  }
+
+  const allowed = await authorisedWarehouseIds(user);
+  const itemIds = inv.items.map((i) => i.id);
+  const reservations = itemIds.length
+    ? await prisma.salesReservation.findMany({
+        where: { invoiceItemId: { in: itemIds }, status: 'active' },
+        include: {
+          warehouse: { include: { branch: { select: { id: true, name: true, code: true } } } }
+        }
+      })
+    : [];
+
+  const readyTasks = await prisma.salesFulfilment.findMany({
+    where: {
+      businessId: user.businessId,
+      invoiceId: inv.id,
+      status: 'ready_for_collection'
+    },
+    include: {
+      warehouse: { include: { branch: { select: { id: true, name: true, code: true } } } },
+      items: true
+    }
+  });
+
+  type LocLine = {
+    invoice_item_id: string;
+    product: any;
+    variant: any;
+    uom: any;
+    ordered: number;
+    collected: number;
+    to_collect: number;
+  };
+  type Loc = {
+    warehouse: { id: string; name: string; code: string; branch: any };
+    can_collect_here: boolean;
+    ready_task_id: string | null;
+    lines: LocLine[];
+  };
+
+  const byWh = new Map<string, Loc>();
+  for (const r of reservations) {
+    const left = reservationLeft(r);
+    if (left <= EPS) continue;
+    const item = inv.items.find((i) => i.id === r.invoiceItemId);
+    if (!item) continue;
+    const factor = lineFactor(item);
+    const toCollect = roundQty(left * factor);
+    if (toCollect <= EPS) continue;
+    let loc = byWh.get(r.warehouseId);
+    if (!loc) {
+      const ready = readyTasks.find((t) => t.warehouseId === r.warehouseId);
+      loc = {
+        warehouse: {
+          id: r.warehouse.id,
+          name: r.warehouse.name,
+          code: r.warehouse.code,
+          branch: r.warehouse.branch
+        },
+        can_collect_here: allowed.has(r.warehouseId),
+        ready_task_id: ready?.id || null,
+        lines: []
+      };
+      byWh.set(r.warehouseId, loc);
+    }
+    let line = loc.lines.find((l) => l.invoice_item_id === item.id);
+    if (!line) {
+      line = {
+        invoice_item_id: item.id,
+        product: item.product,
+        variant: item.variant,
+        uom: item.uom,
+        ordered: n(item.quantity) - n(item.cancelledQuantity),
+        collected: n(item.fulfilledQuantity),
+        to_collect: 0
+      };
+      loc.lines.push(line);
+    }
+    line.to_collect = roundQty(line.to_collect + toCollect);
+  }
+
+  // Ready tasks may hold picked qty even if reservation was already claimed onto the task
+  for (const t of readyTasks) {
+    if (!byWh.has(t.warehouseId)) {
+      byWh.set(t.warehouseId, {
+        warehouse: {
+          id: t.warehouse.id,
+          name: t.warehouse.name,
+          code: t.warehouse.code,
+          branch: t.warehouse.branch
+        },
+        can_collect_here: allowed.has(t.warehouseId),
+        ready_task_id: t.id,
+        lines: []
+      });
+    }
+    const loc = byWh.get(t.warehouseId)!;
+    if (!loc.ready_task_id) loc.ready_task_id = t.id;
+    for (const ti of t.items) {
+      const left = roundQty(n(ti.pickedQuantity) - n(ti.quantity));
+      if (left <= EPS) continue;
+      const item = inv.items.find((i) => i.id === ti.invoiceItemId);
+      if (!item) continue;
+      let line = loc.lines.find((l) => l.invoice_item_id === item.id);
+      if (!line) {
+        line = {
+          invoice_item_id: item.id,
+          product: item.product,
+          variant: item.variant,
+          uom: item.uom,
+          ordered: n(item.quantity) - n(item.cancelledQuantity),
+          collected: n(item.fulfilledQuantity),
+          to_collect: 0
+        };
+        loc.lines.push(line);
+      }
+      // Prefer max of reserved shelf qty vs picked-not-yet-released
+      line.to_collect = roundQty(Math.max(line.to_collect, left));
+    }
+  }
+
+  const locations = [...byWh.values()].filter((l) => l.lines.some((x) => x.to_collect > EPS));
+  const collectHere = locations.filter((l) => l.can_collect_here);
+  const elsewhere = locations.filter((l) => !l.can_collect_here);
+
+  const lines = inv.items
+    .map((i) => {
+      const ordered = roundQty(n(i.quantity) - n(i.cancelledQuantity));
+      const collected = n(i.fulfilledQuantity);
+      const remaining = roundQty(ordered - collected);
+      return {
+        invoice_item_id: i.id,
+        product: i.product,
+        variant: i.variant,
+        uom: i.uom,
+        ordered,
+        collected,
+        remaining,
+        backordered: remaining > EPS
+          ? roundQty(
+              Math.max(
+                0,
+                remaining -
+                  locations.reduce(
+                    (s, loc) =>
+                      s + (loc.lines.find((l) => l.invoice_item_id === i.id)?.to_collect || 0),
+                    0
+                  )
+              )
+            )
+          : 0
+      };
+    })
+    .filter((l) => l.remaining > EPS || l.collected > EPS);
+
+  return serialize({
+    invoice_id: inv.id,
+    invoice_number: inv.invoiceNumber,
+    fulfilment_status: inv.fulfilmentStatus,
+    payment_status: inv.paymentStatus,
+    amount_due: roundMoney(n(inv.totalAmount) - n(inv.cancelledAmount) - n(inv.amountPaid)),
+    reservation_expires_at: inv.reservationExpiresAt,
+    pickup_code_expires_at: inv.pickupCodeExpiresAt,
+    has_pickup_code: true,
+    authorised_collectors: Array.isArray(inv.authorisedCollectors) ? inv.authorisedCollectors : [],
+    customer: inv.customer,
+    selling_branch: inv.sellingBranch || inv.branch,
+    revenue_branch: inv.branch,
+    lines,
+    collect_here: collectHere,
+    elsewhere,
+    message: collectHere.length
+      ? elsewhere.length
+        ? 'Collect what is reserved here now. The customer can use the same code at other branches for the rest.'
+        : 'Goods are ready to collect at your warehouse(s). Partial collection is fine — same code for the balance later.'
+      : elsewhere.length
+        ? 'Nothing is reserved in your warehouses. Direct the customer to the branch below, or ask a supervisor to reallocate stock here.'
+        : 'Nothing is reserved yet (backordered). Allocate stock or wait for stock before collecting.'
+  });
+}

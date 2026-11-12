@@ -3,6 +3,7 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, nextDocNumber, roundMoney, shortId, toDec } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
+import { isWalkInCustomer } from './customer.service.js';
 
 type Tx = Prisma.TransactionClient;
 
@@ -85,6 +86,25 @@ export async function applyPaymentInTx(
     throw httpError(400, 'One or more invoices are not open for this customer');
   }
 
+  const customerRow = await tx.customer.findFirst({
+    where: { id: input.customerId, businessId: user.businessId },
+    select: { customerType: true, code: true }
+  });
+  let walkInSalesRepId: string | null = null;
+  if (isWalkInCustomer(customerRow)) {
+    const repIds = [...new Set(invoices.map((i) => i.salesRepId).filter(Boolean))] as string[];
+    if (!repIds.length) {
+      throw httpError(400, 'Walk-in invoices must have a sales representative before payment');
+    }
+    if (repIds.length > 1) {
+      throw httpError(
+        400,
+        'Cannot settle walk-in invoices for different sales representatives in one payment'
+      );
+    }
+    walkInSalesRepId = repIds[0];
+  }
+
   type Split = { invoiceId: string; branchId: string; ar: number; deposit: number; total: number };
   const splits: Split[] = [];
   for (const inv of invoices) {
@@ -122,6 +142,7 @@ export async function applyPaymentInTx(
     source_type: 'customer_payment',
     source_id: paymentId,
     customer_id: input.customerId,
+    ...(walkInSalesRepId ? { sales_representative_id: walkInSalesRepId } : {}),
     post: true,
     entry_date: input.paymentDate
   };

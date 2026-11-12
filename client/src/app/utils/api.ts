@@ -319,10 +319,11 @@ export const api = {
       request<any>('/purchases/payments', { method: 'POST', body: JSON.stringify(body) })
   },
   customers: {
-    list: (q?: string, status?: 'active' | 'inactive') => {
+    list: (q?: string, status?: 'active' | 'inactive', opts?: { includeWalkIn?: boolean }) => {
       const params = new URLSearchParams();
       if (q) params.set('q', q);
       if (status) params.set('status', status);
+      if (opts?.includeWalkIn) params.set('include_walk_in', '1');
       const qs = params.toString();
       return request<any[]>(`/customers${qs ? `?${qs}` : ''}`);
     },
@@ -353,10 +354,14 @@ export const api = {
       request<any>(`/customers/${id}/notes`, { method: 'POST', body: JSON.stringify(body) })
   },
   salesReps: {
-    list: (branchId?: string) =>
-      request<any[]>(
-        `/sales-reps${branchId ? `?branch_id=${encodeURIComponent(branchId)}` : ''}`
-      ),
+    list: (branchId?: string, opts?: { all?: boolean; withBalances?: boolean }) => {
+      const params = new URLSearchParams();
+      if (branchId) params.set('branch_id', branchId);
+      if (opts?.all) params.set('all', '1');
+      if (opts?.withBalances) params.set('with_balances', '1');
+      const qs = params.toString();
+      return request<any[]>(`/sales-reps${qs ? `?${qs}` : ''}`);
+    },
     me: () => request<any | null>('/sales-reps/me'),
     create: (body: Record<string, unknown>) =>
       request<any>('/sales-reps', { method: 'POST', body: JSON.stringify(body) }),
@@ -441,6 +446,11 @@ export const api = {
         `/sales/fulfilments/dashboard${qs ? `?${qs}` : ''}`
       );
     },
+    lookupPickupByCode: (code: string) =>
+      request<any>('/sales/pickups/by-code', {
+        method: 'POST',
+        body: JSON.stringify({ code })
+      }),
     fulfilment: (id: string) => request<any>(`/sales/fulfilments/${id}`),
     startPicking: (body: { invoice_id: string; warehouse_id: string; notes?: string }) =>
       request<any>('/sales/fulfilments/picking', { method: 'POST', body: JSON.stringify(body) }),

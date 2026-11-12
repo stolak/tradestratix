@@ -9,6 +9,31 @@ import * as branchAccess from './branch-access.service.js';
 
 type PurchaseFilter = { branchId?: string | null; from?: string | null; to?: string | null };
 
+/** System walk-in / anonymous cash customer — not editable in the directory; sales require a sales rep. */
+export function isWalkInCustomer(c: { customerType?: string | null; code?: string | null } | null | undefined) {
+  if (!c) return false;
+  return (
+    String(c.customerType || '').toLowerCase() === 'walk_in' ||
+    String(c.code || '').toUpperCase() === 'WALK-IN'
+  );
+}
+
+const WALK_IN_EXCLUDE = {
+  AND: [
+    { customerType: { not: 'walk_in' } },
+    { OR: [{ code: null }, { code: { not: 'WALK-IN' } }] }
+  ]
+};
+
+function assertMutableCustomer(c: { customerType?: string | null; code?: string | null; name?: string | null }) {
+  if (isWalkInCustomer(c)) {
+    throw httpError(
+      400,
+      'Walk-in is a system customer — it cannot be created, edited or deleted. Use it only on sales attributed to a sales representative.'
+    );
+  }
+}
+
 /** `YYYY-MM-DD` bounds; `to` is inclusive of the whole day. */
 function invoiceDateRange(from?: string | null, to?: string | null) {
   const range: { gte?: Date; lt?: Date } = {};
@@ -57,6 +82,7 @@ export async function customerBalances(
     prisma.customer.findMany({
       where: {
         businessId: user.businessId,
+        ...WALK_IN_EXCLUDE,
         ...(filter.q
           ? {
               OR: [
@@ -276,10 +302,16 @@ async function assertCanSetCredit(user: AuthUser) {
   }
 }
 
-export async function listCustomers(businessId: string, q?: string, status?: string) {
+export async function listCustomers(
+  businessId: string,
+  q?: string,
+  status?: string,
+  opts?: { includeWalkIn?: boolean }
+) {
   const rows = await prisma.customer.findMany({
     where: {
       businessId,
+      ...(opts?.includeWalkIn ? {} : WALK_IN_EXCLUDE),
       ...(status && CUSTOMER_STATUSES.includes(status) ? { status } : {}),
       ...(q
         ? {
@@ -324,6 +356,12 @@ export async function getCustomer(businessId: string, id: string) {
 
 export async function createCustomer(user: AuthUser, body: Record<string, any>) {
   const name = requireString(body.name, 'name');
+  const code = body.code ? String(body.code).trim() : null;
+  const customerType = String(body.customer_type || body.customerType || 'retail');
+  assertMutableCustomer({ customerType, code, name });
+  if (String(code || '').toUpperCase() === 'WALK-IN') {
+    throw httpError(400, 'WALK-IN is a reserved system customer code');
+  }
   const rawLimit = body.credit_limit ?? body.creditLimit;
   const rawDiscount = body.discount_percent ?? body.discountPercent;
   const creditLimit = parseCreditLimit(rawLimit);
@@ -336,7 +374,7 @@ export async function createCustomer(user: AuthUser, body: Record<string, any>) 
         id: shortId('cus'),
         businessId: user.businessId,
         name,
-        code: body.code ? String(body.code).trim() : null,
+        code,
         contactPerson: body.contact_person || body.contactPerson || null,
         email: body.email || null,
         phone: body.phone || null,
@@ -348,7 +386,7 @@ export async function createCustomer(user: AuthUser, body: Record<string, any>) 
         paymentTermsDays: Number(body.payment_terms_days ?? body.paymentTermsDays ?? 0),
         creditLimit,
         discountPercent,
-        customerType: body.customer_type || body.customerType || 'retail',
+        customerType,
         notes: body.notes || null,
         status: 'active',
         createdById: user.id
@@ -372,6 +410,14 @@ export async function createCustomer(user: AuthUser, body: Record<string, any>) 
 export async function updateCustomer(user: AuthUser, id: string, body: Record<string, any>) {
   const existing = await prisma.customer.findFirst({ where: { id, businessId: user.businessId } });
   if (!existing) throw httpError(404, 'Customer not found');
+  assertMutableCustomer(existing);
+  if (
+    body.customer_type === 'walk_in' ||
+    body.customerType === 'walk_in' ||
+    String(body.code || '').toUpperCase() === 'WALK-IN'
+  ) {
+    throw httpError(400, 'Cannot convert a customer to the system Walk-in account');
+  }
 
   const data: Record<string, unknown> = { updatedById: user.id };
   const map: Record<string, string> = {
@@ -443,6 +489,7 @@ export async function setCustomerStatus(user: AuthUser, id: string, status: stri
   if (!CUSTOMER_STATUSES.includes(status)) throw httpError(400, 'status must be active or inactive');
   const existing = await prisma.customer.findFirst({ where: { id, businessId: user.businessId } });
   if (!existing) throw httpError(404, 'Customer not found');
+  assertMutableCustomer(existing);
   if (existing.status === status) return serialize(existing);
 
   const updated = await prisma.customer.update({
@@ -468,6 +515,7 @@ export async function deleteCustomer(user: AuthUser, id: string) {
     }
   });
   if (!existing) throw httpError(404, 'Customer not found');
+  assertMutableCustomer(existing);
   const c = existing._count;
   const used = c.invoices + c.payments + c.deliveries + c.journalEntries;
   if (used > 0) {

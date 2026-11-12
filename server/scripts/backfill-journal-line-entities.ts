@@ -115,6 +115,47 @@ async function main() {
       });
     }
 
+    // Walk-in AR lines also need sales_representative_id for per-rep accountability.
+    for (const biz of businesses) {
+      const arIds = await accountIdsFor(prisma, biz.id, CUSTOMER_KEYS);
+      if (!arIds.length) continue;
+      const placeholders = arIds.map(() => '?').join(',');
+      if (dry) {
+        const rows = await prisma.$queryRawUnsafe<Array<{ c: bigint }>>(
+          `SELECT COUNT(*) AS c
+           FROM journal_lines jl
+           JOIN journal_entries je ON je.id = jl.journal_entry_id
+           JOIN customers c ON c.id = je.customer_id
+           WHERE je.business_id = ?
+             AND je.sales_representative_id IS NOT NULL
+             AND jl.sales_representative_id IS NULL
+             AND jl.account_id IN (${placeholders})
+             AND (c.customer_type = 'walk_in' OR UPPER(c.code) = 'WALK-IN')`,
+          biz.id,
+          ...arIds
+        );
+        const n = Number(rows[0]?.c || 0);
+        updated += n;
+        console.log(`  ${biz.name}: would stamp ${n} walk-in AR sales-rep line(s)`);
+      } else {
+        const result = await prisma.$executeRawUnsafe(
+          `UPDATE journal_lines jl
+           JOIN journal_entries je ON je.id = jl.journal_entry_id
+           JOIN customers c ON c.id = je.customer_id
+           SET jl.sales_representative_id = je.sales_representative_id
+           WHERE je.business_id = ?
+             AND je.sales_representative_id IS NOT NULL
+             AND jl.sales_representative_id IS NULL
+             AND jl.account_id IN (${placeholders})
+             AND (c.customer_type = 'walk_in' OR UPPER(c.code) = 'WALK-IN')`,
+          biz.id,
+          ...arIds
+        );
+        updated += Number(result || 0);
+        console.log(`  ${biz.name}: stamped ${result} walk-in AR sales-rep line(s)`);
+      }
+    }
+
     console.log(
       dry
         ? `\nDry run: ${updated} line(s) would be stamped.`

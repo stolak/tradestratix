@@ -20,7 +20,7 @@ export const SalesRepsPage: React.FC = () => {
   const load = async () => {
     try {
       const [reps, comm, emps] = await Promise.all([
-        api.salesReps.list(),
+        api.salesReps.list(undefined, { all: true, withBalances: true }),
         api.salesReps.commissions(),
         api.hr.employees('active')
       ]);
@@ -144,7 +144,8 @@ export const SalesRepsPage: React.FC = () => {
           Sales reps
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Promote an existing employee. Edit commission, disable anytime; remove only with no activity.
+          Promote an existing employee. Walk-in sales are attributed to the logged-in rep and count toward their
+          balance. Edit commission, disable anytime; remove only with no activity.
         </p>
       </header>
 
@@ -235,6 +236,7 @@ export const SalesRepsPage: React.FC = () => {
                 <th>Home branch</th>
                 <th>Operates in</th>
                 <th>Commission %</th>
+                <th className="num">Balance</th>
                 <th>Status</th>
                 <th />
               </tr>
@@ -243,6 +245,7 @@ export const SalesRepsPage: React.FC = () => {
               {visible.map((r, index) => {
                 const active = r.status === 'active';
                 const homeCode = r.branch?.code || r.employee?.branch?.code;
+                const balance = Number(r.balance || 0);
                 const operating = (r.operating_branches ||
                   r.employee?.user?.user_branches
                     ?.map((ub: any) => ub.branch)
@@ -292,6 +295,19 @@ export const SalesRepsPage: React.FC = () => {
                       )}
                     </td>
                     <td>{Number(r.commission_percent)}%</td>
+                    <td
+                      className="num"
+                      style={
+                        Math.abs(balance) > 0.005
+                          ? { fontWeight: 600, color: balance > 0 ? 'var(--danger, #b42318)' : 'var(--ok, #027a48)' }
+                          : undefined
+                      }
+                    >
+                      {balance.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2
+                      })}
+                    </td>
                     <td>
                       <span
                         style={{

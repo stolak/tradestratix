@@ -28,7 +28,10 @@ Rules:
 
 - Fields are nullable; rent, depreciation, and bank charges typically leave them null.
 - Populate only entities that legitimately belong to the transaction.
-- Walk-in / anonymous cash sales should use the business Walk-in customer account when configured, and still set `salesRepresentativeId` when a rep generated the sale.
+- Walk-in (`WALK-IN` / `customer_type = walk_in`) is a **system customer**: hidden from the Customers directory,
+  not creatable/editable/deletable. Only a logged-in **sales representative** may sell to it; the invoice and
+  every AR journal line must carry that `salesRepresentativeId` (customer + rep both stamped on AR) so each
+  rep’s balance reflects walk-in sales they must account for.
 - Reversal journals copy entity references from the original entry.
 - Branch attribution (`branchId`) is independent of partner/rep attribution.
 - Referenced partners must belong to the same business; deletion of partners with journal history is restricted (`onDelete: Restrict`).
