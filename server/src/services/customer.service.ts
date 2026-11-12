@@ -92,10 +92,12 @@ export async function customerBalances(
     })
   ]);
   const purchaseMap = new Map(purchases.map((p) => [p.customerId, p]));
+  const openOrders = await openOrderExposure(prisma, user.businessId, customers.map((c) => c.id));
 
   const rows = customers.map((c) => {
     const p = purchaseMap.get(c.id);
     const balance = balances.get(c.id) ?? 0;
+    const open = openOrders.get(c.id) ?? 0;
     const limit = c.creditLimit == null ? null : Number(c.creditLimit);
     return {
       id: c.id,
@@ -105,7 +107,8 @@ export async function customerBalances(
       status: c.status,
       phone: c.phone,
       credit_limit: limit,
-      available_credit: limit == null ? null : roundMoney(limit - balance),
+      available_credit: limit == null ? null : roundMoney(limit - balance - open),
+      open_order_value: open,
       balance,
       purchases_total: roundMoney(Number(p?._sum.totalAmount || 0)),
       purchases_count: p?._count._all ?? 0,
@@ -193,12 +196,73 @@ export async function getCustomerOutstanding(businessId: string, customerId: str
   return map.get(customerId) ?? 0;
 }
 
-function withCredit<T extends { id: string; creditLimit: unknown }>(row: T, outstanding: number) {
+/**
+ * Confirmed order value not yet handed over and not covered by a deposit. It counts against the credit
+ * limit alongside the recognised receivable.
+ */
+export async function openOrderExposure(
+  client: Prisma.TransactionClient | typeof prisma,
+  businessId: string,
+  customerIds: string[],
+  excludeInvoiceId?: string
+) {
+  const rows = await client.salesInvoice.findMany({
+    where: {
+      businessId,
+      customerId: { in: customerIds },
+      status: 'posted',
+      recognitionPolicy: 'at_fulfilment',
+      fulfilmentStatus: { not: 'fulfilled' },
+      ...(excludeInvoiceId ? { id: { not: excludeInvoiceId } } : {})
+    },
+    select: {
+      customerId: true,
+      totalAmount: true,
+      cancelledAmount: true,
+      recognisedAmount: true,
+      depositHeld: true
+    }
+  });
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    const open = Math.max(
+      0,
+      Number(r.totalAmount) - Number(r.cancelledAmount) - Number(r.recognisedAmount) - Number(r.depositHeld)
+    );
+    map.set(r.customerId, roundMoney((map.get(r.customerId) || 0) + open));
+  }
+  return map;
+}
+
+export async function getCustomerExposure(
+  client: Prisma.TransactionClient | typeof prisma,
+  businessId: string,
+  customerId: string,
+  excludeInvoiceId?: string
+) {
+  const [ar, open] = await Promise.all([
+    client.salesInvoice.aggregate({
+      where: { businessId, customerId, status: 'posted', balance: { gt: 0 } },
+      _sum: { balance: true }
+    }),
+    openOrderExposure(client, businessId, [customerId], excludeInvoiceId)
+  ]);
+  const receivable = roundMoney(Number(ar._sum.balance || 0));
+  const openOrders = open.get(customerId) ?? 0;
+  return { receivable, openOrders, total: roundMoney(receivable + openOrders) };
+}
+
+function withCredit<T extends { id: string; creditLimit: unknown }>(
+  row: T,
+  outstanding: number,
+  openOrders = 0
+) {
   const limit = row.creditLimit == null ? null : Number(row.creditLimit);
   return {
     ...row,
     outstandingBalance: outstanding,
-    availableCredit: limit == null ? null : roundMoney(limit - outstanding)
+    openOrderValue: openOrders,
+    availableCredit: limit == null ? null : roundMoney(limit - outstanding - openOrders)
   };
 }
 
@@ -248,8 +312,13 @@ export async function listCustomers(businessId: string, q?: string, status?: str
       }
     }
   });
-  const outstanding = await outstandingByCustomer(businessId);
-  return serialize(rows.map((r) => withCredit(r, outstanding.get(r.id) ?? 0)));
+  const [outstanding, open] = await Promise.all([
+    outstandingByCustomer(businessId),
+    openOrderExposure(prisma, businessId, rows.map((r) => r.id))
+  ]);
+  return serialize(
+    rows.map((r) => withCredit(r, outstanding.get(r.id) ?? 0, open.get(r.id) ?? 0))
+  );
 }
 
 export async function getCustomer(businessId: string, id: string) {
@@ -262,7 +331,8 @@ export async function getCustomer(businessId: string, id: string) {
     }
   });
   if (!row) throw httpError(404, 'Customer not found');
-  return serialize(withCredit(row, await getCustomerOutstanding(businessId, id)));
+  const exposure = await getCustomerExposure(prisma, businessId, id);
+  return serialize(withCredit(row, exposure.receivable, exposure.openOrders));
 }
 
 export async function createCustomer(user: AuthUser, body: Record<string, any>) {
@@ -374,7 +444,8 @@ export async function updateCustomer(user: AuthUser, id: string, body: Record<st
       entityId: id,
       summary: `Updated customer ${updated.name}${changes.length ? ` (${changes.join('; ')})` : ''}`
     });
-    return serialize(withCredit(updated, await getCustomerOutstanding(user.businessId, id)));
+    const exposure = await getCustomerExposure(prisma, user.businessId, id);
+    return serialize(withCredit(updated, exposure.receivable, exposure.openOrders));
   } catch (err: any) {
     if (err?.code === 'P2002') throw httpError(409, 'Customer code already exists');
     throw err;

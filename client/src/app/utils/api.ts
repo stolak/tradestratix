@@ -351,12 +351,47 @@ export const api = {
     createInvoice: (body: Record<string, unknown>) =>
       request<any>('/sales/invoices', { method: 'POST', body: JSON.stringify(body) }),
     postInvoice: (id: string, body: Record<string, unknown> = {}) =>
-      request<any>(`/sales/invoices/${id}/post`, {
+      request<any>(`/sales/invoices/${id}/confirm`, {
         method: 'POST',
         body: JSON.stringify(body)
       }),
+    cancelOrder: (id: string, body: { reason: string; lines?: { invoice_item_id: string; quantity: number }[] }) =>
+      request<any>(`/sales/invoices/${id}/cancel`, { method: 'POST', body: JSON.stringify(body) }),
+    reallocateOrder: (
+      id: string,
+      body: { from_warehouse_id: string; to_warehouse_id?: string; invoice_item_id?: string; reason: string; allow_backorder?: boolean }
+    ) => request<any>(`/sales/invoices/${id}/reallocate`, { method: 'POST', body: JSON.stringify(body) }),
+    allocateBackorders: (id: string) =>
+      request<any>(`/sales/invoices/${id}/allocate`, { method: 'POST', body: '{}' }),
+    allocationPreview: (body: Record<string, unknown>) =>
+      request<{ lines: any[] }>('/sales/allocation-preview', { method: 'POST', body: JSON.stringify(body) }),
     posSale: (body: Record<string, unknown>) =>
       request<any>('/sales/pos', { method: 'POST', body: JSON.stringify(body) }),
+    fulfilmentOptions: (productIds: string[] = []) =>
+      request<{
+        branches: { id: string; name: string; code: string }[];
+        warehouses: any[];
+        availability: Record<string, Record<string, number>>;
+      }>(
+        `/sales/fulfilment-options${
+          productIds.length ? `?product_ids=${encodeURIComponent(productIds.join(','))}` : ''
+        }`
+      ),
+    pendingPickups: (filter: { warehouse_id?: string; q?: string } = {}) => {
+      const params = new URLSearchParams();
+      if (filter.warehouse_id) params.set('warehouse_id', filter.warehouse_id);
+      if (filter.q) params.set('q', filter.q);
+      const qs = params.toString();
+      return request<{ warehouses: any[]; rows: any[] }>(
+        `/sales/fulfilments/pending${qs ? `?${qs}` : ''}`
+      );
+    },
+    fulfilments: (warehouseId?: string) =>
+      request<any[]>(
+        `/sales/fulfilments${warehouseId ? `?warehouse_id=${encodeURIComponent(warehouseId)}` : ''}`
+      ),
+    fulfil: (body: Record<string, unknown>) =>
+      request<any>('/sales/fulfilments', { method: 'POST', body: JSON.stringify(body) }),
     payments: (customerId?: string) =>
       request<any[]>(
         `/sales/payments${customerId ? `?customer_id=${encodeURIComponent(customerId)}` : ''}`

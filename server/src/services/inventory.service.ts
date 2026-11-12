@@ -90,7 +90,7 @@ async function findOrCreateLot(
 }
 
 /** FEFO when expiry tracked; otherwise FIFO by createdAt. Available = on hand − reserved (in-transit excluded). */
-async function allocateFefo(
+export async function allocateFefo(
   client: DbClient,
   variantId: string,
   warehouseId: string,

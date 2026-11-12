@@ -2,6 +2,7 @@ export const ROUTES = {
   DASHBOARD: 'dashboard',
   SALES: 'sales',
   POS: 'pos',
+  PICKUPS: 'pickups',
   PURCHASES: 'purchases',
   PRODUCTS: 'products',
   BRANCH_PRICING: 'branch_pricing',

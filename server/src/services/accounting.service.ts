@@ -194,7 +194,9 @@ export async function createJournal(
     post?: boolean;
     lines: JournalLineInput[];
   },
-  outerTx?: Prisma.TransactionClient
+  outerTx?: Prisma.TransactionClient,
+  /** System postings (e.g. cross-branch fulfilment) may target a branch the operator is not a member of. */
+  opts?: { trustedBranch?: boolean }
 ) {
   const lines = body.lines || [];
   if (lines.length < 2) throw httpError(400, 'Journal requires at least two lines');
@@ -278,10 +280,11 @@ export async function createJournal(
 
   const shouldPost = body.post !== false;
   const entryDate = body.entry_date ? new Date(body.entry_date) : new Date();
-  const branchId = await branchAccess.resolveWriteBranchId(
-    user,
-    body.branch_id || body.branchId || user.activeBranchId
-  );
+  const requestedBranchId = body.branch_id || body.branchId || user.activeBranchId;
+  const branchId =
+    opts?.trustedBranch && requestedBranchId
+      ? (await branchAccess.assertBranchActive(user.businessId, requestedBranchId)).id
+      : await branchAccess.resolveWriteBranchId(user, requestedBranchId);
 
   const run = async (tx: Prisma.TransactionClient) => {
     const entryNumber = await nextEntryNumber(user.businessId, tx);

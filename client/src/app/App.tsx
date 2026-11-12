@@ -20,6 +20,7 @@ import { PurchasesPage } from './pages/PurchasesPage';
 import { CustomersPage } from './pages/CustomersPage';
 import { SalesPage } from './pages/SalesPage';
 import { PosPage } from './pages/PosPage';
+import { PickupsPage } from './pages/PickupsPage';
 import { SalesRepsPage } from './pages/SalesRepsPage';
 import { BankingPage } from './pages/BankingPage';
 import { ExpensesPage } from './pages/ExpensesPage';
@@ -105,6 +106,9 @@ export const App: React.FC = () => {
       break;
     case ROUTES.POS:
       content = <PosPage />;
+      break;
+    case ROUTES.PICKUPS:
+      content = <PickupsPage />;
       break;
     case ROUTES.PURCHASES:
       content = <PurchasesPage />;

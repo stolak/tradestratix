@@ -8,6 +8,14 @@
 6. Period locking blocks posts into locked periods / closed financial years (when configured).
 7. Inventory valuation methods (FIFO / WAC / specific ID) are business-configured and feed COGS consistently.
 
+## Sales revenue and cross-branch postings
+
+- Sales orders recognise revenue, receivable, tax and cost of goods **per hand-over**, not at confirmation.
+  Money received before hand-over is a customer deposit (liability). Legacy invoices keep `on_posting`.
+- A journal belongs to one branch. Effects in several branches use **linked journals** through
+  `inter_branch_clearing`, which nets to zero per completed cycle.
+- Details and journal tables: `multi-branch-fulfilment.md`.
+
 ## Entity attribution on JournalEntry
 
 Journal headers may optionally reference:

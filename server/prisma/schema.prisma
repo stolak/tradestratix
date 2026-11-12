@@ -104,6 +104,8 @@ model Business {
   productSellingPrices   ProductSellingPrice[]
   branchSellingPrices    BranchSellingPrice[]
   branchProductDiscounts BranchProductDiscount[]
+  salesReservations      SalesReservation[]
+  salesFulfilments       SalesFulfilment[]
   suppliers              Supplier[]
   purchaseOrders         PurchaseOrder[]
   goodsReceiptNotes      GoodsReceiptNote[]
@@ -183,7 +185,9 @@ model Branch {
   userBranches     UserBranch[]
   usersDefault     User[]             @relation("UserDefaultBranch")
   journalEntries   JournalEntry[]
-  salesInvoices    SalesInvoice[]
+  salesInvoices    SalesInvoice[]     @relation("InvoiceRevenueBranch")
+  salesInvoicesSold SalesInvoice[]    @relation("InvoiceSellingBranch")
+  salesFulfilments SalesFulfilment[]
   fixedAssets      FixedAsset[]
   employees        Employee[]
   deliveryOrders   DeliveryOrder[]
@@ -238,6 +242,9 @@ model Warehouse {
   salesInvoices  SalesInvoice[]
   deliveryOrders DeliveryOrder[]
   userWarehouses UserWarehouse[]
+  fulfilmentLines SalesInvoiceItem[]
+  salesReservations SalesReservation[]
+  salesFulfilments SalesFulfilment[]
 
   @@unique([businessId, code])
   @@index([branchId])
@@ -876,6 +883,7 @@ model StockLot {
   warehouse         Warehouse           @relation(fields: [warehouseId], references: [id])
   movements         StockMovement[]
   transferItems     StockTransferItem[]
+  salesReservations SalesReservation[]
 
   @@unique([businessId, lotKey])
   @@index([variantId, warehouseId])
@@ -1291,14 +1299,37 @@ model SalesInvoice {
   id                 String    @id
   businessId         String    @map("business_id")
   customerId         String    @map("customer_id")
+  /// Default fulfilment warehouse for lines that do not name their own
   warehouseId        String    @map("warehouse_id")
+  /// Revenue branch: AR, revenue and COGS are booked here
   branchId           String?   @map("branch_id")
+  /// Branch where the sale was made (pricing, rep, discounts); defaults to branchId
+  sellingBranchId    String?   @map("selling_branch_id")
   salesRepId         String?   @map("sales_rep_id")
   invoiceNumber      String    @map("invoice_number")
   /// sales | pos
   channel            String    @default("sales")
   /// draft | posted | void
   status             String    @default("draft")
+  /// immediate (handed over at posting) | pickup (collected later from the line warehouses)
+  fulfilmentMode     String    @default("immediate") @map("fulfilment_mode")
+  /// pending | partial | fulfilled
+  fulfilmentStatus   String    @default("fulfilled") @map("fulfilment_status")
+  /// at_fulfilment: revenue/AR per hand-over | on_posting: legacy, revenue booked when posted
+  recognitionPolicy  String    @default("at_fulfilment") @map("recognition_policy")
+  /// Revenue + tax recognised so far (the receivable raised)
+  recognisedAmount   Decimal   @default(0) @map("recognised_amount") @db.Decimal(18, 4)
+  /// Payments received but not yet applied to recognised value (customer deposit liability)
+  depositHeld        Decimal   @default(0) @map("deposit_held") @db.Decimal(18, 4)
+  /// Order value released by cancellation (never recognised)
+  cancelledAmount    Decimal   @default(0) @map("cancelled_amount") @db.Decimal(18, 4)
+  reservationExpiresAt DateTime? @map("reservation_expires_at")
+  cancelledAt        DateTime? @map("cancelled_at")
+  cancelledById      String?   @map("cancelled_by_id")
+  cancelReason       String?   @map("cancel_reason") @db.Text
+  /// Credit limit override recorded at confirmation
+  creditOverrideById String?   @map("credit_override_by_id")
+  creditOverrideReason String? @map("credit_override_reason") @db.Text
   /// open | partial | paid | void
   paymentStatus      String    @default("open") @map("payment_status")
   invoiceDate        DateTime  @default(now()) @map("invoice_date")
@@ -1323,12 +1354,14 @@ model SalesInvoice {
   business    Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer    Customer                    @relation(fields: [customerId], references: [id])
   warehouse   Warehouse                   @relation(fields: [warehouseId], references: [id])
-  branch      Branch?                     @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  branch      Branch?                     @relation("InvoiceRevenueBranch", fields: [branchId], references: [id], onDelete: SetNull)
+  sellingBranch Branch?                   @relation("InvoiceSellingBranch", fields: [sellingBranchId], references: [id], onDelete: SetNull)
   salesRep    SalesRep?                   @relation(fields: [salesRepId], references: [id], onDelete: SetNull)
   items       SalesInvoiceItem[]
   allocations CustomerPaymentAllocation[]
   commissions SalesCommission[]
   deliveries  DeliveryOrder[]
+  fulfilments SalesFulfilment[]
 
   @@unique([businessId, invoiceNumber])
   @@index([businessId, status])
@@ -1352,14 +1385,122 @@ model SalesInvoiceItem {
   priceLevel      String? @map("price_level")
   stockMovementId String? @map("stock_movement_id")
   cogsAmount      Decimal @default(0) @map("cogs_amount") @db.Decimal(18, 4)
+  /// Warehouse the goods are picked from (null = invoice warehouse)
+  fulfilmentWarehouseId String?  @map("fulfilment_warehouse_id")
+  /// Quantity handed over so far, in the line UoM
+  fulfilledQuantity     Decimal  @default(0) @map("fulfilled_quantity") @db.Decimal(18, 4)
+  /// Ordered quantity in the product base UoM (set at confirmation)
+  baseQuantity          Decimal? @map("base_quantity") @db.Decimal(18, 4)
+  /// Quantity cancelled (never to be fulfilled), in the line UoM
+  cancelledQuantity     Decimal  @default(0) @map("cancelled_quantity") @db.Decimal(18, 4)
+  /// Revenue + tax recognised for this line so far
+  recognisedAmount      Decimal  @default(0) @map("recognised_amount") @db.Decimal(18, 4)
+  /// Manual allocation chosen on the draft: [{ warehouse_id, quantity }] in the line UoM
+  allocationPlan        Json?    @map("allocation_plan")
 
   invoice SalesInvoice    @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   product Product         @relation(fields: [productId], references: [id])
   variant ProductVariant? @relation(fields: [variantId], references: [id])
   uom     UnitOfMeasure?  @relation(fields: [uomId], references: [id])
+  fulfilmentWarehouse Warehouse? @relation(fields: [fulfilmentWarehouseId], references: [id])
+  reservations        SalesReservation[]
+  fulfilmentItems     SalesFulfilmentItem[]
 
   @@index([invoiceId])
+  @@index([fulfilmentWarehouseId])
   @@map("sales_invoice_items")
+}
+
+/// Stock lots committed to a posted invoice line until it is collected.
+model SalesReservation {
+  id                String   @id
+  businessId        String   @map("business_id")
+  invoiceItemId     String   @map("invoice_item_id")
+  lotId             String   @map("lot_id")
+  warehouseId       String   @map("warehouse_id")
+  /// Base-UoM quantity reserved
+  quantity          Decimal  @db.Decimal(18, 4)
+  fulfilledQuantity Decimal  @default(0) @map("fulfilled_quantity") @db.Decimal(18, 4)
+  releasedQuantity  Decimal  @default(0) @map("released_quantity") @db.Decimal(18, 4)
+  /// active | fulfilled | released
+  status            String   @default("active")
+  /// auto | manual | reallocation | backorder
+  method            String   @default("auto")
+  branchId          String?  @map("branch_id")
+  createdById       String?  @map("created_by_id")
+  releasedById      String?  @map("released_by_id")
+  releasedAt        DateTime? @map("released_at")
+  /// cancelled | expired | reallocated | discrepancy | manual
+  releaseReason     String?  @map("release_reason") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  business    Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoiceItem SalesInvoiceItem @relation(fields: [invoiceItemId], references: [id], onDelete: Cascade)
+  lot         StockLot         @relation(fields: [lotId], references: [id])
+  warehouse   Warehouse        @relation(fields: [warehouseId], references: [id])
+
+  @@index([invoiceItemId])
+  @@index([lotId, status])
+  @@index([warehouseId, status])
+  @@map("sales_reservations")
+}
+
+/// A hand-over of invoiced goods from one warehouse (pickup or immediate release).
+model SalesFulfilment {
+  id                String    @id
+  businessId        String    @map("business_id")
+  fulfilmentNumber  String    @map("fulfilment_number")
+  invoiceId         String    @map("invoice_id")
+  warehouseId       String    @map("warehouse_id")
+  /// Branch of the fulfilling warehouse
+  branchId          String    @map("branch_id")
+  collectedBy       String?   @map("collected_by")
+  collectorPhone    String?   @map("collector_phone")
+  idReference       String?   @map("id_reference")
+  notes             String?   @db.Text
+  totalCost         Decimal   @default(0) @map("total_cost") @db.Decimal(18, 4)
+  /// Revenue + tax recognised by this hand-over
+  recognisedAmount  Decimal   @default(0) @map("recognised_amount") @db.Decimal(18, 4)
+  /// Deposit applied against the receivable raised by this hand-over
+  depositApplied    Decimal   @default(0) @map("deposit_applied") @db.Decimal(18, 4)
+  /// Revenue / AR journal in the revenue branch
+  revenueJournalEntryId    String? @map("revenue_journal_entry_id")
+  /// COGS journal in the revenue branch
+  cogsJournalEntryId       String? @map("cogs_journal_entry_id")
+  /// Inventory relief journal in the fulfilling branch (only when it differs from the revenue branch)
+  inventoryJournalEntryId  String? @map("inventory_journal_entry_id")
+  fulfilledById     String?   @map("fulfilled_by_id")
+  fulfilledAt       DateTime  @default(now()) @map("fulfilled_at")
+  createdAt         DateTime  @default(now()) @map("created_at")
+
+  business  Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  invoice   SalesInvoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  warehouse Warehouse             @relation(fields: [warehouseId], references: [id])
+  branch    Branch                @relation(fields: [branchId], references: [id])
+  items     SalesFulfilmentItem[]
+
+  @@unique([businessId, fulfilmentNumber])
+  @@index([invoiceId])
+  @@map("sales_fulfilments")
+}
+
+model SalesFulfilmentItem {
+  id            String  @id
+  fulfilmentId  String  @map("fulfilment_id")
+  invoiceItemId String  @map("invoice_item_id")
+  /// Quantity in the invoice line UoM
+  quantity      Decimal @db.Decimal(18, 4)
+  baseQuantity  Decimal @map("base_quantity") @db.Decimal(18, 4)
+  cost          Decimal @default(0) @db.Decimal(18, 4)
+  recognisedAmount Decimal @default(0) @map("recognised_amount") @db.Decimal(18, 4)
+
+  fulfilment  SalesFulfilment  @relation(fields: [fulfilmentId], references: [id], onDelete: Cascade)
+  invoiceItem SalesInvoiceItem @relation(fields: [invoiceItemId], references: [id], onDelete: Cascade)
+
+  @@index([fulfilmentId])
+  @@index([invoiceItemId])
+  @@map("sales_fulfilment_items")
 }
 
 model CustomerPayment {
@@ -1376,6 +1517,9 @@ model CustomerPayment {
   reference      String?
   notes          String?  @db.Text
   journalEntryId String?  @map("journal_entry_id")
+  /// Part of the receipt not allocated to any invoice (customer credit in unapplied receipts)
+  unappliedAmount Decimal @default(0) @map("unapplied_amount") @db.Decimal(18, 4)
+  idempotencyKey String?  @map("idempotency_key")
   createdById    String?  @map("created_by_id")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
@@ -1387,6 +1531,7 @@ model CustomerPayment {
   allocations CustomerPaymentAllocation[]
 
   @@unique([businessId, paymentNumber])
+  @@unique([businessId, idempotencyKey])
   @@index([businessId, customerId])
   @@index([branchId])
   @@map("customer_payments")
@@ -1397,6 +1542,13 @@ model CustomerPaymentAllocation {
   paymentId String  @map("payment_id")
   invoiceId String  @map("invoice_id")
   amount    Decimal @db.Decimal(18, 4)
+  /// Portion that settled the recognised receivable when allocated
+  arAmount      Decimal @default(0) @map("ar_amount") @db.Decimal(18, 4)
+  /// Portion held as a customer deposit against unrecognised order value
+  depositAmount Decimal @default(0) @map("deposit_amount") @db.Decimal(18, 4)
+  /// Deposit later returned to unapplied customer credit (e.g. order cancelled)
+  releasedAmount Decimal @default(0) @map("released_amount") @db.Decimal(18, 4)
+  createdAt DateTime @default(now()) @map("created_at")
 
   payment CustomerPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
   invoice SalesInvoice    @relation(fields: [invoiceId], references: [id])

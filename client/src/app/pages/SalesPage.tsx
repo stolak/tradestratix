@@ -27,7 +27,51 @@ type LineItem = {
   uom_id: string;
   quantity: string;
   unit_price: string;
+  /** Pickup warehouse; empty = invoice default warehouse */
+  warehouse_id: string;
+  /** Manual split across warehouses (line UoM); null = automatic allocation */
+  allocations?: { warehouse_id: string; quantity: string }[] | null;
 };
+
+type PreviewLine = {
+  key: string;
+  requested: number;
+  allocated: number;
+  shortage: number;
+  allocations: { warehouse_id: string; quantity: number; method: string }[];
+  stock: {
+    warehouse_id: string;
+    warehouse_code: string;
+    warehouse_name: string;
+    branch_id: string;
+    branch_name: string;
+    free: number;
+  }[];
+};
+
+type FulfilmentMode = 'immediate' | 'pickup';
+
+type FulfilmentOptions = {
+  branches: { id: string; name: string; code: string }[];
+  warehouses: { id: string; name: string; code: string; branch: { id: string; name: string; code: string } }[];
+  availability: Record<string, Record<string, number>>;
+};
+
+const FULFILMENT_LABELS: Record<string, string> = {
+  pending: 'To collect',
+  partial: 'Part collected',
+  fulfilled: 'Collected'
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  posted: 'Confirmed',
+  cancelled: 'Cancelled'
+};
+
+function qtyLabel(v: unknown) {
+  return Number(v || 0).toLocaleString(undefined, { maximumFractionDigits: 4 });
+}
 
 function isWalkInCustomer(c: any) {
   return (
@@ -91,6 +135,7 @@ function makeLine(product?: any): LineItem {
     key: newLineKey(),
     product_id: product?.id || '',
     quantity: '1',
+    warehouse_id: '',
     ...priceFieldsFromProduct(product)
   };
 }
@@ -106,7 +151,15 @@ export const SalesPage: React.FC = () => {
   const { activeBranchId, user, can } = useAuth();
   const canChangePrice = can('sales.change_price');
   const canPostInvoice = can('sales.post') || can('sales.approve');
+  const canChooseRevenueBranch = can('sales.revenue_branch');
   const [viewInvoiceId, setViewInvoiceId] = useState<string | null>(null);
+  const [fulfilmentMode, setFulfilmentMode] = useState<FulfilmentMode>('immediate');
+  const [revenueBranchId, setRevenueBranchId] = useState('');
+  const [fulfilOptions, setFulfilOptions] = useState<FulfilmentOptions>({
+    branches: [],
+    warehouses: [],
+    availability: {}
+  });
   const [mySalesRep, setMySalesRep] = useState<{ id: string } | null>(
     () => (user?.sales_rep?.id ? { id: user.sales_rep.id } : null)
   );
@@ -155,10 +208,37 @@ export const SalesPage: React.FC = () => {
     () => selectableCustomers.map((c) => ({ value: c.id, label: c.name })),
     [selectableCustomers]
   );
-  const warehouseOptions = useMemo(
-    () => warehouses.map((w) => ({ value: w.id, label: `${w.code} — ${w.name}` })),
-    [warehouses]
+  const allWarehouseOptions = useMemo(
+    () =>
+      fulfilOptions.warehouses.map((w) => ({
+        value: w.id,
+        label: `${w.branch?.name} · ${w.code} — ${w.name}`
+      })),
+    [fulfilOptions.warehouses]
   );
+  const warehouseOptions = useMemo(
+    () =>
+      fulfilmentMode === 'pickup' && allWarehouseOptions.length
+        ? allWarehouseOptions
+        : warehouses.map((w) => ({ value: w.id, label: `${w.code} — ${w.name}` })),
+    [warehouses, fulfilmentMode, allWarehouseOptions]
+  );
+  const warehouseById = useMemo(
+    () => new Map(fulfilOptions.warehouses.map((w) => [w.id, w])),
+    [fulfilOptions.warehouses]
+  );
+  const lineProductKey = useMemo(
+    () => [...new Set(lines.map((l) => l.product_id).filter(Boolean))].sort().join(','),
+    [lines]
+  );
+  const freeStock = (productId: string, warehouseId: string) =>
+    fulfilOptions.availability[productId]?.[warehouseId] ?? 0;
+  const otherBranchPickup =
+    fulfilmentMode === 'pickup' &&
+    lines.some((l) => {
+      const wh = warehouseById.get(l.warehouse_id || form.warehouse_id);
+      return wh && wh.branch?.id !== activeBranchId;
+    });
   const salesRepOptions = useMemo(
     () =>
       reps.map((r) => ({
@@ -184,8 +264,11 @@ export const SalesPage: React.FC = () => {
     selectedCustomer?.credit_limit != null ? Number(selectedCustomer.credit_limit) : null;
   const customerAvailableCredit =
     customerCreditLimit != null
-      ? customerCreditLimit - Number(selectedCustomer?.outstanding_balance || 0)
+      ? selectedCustomer?.available_credit != null
+        ? Number(selectedCustomer.available_credit)
+        : customerCreditLimit - Number(selectedCustomer?.outstanding_balance || 0)
       : null;
+  const customerOpenOrders = Number(selectedCustomer?.open_order_value || 0);
   const overCredit = customerAvailableCredit != null && invoiceTotal > customerAvailableCredit;
 
   const updateLine = (key: string, patch: Partial<LineItem>) => {
@@ -196,9 +279,80 @@ export const SalesPage: React.FC = () => {
     const product = products.find((p) => p.id === productId);
     updateLine(key, {
       product_id: productId,
+      allocations: null,
       ...priceFieldsFromProduct(product)
     });
   };
+
+  const [preview, setPreview] = useState<Record<string, PreviewLine>>({});
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const previewBody = useMemo(() => {
+    const items = lines
+      .filter((l) => l.product_id && l.uom_id && Number(l.quantity) > 0)
+      .map((l) => ({
+        key: l.key,
+        product_id: l.product_id,
+        uom_id: l.uom_id,
+        quantity: Number(l.quantity),
+        warehouse_id: fulfilmentMode === 'pickup' && l.warehouse_id ? l.warehouse_id : undefined,
+        allocations:
+          fulfilmentMode === 'pickup' && l.allocations
+            ? l.allocations.map((a) => ({ warehouse_id: a.warehouse_id, quantity: Number(a.quantity) || 0 }))
+            : undefined
+      }));
+    return items.length
+      ? JSON.stringify({
+          branch_id: activeBranchId || undefined,
+          fulfilment_mode: fulfilmentMode,
+          warehouse_id: form.warehouse_id || undefined,
+          items
+        })
+      : '';
+  }, [lines, fulfilmentMode, form.warehouse_id, activeBranchId]);
+
+  useEffect(() => {
+    if (!previewBody) {
+      setPreview({});
+      setPreviewError(null);
+      return;
+    }
+    let cancelled = false;
+    const t = setTimeout(() => {
+      api.sales
+        .allocationPreview(JSON.parse(previewBody))
+        .then((res) => {
+          if (cancelled) return;
+          setPreview(Object.fromEntries((res.lines || []).map((l: PreviewLine) => [l.key, l])));
+          setPreviewError(null);
+        })
+        .catch((err: any) => {
+          if (!cancelled) setPreviewError(err.message || 'Could not plan stock allocation');
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [previewBody]);
+
+  const lineAllocated = (line: LineItem, p: PreviewLine, warehouseId: string) =>
+    line.allocations
+      ? line.allocations.find((a) => a.warehouse_id === warehouseId)?.quantity ?? ''
+      : String(p.allocations.find((a) => a.warehouse_id === warehouseId)?.quantity ?? '');
+
+  const setManualAllocation = (line: LineItem, p: PreviewLine, warehouseId: string, value: string) => {
+    const current =
+      line.allocations ??
+      p.allocations.map((a) => ({ warehouse_id: a.warehouse_id, quantity: String(a.quantity) }));
+    const next = current.some((a) => a.warehouse_id === warehouseId)
+      ? current.map((a) => (a.warehouse_id === warehouseId ? { ...a, quantity: value } : a))
+      : [...current, { warehouse_id: warehouseId, quantity: value }];
+    updateLine(line.key, { allocations: next });
+  };
+
+  const shortLines = lines
+    .map((l, idx) => ({ idx, line: l, p: preview[l.key] }))
+    .filter((x) => x.p && x.p.shortage > 0);
 
   const setLineSellingPrice = (key: string, sellingPriceId: string, productId: string) => {
     const product = products.find((p) => p.id === productId);
@@ -318,8 +472,34 @@ export const SalesPage: React.FC = () => {
   };
 
   useEffect(() => {
+    setRevenueBranchId('');
     void load();
   }, [activeBranchId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.sales
+      .fulfilmentOptions(lineProductKey ? lineProductKey.split(',') : [])
+      .then((res) => {
+        if (!cancelled) setFulfilOptions(res);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [lineProductKey, activeBranchId]);
+
+  const changeFulfilmentMode = (mode: FulfilmentMode) => {
+    setFulfilmentMode(mode);
+    if (mode === 'immediate') {
+      setLines((rows) => rows.map((r) => ({ ...r, warehouse_id: '', allocations: null })));
+      setForm((f) =>
+        warehouses.some((w) => w.id === f.warehouse_id)
+          ? f
+          : { ...f, warehouse_id: warehouses[0]?.id || '' }
+      );
+    }
+  };
 
   useEffect(() => {
     if (!salesRepLocked) return;
@@ -339,7 +519,14 @@ export const SalesPage: React.FC = () => {
         uom_id: l.uom_id,
         selling_price_id: l.selling_price_id || undefined,
         quantity: Number(l.quantity),
-        unit_price: Number(l.unit_price)
+        unit_price: Number(l.unit_price),
+        warehouse_id: fulfilmentMode === 'pickup' && l.warehouse_id ? l.warehouse_id : undefined,
+        allocations:
+          fulfilmentMode === 'pickup' && l.allocations
+            ? l.allocations
+                .map((a) => ({ warehouse_id: a.warehouse_id, quantity: Number(a.quantity) || 0 }))
+                .filter((a) => a.quantity > 0)
+            : undefined
       }));
     if (!payloadItems.length) {
       await alertError('Create failed', 'Add at least one valid line item');
@@ -371,9 +558,14 @@ export const SalesPage: React.FC = () => {
         warehouse_id: form.warehouse_id,
         sales_rep_id: form.sales_rep_id || undefined,
         notes: form.notes || undefined,
+        fulfilment_mode: fulfilmentMode,
+        revenue_branch_id:
+          canChooseRevenueBranch && revenueBranchId && revenueBranchId !== activeBranchId
+            ? revenueBranchId
+            : undefined,
         items: payloadItems
       });
-      await alertSuccess('Draft invoice created');
+      await alertSuccess('Draft order created', 'Confirm it to reserve the stock.');
       setForm((f) => ({ ...f, notes: '' }));
       resetLines(products);
       await load();
@@ -384,14 +576,48 @@ export const SalesPage: React.FC = () => {
     }
   };
 
-  const postInvoice = async (id: string) => {
+  const postInvoice = async (id: string, opts: Record<string, unknown> = {}): Promise<boolean> => {
     try {
-      await api.sales.postInvoice(id);
-      await alertSuccess('Invoice posted — stock + AR + COGS');
+      const posted = await api.sales.postInvoice(id, opts);
+      await alertSuccess(
+        posted?.fulfilment_mode === 'pickup' ? 'Order confirmed — stock reserved' : 'Sale confirmed and handed over',
+        posted?.fulfilment_mode === 'pickup'
+          ? 'Revenue, receivable and cost of goods post as the customer collects. Any payment taken now is held as a deposit.'
+          : undefined
+      );
       await load();
       return true;
     } catch (err: any) {
-      await alertError('Post failed', err.message);
+      const msg = String(err.message || '');
+      const isPickup = invoices.find((i) => i.id === id)?.fulfilment_mode === 'pickup';
+      if (/insufficient sellable stock/i.test(msg) && isPickup && !opts.allow_backorder) {
+        const r = await Swal.fire({
+          icon: 'warning',
+          title: 'Not enough stock',
+          text: `${msg} Confirm anyway and backorder the shortfall?`,
+          showCancelButton: true,
+          confirmButtonText: 'Confirm with backorder',
+          confirmButtonColor: '#0f5c4c'
+        });
+        return r.isConfirmed ? postInvoice(id, { ...opts, allow_backorder: true }) : false;
+      }
+      if (/credit limit exceeded/i.test(msg) && can('sales.override_credit_limit') && !opts.override_credit) {
+        const r = await Swal.fire({
+          icon: 'warning',
+          title: 'Credit limit exceeded',
+          text: msg,
+          input: 'text',
+          inputLabel: 'Reason for overriding the limit',
+          inputValidator: (v) => (String(v || '').trim() ? undefined : 'A reason is required'),
+          showCancelButton: true,
+          confirmButtonText: 'Override and confirm',
+          confirmButtonColor: '#0f5c4c'
+        });
+        return r.isConfirmed
+          ? postInvoice(id, { ...opts, override_credit: true, override_reason: String(r.value).trim() })
+          : false;
+      }
+      await alertError('Confirm failed', msg);
       return false;
     }
   };
@@ -420,7 +646,8 @@ export const SalesPage: React.FC = () => {
           Sales
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Draft invoice → post (FEFO stock out, AR, COGS) → collect payment.
+          Draft order → confirm (reserves stock and credit) → hand over (revenue, receivable and cost of
+          goods post per collection) → collect payment. Money taken before hand-over is a customer deposit.
         </p>
       </header>
 
@@ -453,6 +680,34 @@ export const SalesPage: React.FC = () => {
           >
             <div style={{ fontWeight: 700 }}>New credit / account invoice</div>
 
+            <div className="fulfil-mode">
+              <div className="segmented" role="tablist" aria-label="Hand-over">
+                {(
+                  [
+                    ['immediate', 'Collect now'],
+                    ['pickup', 'Pickup later']
+                  ] as [FulfilmentMode, string][]
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`segmented__btn${fulfilmentMode === id ? ' is-active' : ''}`}
+                    onClick={() => changeFulfilmentMode(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <span className="fulfil-mode__hint">
+                {fulfilmentMode === 'pickup'
+                  ? 'Confirming reserves stock — split across warehouses in any branch if needed. Revenue and cost of goods post as each part is collected.'
+                  : 'Goods leave this branch’s warehouses when the sale is confirmed; revenue posts at the same time.'}
+                {otherBranchPickup
+                  ? ' Some lines are collected from another branch; that branch’s inventory is settled through inter-branch clearing.'
+                  : ''}
+              </span>
+            </div>
+
             <div className="form-grid">
               <div className="field">
                 <label>Customer</label>
@@ -482,14 +737,15 @@ export const SalesPage: React.FC = () => {
                     {customerAvailableCredit != null ? (
                       <span className={overCredit ? 'customer-terms__over' : undefined}>
                         Credit available {fmtMoney(Math.max(0, customerAvailableCredit))}
-                        {overCredit ? ' — this invoice exceeds it, so posting on credit will be blocked' : ''}
+                        {customerOpenOrders > 0 ? ` (after ${fmtMoney(customerOpenOrders)} in open orders)` : ''}
+                        {overCredit ? ' — this order exceeds it, so confirming on credit will be blocked' : ''}
                       </span>
                     ) : null}
                   </div>
                 ) : null}
               </div>
               <div className="field">
-                <label>Warehouse</label>
+                <label>{fulfilmentMode === 'pickup' ? 'Default pickup warehouse' : 'Warehouse'}</label>
                 <SearchSelect
                   value={form.warehouse_id}
                   options={warehouseOptions}
@@ -498,6 +754,22 @@ export const SalesPage: React.FC = () => {
                   onChange={(warehouse_id) => setForm({ ...form, warehouse_id })}
                 />
               </div>
+              {canChooseRevenueBranch ? (
+                <div className="field">
+                  <label>Revenue branch</label>
+                  <select
+                    value={revenueBranchId || activeBranchId || ''}
+                    onChange={(e) => setRevenueBranchId(e.target.value)}
+                  >
+                    {fulfilOptions.branches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                        {b.id === activeBranchId ? ' (selling branch)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
               <div className="field">
                 <label
                   style={{
@@ -558,6 +830,7 @@ export const SalesPage: React.FC = () => {
                     <th style={{ width: 100, textAlign: 'center' }}>Qty</th>
                     <th className="num" style={{ width: 130 }}>Unit price</th>
                     <th className="num" style={{ width: 130 }}>Subtotal</th>
+                    {fulfilmentMode === 'pickup' ? <th style={{ width: '22%' }}>Pickup from</th> : null}
                     <th style={{ width: 52 }} />
                   </tr>
                 </thead>
@@ -606,7 +879,9 @@ export const SalesPage: React.FC = () => {
                             step="1"
                             className="line-items__qty"
                             value={line.quantity}
-                            onChange={(e) => updateLine(line.key, { quantity: e.target.value })}
+                            onChange={(e) =>
+                              updateLine(line.key, { quantity: e.target.value, allocations: null })
+                            }
                             required
                           />
                         </td>
@@ -646,6 +921,37 @@ export const SalesPage: React.FC = () => {
                             maximumFractionDigits: 2
                           })}
                         </td>
+                        {fulfilmentMode === 'pickup' ? (
+                          <td>
+                            <select
+                              value={line.warehouse_id}
+                              onChange={(e) =>
+                                updateLine(line.key, { warehouse_id: e.target.value, allocations: null })
+                              }
+                            >
+                              <option value="">
+                                Default
+                                {warehouseById.get(form.warehouse_id)
+                                  ? ` (${warehouseById.get(form.warehouse_id)!.code})`
+                                  : ''}
+                              </option>
+                              {fulfilOptions.warehouses.map((w) => (
+                                <option key={w.id} value={w.id}>
+                                  {w.branch?.name} · {w.code}
+                                  {line.product_id
+                                    ? ` — ${freeStock(line.product_id, w.id).toLocaleString()} free`
+                                    : ''}
+                                </option>
+                              ))}
+                            </select>
+                            {line.product_id ? (
+                              <div className="line-items__discount-note">
+                                {freeStock(line.product_id, line.warehouse_id || form.warehouse_id).toLocaleString()}{' '}
+                                {product?.base_uom?.code || 'base units'} free here
+                              </div>
+                            ) : null}
+                          </td>
+                        ) : null}
                         <td style={{ textAlign: 'center' }}>
                           <button
                             type="button"
@@ -696,6 +1002,107 @@ export const SalesPage: React.FC = () => {
               </div>
             </div>
 
+            {fulfilmentMode === 'immediate' && shortLines.length ? (
+              <div className="pickups__warning">
+                Not enough free stock in this branch:{' '}
+                {shortLines.map((s) => `line ${s.idx + 1} short ${qtyLabel(s.p.shortage)}`).join(', ')}.
+                Choose “Pickup later” to fulfil from another branch’s warehouse.
+              </div>
+            ) : null}
+
+            {fulfilmentMode === 'pickup' && Object.keys(preview).length ? (
+              <div className="alloc">
+                <div className="alloc__head">
+                  <span className="alloc__title">Stock allocation</span>
+                  <span className="alloc__hint">
+                    Suggested split by free stock (default warehouse first, then its branch, then elsewhere).
+                    Edit a quantity to choose the warehouses yourself.
+                  </span>
+                </div>
+                {lines.map((line, idx) => {
+                  const p = preview[line.key];
+                  if (!p) return null;
+                  const product = products.find((x) => x.id === line.product_id);
+                  const rows = p.stock.filter(
+                    (s) => s.free > 0 || Number(lineAllocated(line, p, s.warehouse_id)) > 0
+                  );
+                  const manualTotal = line.allocations
+                    ? line.allocations.reduce((s, a) => s + (Number(a.quantity) || 0), 0)
+                    : null;
+                  return (
+                    <div className="alloc__line" key={line.key}>
+                      <div className="alloc__line-head">
+                        <span>
+                          Line {idx + 1} · <strong>{product?.name}</strong> — {qtyLabel(p.requested)} ordered
+                        </span>
+                        {p.shortage > 0 ? (
+                          <span className="invoice-chip invoice-chip--pending">
+                            {qtyLabel(p.shortage)} short — backorder at confirmation
+                          </span>
+                        ) : (
+                          <span className="invoice-chip invoice-chip--fulfilled">fully allocated</span>
+                        )}
+                        {line.allocations ? (
+                          <>
+                            <span className="invoice-chip invoice-chip--open">manual</span>
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => updateLine(line.key, { allocations: null })}
+                            >
+                              Use automatic
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
+                      {rows.length ? (
+                        <table className="alloc__table">
+                          <thead>
+                            <tr>
+                              <th>Warehouse</th>
+                              <th className="num">Free</th>
+                              <th className="num" style={{ width: 120 }}>
+                                Allocate
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((s) => (
+                              <tr key={s.warehouse_id}>
+                                <td>
+                                  {s.branch_name} · {s.warehouse_code}
+                                  <span className="alloc__sub"> {s.warehouse_name}</span>
+                                </td>
+                                <td className="num">{qtyLabel(s.free)}</td>
+                                <td className="num">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    className="line-items__qty"
+                                    value={lineAllocated(line, p, s.warehouse_id)}
+                                    onChange={(e) => setManualAllocation(line, p, s.warehouse_id, e.target.value)}
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      ) : (
+                        <div className="alloc__sub">No sellable stock anywhere — the whole line will be backordered.</div>
+                      )}
+                      {manualTotal != null && manualTotal > Number(line.quantity) ? (
+                        <div className="customer-terms__over">
+                          Allocated {qtyLabel(manualTotal)} is more than the {qtyLabel(line.quantity)} ordered.
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                {previewError ? <div className="pickups__warning">{previewError}</div> : null}
+              </div>
+            ) : null}
+
             <div className="field">
               <label>Notes (optional)</label>
               <input
@@ -711,7 +1118,7 @@ export const SalesPage: React.FC = () => {
               style={{ justifySelf: 'start' }}
               disabled={busy}
             >
-              {busy ? 'Creating…' : 'Create draft invoice'}
+              {busy ? 'Creating…' : 'Create draft order'}
             </button>
           </form>
 
@@ -725,6 +1132,7 @@ export const SalesPage: React.FC = () => {
                     <th>Lines</th>
                     <th>Status</th>
                     <th>Payment</th>
+                    <th>Hand-over</th>
                     <th>Total</th>
                     <th>Balance</th>
                     <th>Rep</th>
@@ -745,8 +1153,31 @@ export const SalesPage: React.FC = () => {
                       </td>
                       <td>{inv.customer?.name}</td>
                       <td>{(inv.items || []).length || '—'}</td>
-                      <td>{inv.status}</td>
-                      <td>{inv.payment_status}</td>
+                      <td>{STATUS_LABELS[inv.status] || inv.status}</td>
+                      <td>
+                        {inv.payment_status}
+                        {Number(inv.deposit_held) > 0 ? (
+                          <div className="line-items__discount-note">
+                            deposit {Number(inv.deposit_held).toLocaleString()}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td>
+                        {inv.status !== 'posted' ? (
+                          inv.fulfilment_mode === 'pickup' ? 'Pickup' : '—'
+                        ) : (
+                          <span className={`invoice-chip invoice-chip--${inv.fulfilment_status}`}>
+                            {FULFILMENT_LABELS[inv.fulfilment_status] || inv.fulfilment_status}
+                          </span>
+                        )}
+                        {inv.branch_id && inv.selling_branch_id && inv.branch_id !== inv.selling_branch_id ? (
+                          <div className="line-items__discount-note">
+                            {inv.selling_branch_id === activeBranchId
+                              ? `Revenue → ${inv.branch?.name}`
+                              : `Sold by ${inv.selling_branch?.name}`}
+                          </div>
+                        ) : null}
+                      </td>
                       <td>{Number(inv.total_amount).toLocaleString()}</td>
                       <td>{Number(inv.balance).toLocaleString()}</td>
                       <td>{inv.sales_rep?.name || '—'}</td>
@@ -765,7 +1196,7 @@ export const SalesPage: React.FC = () => {
                               className="btn btn-ghost"
                               onClick={() => void postInvoice(inv.id)}
                             >
-                              Post
+                              Confirm
                             </button>
                           ) : null}
                         </div>
@@ -860,9 +1291,17 @@ export const SalesPage: React.FC = () => {
                         {(p.allocations || [])
                           .map(
                             (a: any) =>
-                              `${a.invoice?.invoice_number}: ${Number(a.amount).toLocaleString()}`
+                              `${a.invoice?.invoice_number}: ${Number(a.amount).toLocaleString()}` +
+                              (Number(a.deposit_amount) > 0
+                                ? ` (deposit ${Number(a.deposit_amount).toLocaleString()})`
+                                : '')
                           )
                           .join(' · ') || '—'}
+                        {Number(p.unapplied_amount) > 0 ? (
+                          <div className="line-items__discount-note">
+                            {Number(p.unapplied_amount).toLocaleString()} unapplied customer credit
+                          </div>
+                        ) : null}
                       </td>
                     </tr>
                   ))}
@@ -877,8 +1316,9 @@ export const SalesPage: React.FC = () => {
         <InvoiceViewModal
           invoiceId={viewInvoiceId}
           onClose={() => setViewInvoiceId(null)}
-          onPost={postInvoice}
+          onPost={(id) => postInvoice(id)}
           canPost={canPostInvoice}
+          onChanged={() => void load()}
         />
       ) : null}
     </div>

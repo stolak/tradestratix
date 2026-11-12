@@ -10,12 +10,13 @@ import {
 } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
-import { convertToBaseQty, createStockMovement } from './inventory.service.js';
-import { createJournal, getDefaultAccountMap } from './accounting.service.js';
+import { getDefaultAccountMap } from './accounting.service.js';
+import { fulfilAllInTx, invoiceForFulfilment, reserveInvoiceStock } from './fulfilment.service.js';
+import { applyPaymentInTx, autoAllocate } from './customer-payment.service.js';
 import * as branchAccess from './branch-access.service.js';
 import { assertSalesRepInBranch } from './sales-rep.service.js';
 import { userHasAnyPermission } from './permission.service.js';
-import { getCustomerOutstanding } from './customer.service.js';
+import { getCustomerExposure } from './customer.service.js';
 import {
   applyDiscount,
   getBranchDiscountMap,
@@ -36,11 +37,30 @@ const invoiceInclude = {
     }
   },
   items: {
-    include: { product: true, variant: true, uom: true },
+    include: {
+      product: true,
+      variant: true,
+      uom: true,
+      fulfilmentWarehouse: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          branch: { select: { id: true, name: true, code: true } }
+        }
+      }
+    },
     orderBy: { id: 'asc' as const }
   },
+  branch: { select: { id: true, name: true, code: true } },
+  sellingBranch: { select: { id: true, name: true, code: true } },
   commissions: true
 };
+
+/** Invoices are visible from the revenue branch and from the branch that made the sale. */
+function withSellingBranch(scope: { branchId: string } | { branchId: { in: string[] } }) {
+  return { OR: [scope, { sellingBranchId: scope.branchId }] };
+}
 
 function presentInvoiceSalesRep<T extends { salesRep?: any }>(row: T) {
   if (!row.salesRep) return row;
@@ -60,14 +80,22 @@ async function nextInvoiceNumber(businessId: string, channel: string) {
   return nextDocNumber(prisma.salesInvoice, businessId, 'invoiceNumber', prefix, 5);
 }
 
-async function nextPaymentNumber(businessId: string) {
-  return nextDocNumber(prisma.customerPayment, businessId, 'paymentNumber', 'CPAY', 5);
-}
-
 function addDays(date: Date, days: number) {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
+}
+
+export const RESERVATION_DAYS_SETTING = 'sales.reservation_days';
+const DEFAULT_RESERVATION_DAYS = 14;
+
+/** Days a confirmed pickup order holds its stock before the sweeper releases it (0 = never). */
+export async function reservationDays(businessId: string) {
+  const row = await prisma.businessSetting.findUnique({
+    where: { businessId_settingKey: { businessId, settingKey: RESERVATION_DAYS_SETTING } }
+  });
+  const days = row ? Number(row.value) : DEFAULT_RESERVATION_DAYS;
+  return Number.isFinite(days) && days >= 0 ? Math.floor(days) : DEFAULT_RESERVATION_DAYS;
 }
 
 async function productAllowedUomIds(productId: string, baseUomId: string, sellingUomId?: string | null) {
@@ -220,7 +248,7 @@ export async function listInvoices(
   const rows = await prisma.salesInvoice.findMany({
     where: {
       businessId: user.businessId,
-      ...scope,
+      ...withSellingBranch(scope),
       ...(opts?.status ? { status: opts.status } : {}),
       ...(opts?.channel ? { channel: opts.channel } : {})
     },
@@ -230,17 +258,64 @@ export async function listInvoices(
   return serialize(rows.map(presentInvoiceSalesRep));
 }
 
+/** Throws 403 unless the user can see the selling, revenue or any fulfilling branch of the invoice. */
+export async function assertInvoiceVisible(
+  user: AuthUser,
+  branchIds: (string | null | undefined)[]
+) {
+  const related = branchIds.filter((b): b is string => Boolean(b));
+  if (!related.length || branchAccess.canAccessAllBranches(user)) return;
+  const authorised = await branchAccess.listAuthorisedBranchIds(user.id, user.businessId, user.role);
+  if (!related.some((b) => authorised.includes(b))) {
+    throw httpError(403, 'Branch access denied or revoked');
+  }
+}
+
 export async function getInvoice(user: AuthUser, id: string) {
   const row = await prisma.salesInvoice.findFirst({
     where: { id, businessId: user.businessId },
     include: {
       ...invoiceInclude,
-      branch: { select: { id: true, name: true, code: true } },
-      allocations: { include: { payment: true } }
+      items: {
+        ...invoiceInclude.items,
+        include: {
+          ...invoiceInclude.items.include,
+          reservations: {
+            include: {
+              warehouse: {
+                select: {
+                  id: true,
+                  name: true,
+                  code: true,
+                  branch: { select: { id: true, name: true, code: true } }
+                }
+              },
+              lot: { select: { batchNumber: true, expiryDate: true } }
+            },
+            orderBy: { createdAt: 'asc' }
+          }
+        }
+      },
+      warehouse: { include: { branch: { select: { id: true, name: true, code: true } } } },
+      allocations: { include: { payment: true } },
+      fulfilments: {
+        include: {
+          warehouse: { select: { id: true, name: true, code: true } },
+          branch: { select: { id: true, name: true, code: true } },
+          items: { select: { invoiceItemId: true, quantity: true, recognisedAmount: true } }
+        },
+        orderBy: { fulfilledAt: 'asc' }
+      }
     }
   });
   if (!row) throw httpError(404, 'Invoice not found');
-  if (row.branchId) await branchAccess.assertBranchMembership(user, row.branchId);
+  await assertInvoiceVisible(user, [
+    row.branchId,
+    row.sellingBranchId,
+    row.warehouse.branchId,
+    ...row.items.map((i) => i.fulfilmentWarehouse?.branch.id),
+    ...row.items.flatMap((i) => i.reservations.map((r) => r.warehouse.branch.id))
+  ]);
   return serialize(presentInvoiceSalesRep(row));
 }
 
@@ -255,15 +330,74 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
   });
   if (!customer) throw httpError(400, 'Invalid customer_id');
 
-  const branchId = await branchAccess.resolveWriteBranchId(
+  const sellingBranchId = await branchAccess.resolveWriteBranchId(
     user,
     body.branch_id || body.branchId || user.activeBranchId
   );
-  const warehouse = await branchAccess.resolveWarehouseInBranch(
-    user.businessId,
-    warehouseId,
-    branchId
-  );
+
+  const revenueInput = body.revenue_branch_id || body.revenueBranchId || null;
+  let branchId = sellingBranchId;
+  if (revenueInput && revenueInput !== sellingBranchId) {
+    if (!(await userHasAnyPermission(user.id, ['sales.revenue_branch']))) {
+      throw httpError(
+        403,
+        'You do not have permission to book revenue to another branch (sales.revenue_branch)'
+      );
+    }
+    branchId = (await branchAccess.assertBranchActive(user.businessId, revenueInput)).id;
+  }
+
+  const fulfilmentMode =
+    channel !== 'pos' &&
+    String(body.fulfilment_mode || body.fulfilmentMode || '').toLowerCase() === 'pickup'
+      ? 'pickup'
+      : 'immediate';
+
+  const activeWarehouse = async (id: string, label: string) => {
+    const wh = await prisma.warehouse.findFirst({
+      where: { id, businessId: user.businessId, isActive: true },
+      include: { branch: { select: { isActive: true, name: true } } }
+    });
+    if (!wh) throw httpError(400, `${label}: invalid warehouse`);
+    if (!wh.branch.isActive) throw httpError(400, `${label}: branch ${wh.branch.name} is inactive`);
+    if (fulfilmentMode === 'immediate' && wh.branchId !== sellingBranchId) {
+      throw httpError(
+        400,
+        `${label}: goods handed over at the point of sale must come from a warehouse in this branch. Choose "Pickup later" to fulfil from another branch.`
+      );
+    }
+    return wh;
+  };
+
+  const warehouse = await activeWarehouse(warehouseId, 'warehouse_id');
+  const lineWarehouseIds: (string | null)[] = [];
+  const linePlans: ({ warehouse_id: string; quantity: number }[] | null)[] = [];
+  for (const [i, item] of itemsInput.entries()) {
+    const whId = item.warehouse_id || item.warehouseId || null;
+    lineWarehouseIds.push(
+      !whId || whId === warehouse.id ? null : (await activeWarehouse(whId, `items[${i}].warehouse_id`)).id
+    );
+
+    const rawPlan: any[] = Array.isArray(item.allocations) ? item.allocations : [];
+    const plan: { warehouse_id: string; quantity: number }[] = [];
+    for (const [j, a] of rawPlan.entries()) {
+      const qty = Number(a.quantity);
+      if (!Number.isFinite(qty) || qty < 0) {
+        throw httpError(400, `items[${i}].allocations[${j}].quantity is invalid`);
+      }
+      if (!qty) continue;
+      const allocWh = requireString(a.warehouse_id || a.warehouseId, `items[${i}].allocations[${j}].warehouse_id`);
+      await activeWarehouse(allocWh, `items[${i}].allocations[${j}]`);
+      const existing = plan.find((p) => p.warehouse_id === allocWh);
+      if (existing) existing.quantity += qty;
+      else plan.push({ warehouse_id: allocWh, quantity: qty });
+    }
+    const planned = plan.reduce((s, p) => s + p.quantity, 0);
+    if (planned > Number(item.quantity) + 1e-6) {
+      throw httpError(400, `items[${i}]: allocated quantity exceeds the ordered quantity`);
+    }
+    linePlans.push(plan.length ? plan : null);
+  }
 
   const isWalkIn =
     customer.customerType === 'walk_in' ||
@@ -294,10 +428,10 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
   }
 
   if (salesRepId) {
-    await assertSalesRepInBranch(user.businessId, salesRepId, branchId);
+    await assertSalesRepInBranch(user.businessId, salesRepId, sellingBranchId);
   }
 
-  const lines = await buildInvoiceLines(user, itemsInput, branchId);
+  const lines = await buildInvoiceLines(user, itemsInput, sellingBranchId);
   const subtotal = roundMoney(lines.reduce((s, l) => s + l.lineTotal, 0));
   const customerDiscountPct = Number(customer.discountPercent || 0);
   const discountAmount =
@@ -314,10 +448,14 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
       customerId,
       warehouseId: warehouse.id,
       branchId,
+      sellingBranchId,
       salesRepId,
       invoiceNumber,
       channel,
       status: 'draft',
+      fulfilmentMode,
+      fulfilmentStatus: 'pending',
+      recognitionPolicy: 'at_fulfilment',
       paymentStatus: 'open',
       invoiceDate: body.invoice_date || body.invoiceDate
         ? new Date(body.invoice_date || body.invoiceDate)
@@ -335,11 +473,13 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
       taxAmount: toDec(taxAmount),
       totalAmount: toDec(totalAmount),
       amountPaid: toDec(0),
-      balance: toDec(totalAmount),
+      balance: toDec(0),
       createdById: user.id,
       items: {
-        create: lines.map((l) => ({
+        create: lines.map((l, idx) => ({
           id: shortId('sii'),
+          fulfilmentWarehouseId: lineWarehouseIds[idx] ?? null,
+          allocationPlan: linePlans[idx] ?? undefined,
           productId: l.productId,
           variantId: l.variantId,
           uomId: l.uomId,
@@ -369,273 +509,193 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
     return postInvoice(user, created.id, {
       pay_now: body.pay_now ?? body.payNow ?? channel === 'pos',
       payment_method: body.payment_method || body.paymentMethod || (channel === 'pos' ? 'cash' : undefined),
-      account_id: body.account_id || body.accountId
+      account_id: body.account_id || body.accountId,
+      amount_paid: body.amount_paid ?? body.amountPaid,
+      allow_backorder: body.allow_backorder ?? body.allowBackorder,
+      override_credit: body.override_credit ?? body.overrideCredit,
+      override_reason: body.override_reason ?? body.overrideReason
     });
   }
 
   return serialize(presentInvoiceSalesRep(created));
 }
 
+export type ConfirmOptions = {
+  pay_now?: boolean;
+  payment_method?: string;
+  account_id?: string;
+  /** Amount collected now (defaults to the full order value when pay_now) */
+  amount_paid?: number | string;
+  allow_backorder?: boolean;
+  override_credit?: boolean;
+  override_reason?: string;
+};
+
 /**
- * Post invoice: FEFO stock issue + revenue journal + COGS journal + optional commission.
- * pay_now / POS: settle cash|bank immediately (no open AR).
+ * Confirm a draft order: reserve stock (split across warehouses as planned) and credit.
+ * No revenue is booked here — revenue, receivable and COGS post per hand-over. A counter sale
+ * ("immediate") hands everything over in the same transaction. Money collected before hand-over
+ * is held as a customer deposit.
  */
-export async function postInvoice(
-  user: AuthUser,
-  id: string,
-  opts?: {
-    pay_now?: boolean;
-    payment_method?: string;
-    account_id?: string;
-  }
-) {
+export async function postInvoice(user: AuthUser, id: string, opts: ConfirmOptions = {}) {
   const invoice = await prisma.salesInvoice.findFirst({
     where: { id, businessId: user.businessId },
     include: { items: true, customer: true, salesRep: true, warehouse: true }
   });
   if (!invoice) throw httpError(404, 'Invoice not found');
-  if (invoice.status !== 'draft') throw httpError(400, 'Only draft invoices can be posted');
+  if (invoice.status !== 'draft') throw httpError(400, 'Only draft invoices can be confirmed');
   if (!invoice.items.length) throw httpError(400, 'Invoice has no lines');
+
+  const sellingBranchId = invoice.sellingBranchId || invoice.branchId;
+  if (!sellingBranchId) throw httpError(400, 'Invoice has no selling branch');
+  await branchAccess.assertBranchMembership(user, sellingBranchId);
+
+  if (invoice.customer.status !== 'active') {
+    throw httpError(400, `Customer ${invoice.customer.name} is disabled; enable it before confirming`);
+  }
 
   const accountMap = await getDefaultAccountMap(user.businessId);
   for (const key of ['sales_revenue', 'cogs', 'inventory', 'accounts_receivable', 'cash', 'bank']) {
     if (!accountMap[key]) throw httpError(400, `Default account "${key}" is not configured`);
   }
 
-  const payNow = Boolean(opts?.pay_now) || invoice.channel === 'pos';
-  const method = String(opts?.payment_method || (payNow ? 'cash' : '')).toLowerCase();
-  let settleAccountId = opts?.account_id || null;
-  if (payNow) {
-    settleAccountId =
-      settleAccountId || (method === 'bank' || method === 'transfer' ? accountMap.bank : accountMap.cash);
-  }
-
+  const immediate = invoice.fulfilmentMode !== 'pickup';
   const totalAmount = Number(invoice.totalAmount);
-
-  if (invoice.customer.status !== 'active') {
-    throw httpError(400, `Customer ${invoice.customer.name} is disabled; enable it before posting`);
-  }
-
-  if (!payNow && invoice.customer.creditLimit != null) {
-    const limit = Number(invoice.customer.creditLimit);
-    const outstanding = await getCustomerOutstanding(user.businessId, invoice.customerId);
-    if (roundMoney(outstanding + totalAmount) > limit) {
-      const available = Math.max(0, roundMoney(limit - outstanding));
-      throw httpError(
-        400,
-        `Credit limit exceeded for ${invoice.customer.name}: limit ${limit.toLocaleString()}, ` +
-          `outstanding ${outstanding.toLocaleString()}, available ${available.toLocaleString()}, ` +
-          `this invoice ${totalAmount.toLocaleString()}. Collect a payment on older invoices first, or reduce this invoice.`
-      );
+  const payNow = Boolean(opts.pay_now) || invoice.channel === 'pos';
+  const method = String(opts.payment_method || (payNow ? 'cash' : '')).toLowerCase();
+  const settleAccountId = payNow
+    ? opts.account_id || (method === 'bank' || method === 'transfer' ? accountMap.bank : accountMap.cash)
+    : null;
+  let payAmount = 0;
+  if (payNow) {
+    payAmount =
+      opts.amount_paid != null && opts.amount_paid !== ''
+        ? roundMoney(Number(opts.amount_paid))
+        : totalAmount;
+    if (!Number.isFinite(payAmount) || payAmount < 0) throw httpError(400, 'amount_paid is invalid');
+    if (payAmount > totalAmount + 0.01) throw httpError(400, 'amount_paid exceeds the order total');
+    if (invoice.channel === 'pos' && Math.abs(payAmount - totalAmount) > 0.01) {
+      throw httpError(400, 'POS sales must be paid in full');
     }
   }
+  if (!immediate && payAmount > 0 && !accountMap.customer_deposits) {
+    throw httpError(400, 'Default account "customer_deposits" is not configured');
+  }
 
-  const result = await prisma.$transaction(async (tx) => {
-    let totalCogs = 0;
-
-    for (const line of invoice.items) {
-      const product = await tx.product.findFirst({ where: { id: line.productId } });
-      if (!product) throw httpError(400, 'Product missing on invoice line');
-
-      const txnQty = Number(line.quantity);
-      const txnUomId = line.uomId || product.baseUomId;
-      const baseQty = await convertToBaseQty(
-        tx,
-        line.productId,
-        txnUomId,
-        txnQty,
-        product.baseUomId
-      );
-
-      await createStockMovement(
-        user,
-        {
-          product_id: line.productId,
-          variant_id: line.variantId,
-          warehouse_id: invoice.warehouseId,
-          movement_type: 'sale',
-          quantity_out: baseQty,
-          transaction_quantity: txnQty,
-          transaction_uom_id: txnUomId,
-          reference_type: 'sales_invoice',
-          reference_id: invoice.id,
-          idempotency_key: `sale:${invoice.id}:${line.id}`,
-          reason: `Sale ${invoice.invoiceNumber}`
-        },
-        tx
-      );
-
-      const movements = await tx.stockMovement.findMany({
-        where: {
-          businessId: user.businessId,
-          referenceType: 'sales_invoice',
-          referenceId: invoice.id,
-          productId: line.productId,
-          idempotencyKey: { startsWith: `sale:${invoice.id}:${line.id}` }
-        }
-      });
-      // Also catch single-key movement
-      const movAlt = await tx.stockMovement.findMany({
-        where: {
-          businessId: user.businessId,
-          referenceType: 'sales_invoice',
-          referenceId: invoice.id,
-          productId: line.productId
-        }
-      });
-      const related = [...movements, ...movAlt].filter(
-        (m, idx, arr) =>
-          (m.idempotencyKey || '').startsWith(`sale:${invoice.id}:${line.id}`) &&
-          arr.findIndex((x) => x.id === m.id) === idx
-      );
-      const lineCogs = roundMoney(
-        related.reduce((s, m) => s + Number(m.totalCost || 0), 0)
-      );
-      totalCogs = roundMoney(totalCogs + lineCogs);
-
-      await tx.salesInvoiceItem.update({
-        where: { id: line.id },
-        data: {
-          cogsAmount: toDec(lineCogs),
-          stockMovementId: related[0]?.id || null
-        }
-      });
+  const wantsOverride = opts.override_credit === true || String(opts.override_credit) === 'true';
+  const overrideReason = String(opts.override_reason || '').trim();
+  if (wantsOverride) {
+    if (!(await userHasAnyPermission(user.id, ['sales.override_credit_limit']))) {
+      throw httpError(403, 'You do not have permission to override credit limits (sales.override_credit_limit)');
     }
+    if (!overrideReason) throw httpError(400, 'override_reason is required to override the credit limit');
+  }
+  const allowBackorder =
+    !immediate && (opts.allow_backorder === true || String(opts.allow_backorder) === 'true');
+  const days = immediate ? 0 : await reservationDays(user.businessId);
 
-    const revenueJournal = await createJournal(
-      user,
-      {
-        memo: `Sales ${invoice.invoiceNumber} — ${invoice.customer.name}`,
-        source_type: 'sales_invoice',
-        source_id: invoice.id,
-        idempotency_key: `sales_invoice:${invoice.id}`,
-        branch_id: invoice.branchId || undefined,
-        customer_id: invoice.customerId,
-        sales_representative_id: invoice.salesRepId || undefined,
-        post: true,
-        lines: [
-          {
-            account_id: payNow ? settleAccountId! : accountMap.accounts_receivable,
-            debit: totalAmount,
-            description: payNow
-              ? `${method || 'cash'} sale ${invoice.invoiceNumber}`
-              : `AR ${invoice.customer.name} — ${invoice.invoiceNumber}`
-          },
-          {
-            account_id: accountMap.sales_revenue,
-            credit: totalAmount,
-            description: `Revenue ${invoice.invoiceNumber}`
+  let overridden = false;
+  const result = await prisma.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT id FROM customers WHERE id = ${invoice.customerId} FOR UPDATE`;
+
+      const credit = roundMoney(totalAmount - payAmount);
+      if (credit > 0.01 && invoice.customer.creditLimit != null) {
+        const limit = Number(invoice.customer.creditLimit);
+        const exposure = await getCustomerExposure(tx, user.businessId, invoice.customerId, invoice.id);
+        if (roundMoney(exposure.total + credit) > limit) {
+          if (!wantsOverride) {
+            const available = Math.max(0, roundMoney(limit - exposure.total));
+            throw httpError(
+              400,
+              `Credit limit exceeded for ${invoice.customer.name}: limit ${limit.toLocaleString()}, ` +
+                `receivable ${exposure.receivable.toLocaleString()}, open orders ${exposure.openOrders.toLocaleString()}, ` +
+                `available ${available.toLocaleString()}, this order on credit ${credit.toLocaleString()}. ` +
+                'Collect a payment or deposit, reduce the order, or ask a manager to override.'
+            );
           }
-        ]
-      },
-      tx
-    );
-
-    let cogsJournalId: string | null = null;
-    if (totalCogs > 0) {
-      const cogsJournal = await createJournal(
-        user,
-        {
-          memo: `COGS ${invoice.invoiceNumber}`,
-          source_type: 'sales_cogs',
-          source_id: invoice.id,
-          idempotency_key: `sales_cogs:${invoice.id}`,
-          branch_id: invoice.branchId || undefined,
-          customer_id: invoice.customerId,
-          sales_representative_id: invoice.salesRepId || undefined,
-          post: true,
-          lines: [
-            {
-              account_id: accountMap.cogs,
-              debit: totalCogs,
-              description: `COGS ${invoice.invoiceNumber}`
-            },
-            {
-              account_id: accountMap.inventory,
-              credit: totalCogs,
-              description: `Inventory relief ${invoice.invoiceNumber}`
-            }
-          ]
-        },
-        tx
-      );
-      cogsJournalId = (cogsJournal as any).id;
-    }
-
-    if (invoice.salesRepId && invoice.salesRep) {
-      const pct = Number(invoice.salesRep.commissionPercent || 0);
-      if (pct > 0) {
-        const commissionAmount = roundMoney((totalAmount * pct) / 100);
-        await tx.salesCommission.create({
-          data: {
-            id: shortId('scm'),
-            businessId: user.businessId,
-            branchId: invoice.branchId,
-            salesRepId: invoice.salesRepId,
-            invoiceId: invoice.id,
-            baseAmount: toDec(totalAmount),
-            commissionPercent: toDec(pct),
-            commissionAmount: toDec(commissionAmount),
-            status: 'accrued'
-          }
-        });
+          overridden = true;
+        }
       }
-    }
 
-    let paymentId: string | null = null;
-    if (payNow) {
-      paymentId = shortId('cpay');
-      const paymentNumber = await nextDocNumber(
-        tx.customerPayment,
-        user.businessId,
-        'paymentNumber',
-        'CPAY',
-        5
-      );
-      // Cash already booked in revenue journal — record payment allocation without second cash journal
-      await tx.customerPayment.create({
+      const fulfilmentInvoice = (await invoiceForFulfilment(tx, user.businessId, invoice.id))!;
+      await reserveInvoiceStock(tx, user, fulfilmentInvoice, {
+        restrictToBranchId: immediate ? sellingBranchId : null,
+        allowBackorder,
+        useSavedPlan: true
+      });
+
+      await tx.salesInvoice.update({
+        where: { id: invoice.id },
         data: {
-          id: paymentId,
-          businessId: user.businessId,
-          branchId: invoice.branchId,
-          customerId: invoice.customerId,
-          paymentNumber,
-          paymentDate: new Date(),
-          amount: toDec(totalAmount),
-          method: method || 'cash',
-          accountId: settleAccountId,
-          reference: invoice.invoiceNumber,
-          notes: `Immediate settlement for ${invoice.invoiceNumber}`,
-          journalEntryId: (revenueJournal as any).id,
-          createdById: user.id,
-          allocations: {
-            create: [
-              {
-                id: shortId('cpa'),
-                invoiceId: invoice.id,
-                amount: toDec(totalAmount)
-              }
-            ]
-          }
+          status: 'posted',
+          recognitionPolicy: 'at_fulfilment',
+          fulfilmentStatus: 'pending',
+          paymentStatus: 'open',
+          amountPaid: toDec(0),
+          balance: toDec(0),
+          reservationExpiresAt: days > 0 ? addDays(new Date(), days) : null,
+          creditOverrideById: overridden ? user.id : null,
+          creditOverrideReason: overridden ? overrideReason : null,
+          postedAt: new Date(),
+          postedById: user.id
         }
       });
-    }
 
-    return tx.salesInvoice.update({
-      where: { id: invoice.id },
-      data: {
-        status: 'posted',
-        paymentStatus: payNow ? 'paid' : 'open',
-        amountPaid: toDec(payNow ? totalAmount : 0),
-        balance: toDec(payNow ? 0 : totalAmount),
-        journalEntryId: (revenueJournal as any).id,
-        cogsJournalEntryId: cogsJournalId,
-        postedAt: new Date(),
-        postedById: user.id
-      },
-      include: invoiceInclude
-    });
-  });
+      if (invoice.salesRepId && invoice.salesRep) {
+        const pct = Number(invoice.salesRep.commissionPercent || 0);
+        if (pct > 0) {
+          await tx.salesCommission.create({
+            data: {
+              id: shortId('scm'),
+              businessId: user.businessId,
+              branchId: invoice.branchId,
+              salesRepId: invoice.salesRepId,
+              invoiceId: invoice.id,
+              baseAmount: toDec(0),
+              commissionPercent: toDec(pct),
+              commissionAmount: toDec(0),
+              status: 'accrued'
+            }
+          });
+        }
+      }
+
+      const collect = async () => {
+        if (!(payAmount > 0)) return;
+        await applyPaymentInTx(tx, user, {
+          customerId: invoice.customerId,
+          customerName: invoice.customer.name,
+          receivingBranchId: sellingBranchId,
+          amount: payAmount,
+          method: method || 'cash',
+          accountId: settleAccountId!,
+          allocations: [{ invoiceId: invoice.id, amount: payAmount }],
+          reference: invoice.invoiceNumber,
+          notes: immediate
+            ? `Settlement at sale ${invoice.invoiceNumber}`
+            : `Deposit on order ${invoice.invoiceNumber}`
+        });
+      };
+
+      if (immediate) {
+        const reloaded = (await invoiceForFulfilment(tx, user.businessId, invoice.id))!;
+        await fulfilAllInTx(tx, user, reloaded, {
+          collectedBy: invoice.customer.name,
+          notes: `Handed over at sale ${invoice.invoiceNumber}`
+        });
+        await collect();
+      } else {
+        await collect();
+      }
+
+      return tx.salesInvoice.findUniqueOrThrow({
+        where: { id: invoice.id },
+        include: invoiceInclude
+      });
+    },
+    { timeout: 30000, maxWait: 10000 }
+  );
 
   await writeAudit({
     user,
@@ -643,7 +703,11 @@ export async function postInvoice(
     module: invoice.channel === 'pos' ? 'pos' : 'sales',
     entityType: 'SalesInvoice',
     entityId: id,
-    summary: `Posted ${invoice.invoiceNumber}${payNow ? ' (paid)' : ''}`
+    summary:
+      `Confirmed ${invoice.invoiceNumber}` +
+      (immediate ? ' (handed over)' : ' (awaiting pickup)') +
+      (payAmount > 0 ? ` — collected ${payAmount}` : '') +
+      (overridden ? ` — credit limit overridden: ${overrideReason}` : '')
   });
 
   return serialize(presentInvoiceSalesRep(result));
@@ -674,6 +738,11 @@ export async function listCustomerPayments(
   return serialize(rows);
 }
 
+/**
+ * Receive a customer payment in the user's branch. It may settle invoices of any branch (linked
+ * through inter-branch clearing); an amount allocated beyond the recognised receivable of an
+ * open order is held as a deposit.
+ */
 export async function recordCustomerPayment(user: AuthUser, body: Record<string, any>) {
   const customerId = requireString(body.customer_id || body.customerId, 'customer_id');
   const amount = roundMoney(Number(body.amount));
@@ -690,21 +759,16 @@ export async function recordCustomerPayment(user: AuthUser, body: Record<string,
   if (!customer) throw httpError(400, 'Invalid customer_id');
 
   const accountMap = await getDefaultAccountMap(user.businessId);
-  if (!accountMap.accounts_receivable) {
-    throw httpError(400, 'Default accounts_receivable account must be configured');
-  }
-
   const method = String(body.method || 'cash').toLowerCase();
-  let payAccountId = body.account_id || body.accountId || null;
-  if (!payAccountId) {
-    payAccountId = method === 'bank' || method === 'transfer' ? accountMap.bank : accountMap.cash;
-  }
+  const payAccountId =
+    body.account_id ||
+    body.accountId ||
+    (method === 'bank' || method === 'transfer' ? accountMap.bank : accountMap.cash);
   if (!payAccountId) throw httpError(400, 'Payment GL account (cash/bank) is not configured');
 
+  const allowUnallocated = body.allow_unallocated === true || body.allowUnallocated === true;
   const allocationsInput: any[] = Array.isArray(body.allocations) ? body.allocations : [];
-  let remaining = amount;
-  const allocations: { invoiceId: string; amount: number }[] = [];
-
+  let allocations: { invoiceId: string; amount: number }[] = [];
   if (allocationsInput.length) {
     for (const [i, a] of allocationsInput.entries()) {
       const invoiceId = a.invoice_id || a.invoiceId;
@@ -713,144 +777,46 @@ export async function recordCustomerPayment(user: AuthUser, body: Record<string,
         throw httpError(400, `allocations[${i}] requires invoice_id and amount`);
       }
       allocations.push({ invoiceId, amount: allocAmt });
-      remaining = roundMoney(remaining - allocAmt);
     }
-    if (remaining < -0.01) throw httpError(400, 'Allocations exceed payment amount');
   } else {
-    const openInvoices = await prisma.salesInvoice.findMany({
-      where: {
-        businessId: user.businessId,
-        branchId,
-        customerId,
-        status: 'posted',
-        paymentStatus: { in: ['open', 'partial'] },
-        balance: { gt: 0 }
-      },
-      orderBy: { invoiceDate: 'asc' }
-    });
-    for (const inv of openInvoices) {
-      if (remaining <= 0) break;
-      const bal = Number(inv.balance);
-      const apply = roundMoney(Math.min(bal, remaining));
-      if (apply <= 0) continue;
-      allocations.push({ invoiceId: inv.id, amount: apply });
-      remaining = roundMoney(remaining - apply);
+    allocations = await autoAllocate(user.businessId, customerId, amount);
+    if (!allocations.length && !allowUnallocated) {
+      throw httpError(400, 'No open customer invoices to allocate this payment against');
     }
   }
 
-  const allocatedTotal = roundMoney(allocations.reduce((s, a) => s + a.amount, 0));
-  if (allocatedTotal <= 0) {
-    throw httpError(400, 'No open customer invoices to allocate this payment against');
-  }
-  if (
-    Math.abs(allocatedTotal - amount) > 0.01 &&
-    body.allow_unallocated !== true &&
-    body.allowUnallocated !== true
-  ) {
-    throw httpError(
-      400,
-      `Payment amount ${amount} does not match allocated ${allocatedTotal}`
-    );
-  }
-
-  const paymentId = shortId('cpay');
-  const paymentNumber = await nextPaymentNumber(user.businessId);
-
-  const result = await prisma.$transaction(async (tx) => {
-    for (const a of allocations) {
-      const inv = await tx.salesInvoice.findFirst({
-        where: {
-          id: a.invoiceId,
-          businessId: user.businessId,
-          customerId,
-          status: 'posted',
-          branchId
-        }
-      });
-      if (!inv) throw httpError(400, `Invoice ${a.invoiceId} not found for customer`);
-      const bal = Number(inv.balance);
-      if (a.amount > bal + 0.01) {
-        throw httpError(400, `Allocation exceeds balance on ${inv.invoiceNumber}`);
-      }
-      const newPaid = roundMoney(Number(inv.amountPaid) + a.amount);
-      const newBal = roundMoney(Number(inv.totalAmount) - newPaid);
-      await tx.salesInvoice.update({
-        where: { id: inv.id },
-        data: {
-          amountPaid: toDec(newPaid),
-          balance: toDec(Math.max(0, newBal)),
-          paymentStatus: newBal <= 0.01 ? 'paid' : 'partial'
-        }
-      });
-    }
-
-    const journal = await createJournal(
-      user,
-      {
-        memo: `Customer payment ${paymentNumber} — ${customer.name}`,
-        source_type: 'customer_payment',
-        source_id: paymentId,
-        idempotency_key: `customer_payment:${paymentId}`,
-        branch_id: branchId,
-        customer_id: customerId,
-        post: true,
-        lines: [
-          {
-            account_id: payAccountId!,
-            debit: allocatedTotal,
-            description: `${method} receipt ${paymentNumber}`
-          },
-          {
-            account_id: accountMap.accounts_receivable,
-            credit: allocatedTotal,
-            description: `AR settlement ${paymentNumber}`
-          }
-        ]
-      },
-      tx
-    );
-
-    return tx.customerPayment.create({
-      data: {
-        id: paymentId,
-        businessId: user.businessId,
-        branchId,
+  const { payment, replayed } = await prisma.$transaction(
+    (tx) =>
+      applyPaymentInTx(tx, user, {
         customerId,
-        paymentNumber,
-        paymentDate: body.payment_date || body.paymentDate
-          ? new Date(body.payment_date || body.paymentDate)
-          : new Date(),
-        amount: toDec(allocatedTotal),
+        customerName: customer.name,
+        receivingBranchId: branchId,
+        amount,
         method,
         accountId: payAccountId,
+        allocations,
+        allowUnallocated,
         reference: body.reference || null,
         notes: body.notes || null,
-        journalEntryId: (journal as any).id,
-        createdById: user.id,
-        allocations: {
-          create: allocations.map((a) => ({
-            id: shortId('cpa'),
-            invoiceId: a.invoiceId,
-            amount: toDec(a.amount)
-          }))
-        }
-      },
-      include: {
-        customer: true,
-        account: true,
-        allocations: { include: { invoice: true } }
-      }
+        paymentDate:
+          body.payment_date || body.paymentDate
+            ? new Date(body.payment_date || body.paymentDate)
+            : undefined,
+        idempotencyKey: body.idempotency_key || body.idempotencyKey || null
+      }),
+    { timeout: 30000, maxWait: 10000 }
+  );
+
+  if (!replayed) {
+    await writeAudit({
+      user,
+      action: 'post',
+      module: 'sales',
+      entityType: 'CustomerPayment',
+      entityId: payment.id,
+      summary: `Recorded customer payment ${payment.paymentNumber} (${amount})`
     });
-  });
+  }
 
-  await writeAudit({
-    user,
-    action: 'post',
-    module: 'sales',
-    entityType: 'CustomerPayment',
-    entityId: paymentId,
-    summary: `Recorded customer payment ${paymentNumber} (${allocatedTotal})`
-  });
-
-  return serialize(result);
+  return serialize(payment);
 }

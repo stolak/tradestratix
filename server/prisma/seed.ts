@@ -74,6 +74,7 @@ const MENUS = [
   { code: 'dashboard', name: 'Dashboard', route: 'dashboard', section: 'Overview', sortOrder: 1, icon: 'LayoutDashboard' },
   { code: 'sales', name: 'Sales', route: 'sales', section: 'Commerce', sortOrder: 10, icon: 'ShoppingCart' },
   { code: 'pos', name: 'POS', route: 'pos', section: 'Commerce', sortOrder: 11, icon: 'Monitor' },
+  { code: 'pickups', name: 'Pickups', route: 'pickups', section: 'Commerce', sortOrder: 13, icon: 'PackageCheck' },
   { code: 'purchases', name: 'Purchases', route: 'purchases', section: 'Commerce', sortOrder: 12, icon: 'Truck' },
   { code: 'products', name: 'Products', route: 'products', section: 'Inventory', sortOrder: 20, icon: 'Package' },
   { code: 'branch_pricing', name: 'Branch Pricing', route: 'branch_pricing', section: 'Inventory', sortOrder: 23, icon: 'Tags' },
@@ -137,6 +138,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'dashboard',
       'sales',
       'pos',
+      'pickups',
       'purchases',
       'products',
       'branch_pricing',
@@ -160,6 +162,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
     permissions: [
       'dashboard.*',
       'sales.*',
+      'fulfilment.*',
       'pos.*',
       'purchases.*',
       'products.*',
@@ -197,6 +200,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'dashboard',
       'sales',
       'pos',
+      'pickups',
       'purchases',
       'products',
       'inventory',
@@ -213,6 +217,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
     permissions: [
       'dashboard.view',
       'sales.*',
+      'fulfilment.reallocate',
       'pos.*',
       'products.branch_price',
       'purchases.view',
@@ -248,6 +253,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'products',
       'inventory',
       'warehouses',
+      'pickups',
       'purchases',
       'customers',
       'distribution',
@@ -257,6 +263,8 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'dashboard.view',
       'products.view',
       'products.edit',
+      'sales.fulfil',
+      'fulfilment.reallocate',
       'inventory.*',
       'warehouses.*',
       'purchases.view',
@@ -270,9 +278,10 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
     ]
   },
   inventory_officer: {
-    menus: ['dashboard', 'products', 'inventory', 'warehouses', 'customers'],
+    menus: ['dashboard', 'products', 'inventory', 'warehouses', 'pickups', 'customers'],
     permissions: [
       'dashboard.view',
+      'sales.fulfil',
       'products.view',
       'inventory.view',
       'inventory.create',
@@ -311,6 +320,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'dashboard',
       'sales',
       'pos',
+      'pickups',
       'customers',
       'sales_reps',
       'products',
@@ -322,6 +332,7 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
     permissions: [
       'dashboard.view',
       'sales.*',
+      'fulfilment.reallocate',
       'pos.*',
       'customers.*',
       'sales_reps.*',
@@ -360,13 +371,14 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
     ]
   },
   cashier: {
-    menus: ['dashboard', 'pos', 'sales', 'customers', 'products'],
+    menus: ['dashboard', 'pos', 'sales', 'pickups', 'customers', 'products'],
     permissions: [
       'dashboard.view',
       'pos.*',
       'sales.view',
       'sales.create',
       'sales.print',
+      'sales.fulfil',
       'customers.view',
       'products.view',
       'warehouses.view',
@@ -511,6 +523,7 @@ const COA: { code: string; name: string; accountType: string; key?: string }[] =
   { code: '1135', name: 'Supplier Advances', accountType: 'asset', key: 'supplier_advances' },
   { code: '1136', name: 'Supplier Deposits', accountType: 'asset', key: 'supplier_deposits' },
   { code: '1140', name: 'Inventory Asset', accountType: 'asset', key: 'inventory' },
+  { code: '1150', name: 'Inter-branch Clearing', accountType: 'asset', key: 'inter_branch_clearing' },
   { code: '1200', name: 'Fixed Assets', accountType: 'asset' },
   { code: '1210', name: 'Property, Plant & Equipment', accountType: 'asset', key: 'fixed_assets' },
   { code: '1220', name: 'Accumulated Depreciation', accountType: 'asset', key: 'accumulated_depreciation' },
@@ -578,6 +591,31 @@ async function main() {
       module: 'branches',
       action: 'report_all',
       description: 'Consolidate / report across all authorised branches'
+    },
+    {
+      module: 'sales',
+      action: 'fulfil',
+      description: 'Release invoiced goods to customers collecting from your warehouses (pickups)'
+    },
+    {
+      module: 'sales',
+      action: 'revenue_branch',
+      description: 'Book an invoice’s revenue to a branch other than the one making the sale'
+    },
+    {
+      module: 'sales',
+      action: 'cancel',
+      description: 'Cancel confirmed orders or close the unfulfilled balance of lines (releases stock, credit and deposits)'
+    },
+    {
+      module: 'sales',
+      action: 'override_credit_limit',
+      description: 'Confirm an order beyond the customer credit limit (reason recorded)'
+    },
+    {
+      module: 'fulfilment',
+      action: 'reallocate',
+      description: 'Move order reservations between warehouses, allocate backorders and run reservation expiry'
     },
     {
       module: 'sales',

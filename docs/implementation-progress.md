@@ -1,8 +1,20 @@
 # Implementation Progress
 
-Updated: 2026-11-11
+Updated: 2026-11-12
 
 ## Completed
+
+- **Multi-branch sales fulfilment — Phases 1–2** (details: `multi-branch-fulfilment.md`)
+  - Order lifecycle: draft → confirm (reserves stock + credit, no revenue) → hand-overs → fulfilled; cancel / close short with reason
+  - Split-line allocation engine (manual split, preferred warehouse/branch, fewest locations), preview API + Sales page editor
+  - Lot-level reservations with guarded concurrency, backorders, reallocation, expiry sweeper (`sales.reservation_days`)
+  - Revenue, receivable, tax and commission recognised per hand-over (`recognitionPolicy = at_fulfilment`)
+  - Pre-hand-over payments are customer deposits; excess on cancellation becomes unapplied customer credit
+  - Cross-branch cost of goods and receipts through linked journals on inter-branch clearing
+  - Credit exposure = recognised balances + open order value; override with permission + reason
+  - Permissions: `sales.cancel`, `sales.override_credit_limit`, `fulfilment.reallocate`
+  - Backfill: `npm run backfill:fulfilment` (legacy invoices → `on_posting`)
+  - Tests: `npm run test:fulfilment` (43 passed)
 
 - **System role privilege + menu seeding**
   - `ROLE_ACCESS` matrix grants each system role appropriate permissions and menus
@@ -54,7 +66,8 @@ Updated: 2026-11-11
 
 - Bank reconciliation / statement import
 - Multi-line expense builders (API ready)
-- Inventory valuation reports; sales returns; advances
+- Inventory valuation reports; sales returns / credit notes; advances
+- Fulfilment Phases 3+: picking states, pickup codes, delivery with proof of delivery, returns at any branch, refund of unapplied credit, clearing reconciliation reports
 - SMS / WhatsApp, payment gateways, biometrics, S3 uploads
 - Native mobile apps (API surface ready)
 

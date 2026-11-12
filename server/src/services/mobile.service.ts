@@ -17,7 +17,7 @@ export async function getHome(user: AuthUser) {
         status: 'posted',
         invoiceDate: { gte: start, lte: end }
       },
-      _sum: { totalAmount: true },
+      _sum: { recognisedAmount: true },
       _count: true
     }),
     prisma.deliveryOrder.count({
@@ -32,7 +32,7 @@ export async function getHome(user: AuthUser) {
   return {
     today_sales: {
       count: todaySales._count,
-      amount: roundMoney(Number(todaySales._sum.totalAmount ?? 0))
+      amount: roundMoney(Number(todaySales._sum.recognisedAmount ?? 0))
     },
     open_deliveries: openDeliveries,
     unread_notifications: unread

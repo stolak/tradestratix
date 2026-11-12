@@ -39,7 +39,7 @@ export async function getInsights(user: AuthUser, opts?: BranchListOpts) {
   ] = await Promise.all([
     prisma.salesInvoice.aggregate({
       where: { businessId, status: 'posted', ...scope },
-      _sum: { totalAmount: true },
+      _sum: { recognisedAmount: true },
       _count: true
     }),
     prisma.supplierBill.aggregate({
@@ -138,7 +138,7 @@ export async function getInsights(user: AuthUser, opts?: BranchListOpts) {
   return {
     sales: {
       count: salesAgg._count,
-      total_amount: roundMoney(Number(salesAgg._sum.totalAmount ?? 0))
+      total_amount: roundMoney(Number(salesAgg._sum.recognisedAmount ?? 0))
     },
     purchases: {
       count: purchaseAgg._count,

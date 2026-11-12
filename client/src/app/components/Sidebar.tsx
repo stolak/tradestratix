@@ -26,13 +26,15 @@ import {
   Bell,
   CreditCard,
   LineChart,
-  Tags
+  Tags,
+  PackageCheck
 } from 'lucide-react';
 import { APP_NAME } from '../utils/env';
 import { ROUTES } from '../routes';
 
 const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
   Tags,
+  PackageCheck,
   LayoutDashboard,
   ShoppingCart,
   Monitor,
@@ -68,6 +70,7 @@ const NAV = [
     items: [
       { route: ROUTES.SALES, label: 'Sales', icon: 'ShoppingCart', perm: 'sales.view' },
       { route: ROUTES.POS, label: 'POS', icon: 'Monitor', perm: 'pos.view' },
+      { route: ROUTES.PICKUPS, label: 'Pickups', icon: 'PackageCheck', perm: 'sales.fulfil' },
       { route: ROUTES.PURCHASES, label: 'Purchases', icon: 'Truck', perm: 'purchases.view' }
     ]
   },

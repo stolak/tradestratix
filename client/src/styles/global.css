@@ -1536,8 +1536,69 @@ body.modal-open {
   color: var(--accent);
 }
 
-.invoice-chip--void {
+.invoice-chip--void,
+.invoice-chip--cancelled {
   background: #fdecea;
+  color: var(--danger);
+}
+
+.alloc {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--line, #e3e7ec);
+  border-radius: 12px;
+  background: #fafbfc;
+}
+
+.alloc__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.75rem;
+}
+
+.alloc__title {
+  font-weight: 700;
+}
+
+.alloc__hint,
+.alloc__sub {
+  color: var(--ink-muted);
+  font-size: 0.85rem;
+}
+
+.alloc__line {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.alloc__line-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.alloc__table {
+  width: 100%;
+  max-width: 560px;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.alloc__table th,
+.alloc__table td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--line, #e3e7ec);
+  text-align: left;
+}
+
+.alloc__table .num {
+  text-align: right;
+}
+
+.invoice-view__danger {
   color: var(--danger);
 }
 
@@ -1549,6 +1610,66 @@ body.modal-open {
 .invoice-chip--inactive {
   background: #eef1f4;
   color: var(--ink-muted);
+}
+
+.invoice-chip--fulfilled {
+  background: var(--brand-soft);
+  color: var(--ok);
+}
+
+.invoice-chip--pending,
+.invoice-chip--open {
+  background: #eef3fb;
+  color: #2f5b9a;
+}
+
+/* ---- Fulfilment / pickups ---- */
+.fulfil-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.fulfil-mode__hint {
+  flex: 1 1 280px;
+  font-size: 0.82rem;
+  color: var(--ink-muted);
+}
+
+.pickups__search {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  color: var(--ink-muted);
+}
+
+.pickups__search input {
+  border: none;
+  outline: none;
+  padding: 0.45rem 0;
+  min-width: 220px;
+  background: transparent;
+}
+
+.pickups__foot {
+  padding: 0.6rem 1rem;
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+  border-top: 1px solid var(--line);
+}
+
+.pickups__warning {
+  margin-bottom: 1rem;
+  padding: 0.65rem 0.9rem;
+  border-radius: 10px;
+  background: #fdf0e8;
+  color: var(--accent);
+  font-size: 0.86rem;
 }
 
 /* ---- Page tabs ---- */

@@ -180,6 +180,14 @@ export const DEFAULT_ACCOUNT_CATALOG: DefaultAccountKeyMeta[] = [
     accountTypes: ['expense'],
     category: 'inventory'
   },
+  {
+    key: 'inter_branch_clearing',
+    label: 'Inter-branch Clearing',
+    description:
+      'Due to / due from between branches, e.g. goods sold in one branch and collected from another',
+    accountTypes: ['asset', 'liability'],
+    category: 'inventory'
+  },
   // Sales reps
   {
     key: 'sales_rep_commission_expense',
