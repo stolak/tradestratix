@@ -372,7 +372,10 @@ export const api = {
       const qs = params.toString();
       return request<any[]>(`/sales-reps${qs ? `?${qs}` : ''}`);
     },
-    me: () => request<any | null>('/sales-reps/me'),
+    me: (opts?: { withBalances?: boolean }) => {
+      const qs = opts?.withBalances ? '?with_balances=1' : '';
+      return request<any | null>(`/sales-reps/me${qs}`);
+    },
     create: (body: Record<string, unknown>) =>
       request<any>('/sales-reps', { method: 'POST', body: JSON.stringify(body) }),
     update: (id: string, body: Record<string, unknown>) =>
@@ -388,16 +391,27 @@ export const api = {
         body: JSON.stringify({ active: false })
       }),
     remove: (id: string) => request<any>(`/sales-reps/${id}`, { method: 'DELETE' }),
+    retireCash: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/sales-reps/${id}/retire-cash`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    retireMyCash: (body: Record<string, unknown>) =>
+      request<any>('/sales-reps/me/retire-cash', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
     commissions: (salesRepId?: string) =>
       request<any[]>(
         `/sales-reps/commissions/list${salesRepId ? `?sales_rep_id=${encodeURIComponent(salesRepId)}` : ''}`
       )
   },
   sales: {
-    invoices: (status?: string, channel?: string) => {
+    invoices: (status?: string, channel?: string, opts?: { salesRepId?: string }) => {
       const params = new URLSearchParams();
       if (status) params.set('status', status);
       if (channel) params.set('channel', channel);
+      if (opts?.salesRepId) params.set('sales_rep_id', opts.salesRepId);
       const q = params.toString();
       return request<any[]>(`/sales/invoices${q ? `?${q}` : ''}`);
     },

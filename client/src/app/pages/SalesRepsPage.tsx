@@ -1,12 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
+import { ROUTES, setRouteInLocation } from '../routes';
 
 const emptyForm = {
   employee_id: '',
   code: '',
   commission_percent: '5'
 };
+
+function money(v: unknown) {
+  return Number(v || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
 
 export const SalesRepsPage: React.FC = () => {
   const [rows, setRows] = useState<any[]>([]);
@@ -136,6 +144,7 @@ export const SalesRepsPage: React.FC = () => {
   });
 
   const editingRow = editingId ? rows.find((r) => r.id === editingId) : null;
+  const totalCustody = rows.reduce((s, r) => s + Math.max(0, Number(r.balance || 0)), 0);
 
   return (
     <div className="page-stack">
@@ -144,10 +153,48 @@ export const SalesRepsPage: React.FC = () => {
           Sales reps
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Promote an existing employee. Walk-in sales are attributed to the logged-in rep and count toward their
-          balance. Edit commission, disable anytime; remove only with no activity.
+          Promote employees and track walk-in cash in custody. Retire collections under{' '}
+          <strong>Finance → Banking → Sales cash custody</strong>.
         </p>
       </header>
+
+      {totalCustody > 0.005 ? (
+        <div
+          className="card-surface"
+          style={{
+            padding: '0.9rem 1.15rem',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '0.75rem',
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 700 }}>Cash in custody</div>
+            <div style={{ fontSize: '1.15rem', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+              {money(totalCustody)}
+            </div>
+            <div style={{ color: 'var(--ink-muted)', fontSize: '0.85rem' }}>
+              Hand over in Banking (Finance)
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              try {
+                sessionStorage.setItem('banking_tab', 'custody');
+              } catch {
+                /* ignore */
+              }
+              setRouteInLocation(ROUTES.BANKING);
+            }}
+          >
+            Open Banking → Sales cash custody
+          </button>
+        </div>
+      ) : null}
 
       <form
         onSubmit={save}
@@ -236,7 +283,7 @@ export const SalesRepsPage: React.FC = () => {
                 <th>Home branch</th>
                 <th>Operates in</th>
                 <th>Commission %</th>
-                <th className="num">Balance</th>
+                <th className="num">Cash in custody</th>
                 <th>Status</th>
                 <th />
               </tr>

@@ -661,7 +661,8 @@ export const SalesPage: React.FC = () => {
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
           Draft order → confirm (reserves stock and credit) → hand over (revenue, receivable and cost of
-          goods post per collection) → collect payment. Money taken before hand-over is a customer deposit.
+          goods post per collection) → collect payment. Walk-in cash stays in custody until Finance retires
+          it.
         </p>
       </header>
 

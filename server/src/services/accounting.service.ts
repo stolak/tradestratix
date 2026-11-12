@@ -170,6 +170,8 @@ async function controlAccountIdSets(businessId: string) {
 /**
  * Partner balances from journal *lines* stamped with entity ids (stable if default AR/AP mapping changes).
  * Customer / sales-rep: Σ debit − Σ credit. Supplier (AP): Σ credit − Σ debit (amount owed).
+ * Sales-rep balances only include control accounts (custody / commission payable / recoveries),
+ * so walk-in AR history does not inflate "cash to retire".
  */
 export async function partnerLineBalances(
   businessId: string,
@@ -182,6 +184,17 @@ export async function partnerLineBalances(
       : kind === 'supplier'
         ? 'supplier_id'
         : 'sales_representative_id';
+
+  let accountFilterSql = '';
+  const accountParams: string[] = [];
+  if (kind === 'sales_representative') {
+    const sets = await controlAccountIdSets(businessId);
+    const ids = [...sets.salesRep];
+    if (!ids.length) return new Map();
+    accountFilterSql = `AND jl.account_id IN (${ids.map(() => '?').join(',')})`;
+    accountParams.push(...ids);
+  }
+
   const rows = await prisma.$queryRawUnsafe<Array<{ entity_id: string; balance: unknown }>>(
     `SELECT jl.\`${column}\` AS entity_id,
             ${
@@ -194,9 +207,12 @@ export async function partnerLineBalances(
      WHERE je.business_id = ?
        AND jl.\`${column}\` IS NOT NULL
        AND je.status IN ('posted', 'reversed')
+       ${accountFilterSql}
        ${entityId ? `AND jl.\`${column}\` = ?` : ''}
      GROUP BY jl.\`${column}\``,
-    ...(entityId ? [businessId, entityId] : [businessId])
+    businessId,
+    ...accountParams,
+    ...(entityId ? [entityId] : [])
   );
   return new Map(rows.map((r) => [r.entity_id, roundMoney(Number(r.balance || 0))]));
 }
@@ -353,15 +369,7 @@ export async function createJournal(
     if (!lineSalesRepId && salesRepresentativeId && controlAccounts.salesRep.has(accountId)) {
       lineSalesRepId = salesRepresentativeId;
     }
-    // Walk-in AR also carries the sales rep so each rep can account for their balance.
-    if (
-      !lineSalesRepId &&
-      walkInCustomer &&
-      salesRepresentativeId &&
-      controlAccounts.customer.has(accountId)
-    ) {
-      lineSalesRepId = salesRepresentativeId;
-    }
+    // Walk-in cash responsibility lives on Cash in Custody (sales-rep control), not on AR.
 
     if (lineSupplierId && (lineCustomerId || lineSalesRepId)) {
       throw httpError(

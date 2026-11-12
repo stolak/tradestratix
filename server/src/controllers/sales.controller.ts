@@ -157,8 +157,19 @@ export async function listInvoices(req: Request, res: Response, next: NextFuncti
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
     const channel = typeof req.query.channel === 'string' ? req.query.channel : undefined;
+    const salesRepId =
+      typeof req.query.sales_rep_id === 'string'
+        ? req.query.sales_rep_id
+        : typeof req.query.salesRepId === 'string'
+          ? req.query.salesRepId
+          : undefined;
     return res.json(
-      await salesService.listInvoices(req.user!, { status, channel, ...branchListOpts(req) })
+      await salesService.listInvoices(req.user!, {
+        status,
+        channel,
+        salesRepId,
+        ...branchListOpts(req)
+      })
     );
   } catch (err) {
     return next(err);

@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as salesRepService from '../services/sales-rep.service.js';
+import { httpError } from '../utils/helpers.js';
 
 export async function list(req: Request, res: Response, next: NextFunction) {
   try {
@@ -31,11 +32,41 @@ export async function list(req: Request, res: Response, next: NextFunction) {
 
 export async function mine(req: Request, res: Response, next: NextFunction) {
   try {
+    const withBalance =
+      req.query.with_balances === '1' ||
+      req.query.with_balances === 'true' ||
+      req.query.balances === '1';
     const row = await salesRepService.findSalesRepForUser(
       req.user!.businessId,
-      req.user!.id
+      req.user!.id,
+      { withBalance }
     );
     return res.json(row);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function retireCash(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.status(201).json(
+      await salesRepService.retireSalesRepCash(req.user!, req.params.id, req.body || {})
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function retireMyCash(req: Request, res: Response, next: NextFunction) {
+  try {
+    const me = (await salesRepService.findSalesRepForUser(
+      req.user!.businessId,
+      req.user!.id
+    )) as { id?: string } | null;
+    if (!me?.id) throw httpError(400, 'You are not an active sales representative');
+    return res.status(201).json(
+      await salesRepService.retireSalesRepCash(req.user!, me.id, req.body || {})
+    );
   } catch (err) {
     return next(err);
   }

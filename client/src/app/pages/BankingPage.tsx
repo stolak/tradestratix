@@ -1,11 +1,25 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
+import { SalesRepCustodyFinance } from '../components/SalesRepCustodyFinance';
 
-type Tab = 'accounts' | 'move' | 'transactions';
+type Tab = 'accounts' | 'move' | 'custody' | 'transactions';
+
+function initialBankingTab(): Tab {
+  try {
+    const pref = sessionStorage.getItem('banking_tab');
+    if (pref === 'custody' || pref === 'move' || pref === 'transactions' || pref === 'accounts') {
+      sessionStorage.removeItem('banking_tab');
+      return pref;
+    }
+  } catch {
+    /* ignore */
+  }
+  return 'accounts';
+}
 
 export const BankingPage: React.FC = () => {
-  const [tab, setTab] = useState<Tab>('accounts');
+  const [tab, setTab] = useState<Tab>(initialBankingTab);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [glAccounts, setGlAccounts] = useState<any[]>([]);
   const [txns, setTxns] = useState<any[]>([]);
@@ -114,7 +128,7 @@ export const BankingPage: React.FC = () => {
           Banking
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Bank accounts linked to GL — deposits, withdrawals and transfers.
+          Bank accounts, cash movements, and sales-rep custody retirement into till or bank.
         </p>
       </header>
 
@@ -123,6 +137,7 @@ export const BankingPage: React.FC = () => {
           [
             ['accounts', 'Accounts'],
             ['move', 'Move money'],
+            ['custody', 'Sales cash custody'],
             ['transactions', 'Transactions']
           ] as const
         ).map(([key, label]) => (
@@ -139,6 +154,8 @@ export const BankingPage: React.FC = () => {
           Refresh
         </button>
       </div>
+
+      {tab === 'custody' ? <SalesRepCustodyFinance /> : null}
 
       {tab === 'accounts' ? (
         <>

@@ -16,11 +16,21 @@ router.get(
   requirePermission('sales_reps.view', 'sales.view', 'pos.view'),
   salesRepController.mine
 );
+router.post(
+  '/me/retire-cash',
+  requirePermission('sales_reps.edit', 'banking.post', 'accounting.post', 'sales.post'),
+  salesRepController.retireMyCash
+);
 router.post('/', requirePermission('sales_reps.create'), salesRepController.create);
 router.get(
   '/commissions/list',
   requirePermission('sales_reps.view', 'sales.view'),
   salesRepController.listCommissions
+);
+router.post(
+  '/:id/retire-cash',
+  requirePermission('sales_reps.edit', 'banking.post', 'accounting.post', 'sales.post'),
+  salesRepController.retireCash
 );
 router.patch('/:id', requirePermission('sales_reps.edit'), salesRepController.update);
 router.post('/:id/activate', requirePermission('sales_reps.edit'), salesRepController.setActive);

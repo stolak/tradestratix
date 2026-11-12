@@ -94,17 +94,41 @@ export async function applyPaymentInTx(
   let walkInSalesRepId: string | null = null;
   if (isWalkInCustomer(customerRow)) {
     const repIds = [...new Set(invoices.map((i) => i.salesRepId).filter(Boolean))] as string[];
-    if (!repIds.length) {
-      throw httpError(400, 'Walk-in invoices must have a sales representative before payment');
-    }
     if (repIds.length > 1) {
       throw httpError(
         400,
         'Cannot settle walk-in invoices for different sales representatives in one payment'
       );
     }
-    walkInSalesRepId = repIds[0];
+    if (repIds.length === 1) {
+      walkInSalesRepId = repIds[0];
+    } else {
+      const myRep = await tx.salesRep.findFirst({
+        where: {
+          businessId: user.businessId,
+          status: 'active',
+          employee: { userId: user.id }
+        },
+        select: { id: true }
+      });
+      if (!myRep) {
+        throw httpError(400, 'Walk-in collections must be attributed to a sales representative');
+      }
+      walkInSalesRepId = myRep.id;
+    }
+    if (!accountMap.cash_in_custody_sales_rep) {
+      throw httpError(
+        400,
+        'Default account "cash_in_custody_sales_rep" must be configured for walk-in collections'
+      );
+    }
   }
+
+  // Walk-in cash is held by the sales rep until retired; named customers debit the chosen till/bank.
+  // Keep the tender method (cash/bank/…) on the payment for reconciliation; only the GL debit changes.
+  const debitAccountId = walkInSalesRepId
+    ? accountMap.cash_in_custody_sales_rep
+    : input.accountId;
 
   type Split = { invoiceId: string; branchId: string; ar: number; deposit: number; total: number };
   const splits: Split[] = [];
@@ -161,7 +185,13 @@ export async function applyPaymentInTx(
   const remote = [...byBranch.entries()].filter(([b]) => b !== input.receivingBranchId);
   const remoteTotal = roundMoney(remote.reduce((s, [, v]) => s + v, 0));
   const lines: any[] = [
-    { account_id: input.accountId, debit: amount, description: `${input.method} receipt ${paymentNumber}` }
+    {
+      account_id: debitAccountId,
+      debit: amount,
+      description: walkInSalesRepId
+        ? `Walk-in custody ${paymentNumber}`
+        : `${input.method} receipt ${paymentNumber}`
+    }
   ];
   if (homeAr > 0.01) {
     lines.push({
@@ -245,7 +275,7 @@ export async function applyPaymentInTx(
       // Tracks advance / overpay still available to allocate or refund (memo; GL lives on AR).
       unappliedAmount: toDec(Math.max(0, surplus)),
       method: input.method,
-      accountId: input.accountId,
+      accountId: debitAccountId,
       reference: input.reference || null,
       notes: input.notes || null,
       journalEntryId: receiptJournal.id,

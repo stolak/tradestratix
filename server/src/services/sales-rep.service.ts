@@ -3,7 +3,13 @@ import { httpError, roundMoney, serialize, shortId } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
-import { partnerLineBalances } from './accounting.service.js';
+import {
+  createJournal,
+  getDefaultAccountMap,
+  partnerLineBalances,
+  resolveTransactionDate
+} from './accounting.service.js';
+import { userHasAnyPermission } from './permission.service.js';
 
 const employeeSelect = {
   id: true,
@@ -173,7 +179,11 @@ export async function promoteEmployeeToSalesRep(
   return presentRep(row);
 }
 
-export async function findSalesRepForUser(businessId: string, userId: string) {
+export async function findSalesRepForUser(
+  businessId: string,
+  userId: string,
+  opts?: { withBalance?: boolean }
+) {
   const row = await prisma.salesRep.findFirst({
     where: {
       businessId,
@@ -182,7 +192,130 @@ export async function findSalesRepForUser(businessId: string, userId: string) {
     },
     include: repInclude
   });
-  return row ? serialize(presentRep(row)) : null;
+  if (!row) return null;
+  const presented = presentRep(row);
+  if (!opts?.withBalance) return serialize(presented);
+  const balances = await partnerLineBalances(businessId, 'sales_representative', row.id);
+  return serialize({
+    ...presented,
+    balance: roundMoney(balances.get(row.id) ?? 0)
+  });
+}
+
+/**
+ * Hand over cash held in sales-rep custody into a company till / bank ledger.
+ * Dr received-into account / Cr Cash in Custody (sales rep).
+ */
+export async function retireSalesRepCash(
+  user: AuthUser,
+  salesRepId: string,
+  body: Record<string, any>
+) {
+  const amount = roundMoney(Number(body.amount));
+  if (!(amount > 0)) throw httpError(400, 'amount must be greater than 0');
+
+  const accountId = String(body.account_id || body.accountId || '');
+  if (!accountId) throw httpError(400, 'account_id is required (ledger the cash is retired into)');
+
+  const rep = await prisma.salesRep.findFirst({
+    where: { id: salesRepId, businessId: user.businessId },
+    include: { employee: { select: { id: true, fullName: true, userId: true } } }
+  });
+  if (!rep) throw httpError(404, 'Sales rep not found');
+
+  // Retirement is a Finance / management action — sales reps cannot clear their own custody.
+  const canManage = await userHasAnyPermission(user.id, [
+    'sales_reps.edit',
+    'banking.post',
+    'banking.create',
+    'accounting.post',
+    'sales.post'
+  ]);
+  const isOwner = user.role === 'business_owner' || user.role === 'managing_director';
+  if (!canManage && !isOwner) {
+    throw httpError(403, 'Only Finance / management can retire sales-rep custody cash');
+  }
+
+  const accountMap = await getDefaultAccountMap(user.businessId);
+  const custodyId = accountMap.cash_in_custody_sales_rep;
+  if (!custodyId) {
+    throw httpError(400, 'Default account "cash_in_custody_sales_rep" is not configured');
+  }
+  if (accountId === custodyId) {
+    throw httpError(400, 'Choose a till or bank account — not sales-rep custody');
+  }
+
+  const dest = await prisma.account.findFirst({
+    where: { id: accountId, businessId: user.businessId, isActive: true }
+  });
+  if (!dest) throw httpError(400, 'account_id is invalid for this business');
+  if (String(dest.accountType) !== 'asset') {
+    throw httpError(400, 'Retire into an asset ledger (cash / bank / till)');
+  }
+
+  const balances = await partnerLineBalances(user.businessId, 'sales_representative', rep.id);
+  const held = roundMoney(balances.get(rep.id) ?? 0);
+  if (amount > held + 0.01) {
+    throw httpError(400, `Only ${held.toLocaleString()} in custody to retire`);
+  }
+
+  const branchId = await branchAccess.resolveWriteBranchId(
+    user,
+    body.branch_id || body.branchId || user.activeBranchId
+  );
+  const transactionDate = resolveTransactionDate(
+    body.transaction_date || body.transactionDate || body.payment_date || null
+  );
+  const retirementId = shortId('srr');
+  const name = rep.employee?.fullName || rep.code || rep.id;
+
+  const journal: any = await createJournal(user, {
+    source_type: 'sales_rep_cash_retirement',
+    source_id: retirementId,
+    sales_representative_id: rep.id,
+    post: true,
+    memo: `Cash retirement — ${name}`,
+    idempotency_key:
+      body.idempotency_key || body.idempotencyKey || `sales_rep_retire:${retirementId}`,
+    branch_id: branchId,
+    transaction_date: transactionDate,
+    entry_date: transactionDate,
+    lines: [
+      {
+        account_id: accountId,
+        debit: amount,
+        description: `Cash retired from ${name}`
+      },
+      {
+        account_id: custodyId,
+        credit: amount,
+        description: `Custody cleared — ${name}`
+      }
+    ]
+  });
+
+  await writeAudit({
+    user,
+    action: 'post',
+    module: 'sales_reps',
+    entityType: 'SalesRepCashRetirement',
+    entityId: retirementId,
+    summary: `Retired ${amount} from ${name} into ${dest.code || dest.name}`
+  });
+
+  const after = await partnerLineBalances(user.businessId, 'sales_representative', rep.id);
+  return serialize({
+    id: retirementId,
+    sales_rep_id: rep.id,
+    sales_rep_name: name,
+    amount,
+    account_id: accountId,
+    account: { id: dest.id, code: dest.code, name: dest.name },
+    journal_entry_id: journal.id,
+    journal_entry_number: journal.entryNumber || journal.entry_number,
+    balance_remaining: roundMoney(after.get(rep.id) ?? 0),
+    transaction_date: transactionDate
+  });
 }
 
 /** Active sales reps whose linked login can operate in the given branch. */

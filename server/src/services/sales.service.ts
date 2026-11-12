@@ -55,7 +55,12 @@ const invoiceInclude = {
   },
   branch: { select: { id: true, name: true, code: true } },
   sellingBranch: { select: { id: true, name: true, code: true } },
-  commissions: true
+  commissions: true,
+  allocations: {
+    include: {
+      payment: { select: { id: true, method: true, paymentNumber: true, amount: true } }
+    }
+  }
 };
 
 /** Invoices are visible from the revenue branch and from the branch that made the sale. */
@@ -63,10 +68,22 @@ function withSellingBranch(scope: { branchId: string } | { branchId: { in: strin
   return { OR: [scope, { sellingBranchId: scope.branchId }] };
 }
 
-function presentInvoiceSalesRep<T extends { salesRep?: any }>(row: T) {
-  if (!row.salesRep) return row;
-  return {
+function presentInvoiceSalesRep<T extends { salesRep?: any; allocations?: any[] }>(row: T) {
+  const methods = [
+    ...new Set(
+      (row.allocations || [])
+        .map((a) => String(a?.payment?.method || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  ];
+  const withMethod = {
     ...row,
+    payment_method: methods[0] || null,
+    payment_methods: methods
+  };
+  if (!row.salesRep) return withMethod;
+  return {
+    ...withMethod,
     salesRep: {
       ...row.salesRep,
       name: row.salesRep.employee?.fullName ?? null,
@@ -240,7 +257,7 @@ async function buildInvoiceLines(user: AuthUser, itemsInput: any[], branchId: st
 
 export async function listInvoices(
   user: AuthUser,
-  opts?: { status?: string; channel?: string } & BranchListOpts
+  opts?: { status?: string; channel?: string; salesRepId?: string } & BranchListOpts
 ) {
   const scope = await branchAccess.branchScopeWhere(user, {
     branchId: opts?.branchId,
@@ -251,7 +268,8 @@ export async function listInvoices(
       businessId: user.businessId,
       ...withSellingBranch(scope),
       ...(opts?.status ? { status: opts.status } : {}),
-      ...(opts?.channel ? { channel: opts.channel } : {})
+      ...(opts?.channel ? { channel: opts.channel } : {}),
+      ...(opts?.salesRepId ? { salesRepId: opts.salesRepId } : {})
     },
     include: invoiceInclude,
     orderBy: { createdAt: 'desc' }
@@ -596,7 +614,7 @@ export async function postInvoice(user: AuthUser, id: string, opts: ConfirmOptio
   }
 
   const accountMap = await getDefaultAccountMap(user.businessId);
-  for (const key of ['sales_revenue', 'cogs', 'inventory', 'accounts_receivable', 'cash', 'bank']) {
+  for (const key of ['sales_revenue', 'cogs', 'inventory', 'accounts_receivable']) {
     if (!accountMap[key]) throw httpError(400, `Default account "${key}" is not configured`);
   }
 
@@ -604,8 +622,25 @@ export async function postInvoice(user: AuthUser, id: string, opts: ConfirmOptio
   const totalAmount = Number(invoice.totalAmount);
   const payNow = Boolean(opts.pay_now) || invoice.channel === 'pos';
   const method = String(opts.payment_method || (payNow ? 'cash' : '')).toLowerCase();
+  const walkInSale = isWalkInCustomer(invoice.customer);
+  if (payNow && walkInSale && !accountMap.cash_in_custody_sales_rep) {
+    throw httpError(
+      400,
+      'Default account "cash_in_custody_sales_rep" must be configured for walk-in collections'
+    );
+  }
+  if (payNow && !walkInSale) {
+    const settleKey = method === 'bank' || method === 'transfer' ? 'bank' : 'cash';
+    if (!opts.account_id && !accountMap[settleKey]) {
+      throw httpError(400, `Default account "${settleKey}" is not configured`);
+    }
+  }
+  // Walk-in always posts to custody (applyPaymentInTx enforces); till/bank is for named customers.
   const settleAccountId = payNow
-    ? opts.account_id || (method === 'bank' || method === 'transfer' ? accountMap.bank : accountMap.cash)
+    ? walkInSale
+      ? accountMap.cash_in_custody_sales_rep
+      : opts.account_id ||
+        (method === 'bank' || method === 'transfer' ? accountMap.bank : accountMap.cash)
     : null;
   let payAmount = 0;
   if (payNow) {
