@@ -27,6 +27,7 @@ type Row = {
   available: number;
   in_transit: number;
   expired_qty: number;
+  nearest_expiry: string | null;
   stock_value: number;
   avg_cost: number | null;
 };
@@ -43,6 +44,8 @@ type ProductGroup = {
   available: number;
   in_transit: number;
   expired_qty: number;
+  nearest_expiry: string | null;
+  lots: number;
   stock_value: number;
   rows: Row[];
 };
@@ -158,6 +161,8 @@ export const StockBalanceReport: React.FC = () => {
           available: 0,
           in_transit: 0,
           expired_qty: 0,
+          nearest_expiry: null,
+          lots: 0,
           stock_value: 0,
           rows: []
         } as ProductGroup);
@@ -166,7 +171,13 @@ export const StockBalanceReport: React.FC = () => {
       g.available += r.available;
       g.in_transit += r.in_transit;
       g.expired_qty += r.expired_qty;
+      g.lots += r.lots || 0;
       g.stock_value += r.stock_value;
+      if (r.nearest_expiry) {
+        if (!g.nearest_expiry || r.nearest_expiry < g.nearest_expiry) {
+          g.nearest_expiry = r.nearest_expiry;
+        }
+      }
       g.rows.push(r);
       map.set(r.variant_id, g);
     }
@@ -224,7 +235,21 @@ export const StockBalanceReport: React.FC = () => {
     } else if (view === 'product') {
       downloadCsv(
         `stock-balance-by-product-${stamp}.csv`,
-        ['Product', 'SKU', 'Category', 'UoM', 'On hand', 'Reserved', 'Available', 'In transit', 'Expired', 'Reorder level', 'Stock value'],
+        [
+          'Product',
+          'SKU',
+          'Category',
+          'UoM',
+          'On hand',
+          'Reserved',
+          'Available',
+          'In transit',
+          'Lots',
+          'Nearest expiry',
+          'Expired',
+          'Reorder level',
+          'Stock value'
+        ],
         visibleProducts.map((p) => [
           p.name,
           p.sku,
@@ -234,6 +259,8 @@ export const StockBalanceReport: React.FC = () => {
           p.reserved,
           p.available,
           p.in_transit,
+          p.lots,
+          p.nearest_expiry,
           p.expired_qty,
           p.reorder_level,
           Math.round(p.stock_value * 100) / 100
@@ -397,6 +424,8 @@ export const StockBalanceReport: React.FC = () => {
                   <th className="num">Reserved</th>
                   <th className="num">Available</th>
                   <th className="num">In transit</th>
+                  <th className="num">Lots</th>
+                  <th>Nearest expiry</th>
                   <th className="num">Stock value</th>
                 </tr>
               </thead>
@@ -435,6 +464,8 @@ export const StockBalanceReport: React.FC = () => {
                           ) : null}
                         </td>
                         <td className="num">{qty(p.in_transit)}</td>
+                        <td className="num">{p.lots}</td>
+                        <td>{p.nearest_expiry || '—'}</td>
                         <td className="num">{money(p.stock_value)}</td>
                       </tr>
                       {open
@@ -449,6 +480,8 @@ export const StockBalanceReport: React.FC = () => {
                               <td className="num">{qty(r.reserved)}</td>
                               <td className="num">{qty(r.available)}</td>
                               <td className="num">{qty(r.in_transit)}</td>
+                              <td className="num">{r.lots}</td>
+                              <td>{r.nearest_expiry || '—'}</td>
                               <td className="num">{money(r.stock_value)}</td>
                             </tr>
                           ))
@@ -458,7 +491,7 @@ export const StockBalanceReport: React.FC = () => {
                 })}
                 {!visibleProducts.length ? (
                   <tr>
-                    <td colSpan={9} style={{ color: 'var(--ink-muted)' }}>
+                    <td colSpan={11} style={{ color: 'var(--ink-muted)' }}>
                       {loading ? 'Loading…' : 'No stock for this selection.'}
                     </td>
                   </tr>

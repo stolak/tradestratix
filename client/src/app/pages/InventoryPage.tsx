@@ -4,11 +4,10 @@ import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
 import { StockBalanceReport } from '../components/StockBalanceReport';
 
 type TransferLine = { product_id: string; quantity: string };
-type InventoryTab = 'board' | 'stock' | 'movements' | 'expiry' | 'transfers';
+type InventoryTab = 'stock' | 'movements' | 'expiry' | 'transfers';
 
 export const InventoryPage: React.FC = () => {
-  const [tab, setTab] = useState<InventoryTab>('board');
-  const [board, setBoard] = useState<any[]>([]);
+  const [tab, setTab] = useState<InventoryTab>('stock');
   const [movements, setMovements] = useState<any[]>([]);
   const [expiry, setExpiry] = useState<any[]>([]);
   const [transfers, setTransfers] = useState<any[]>([]);
@@ -25,15 +24,13 @@ export const InventoryPage: React.FC = () => {
 
   const load = async () => {
     try {
-      const [b, m, e, t, p, tw] = await Promise.all([
-        api.inventory.board(),
+      const [m, e, t, p, tw] = await Promise.all([
         api.inventory.movements(),
         api.inventory.expiry(90),
         api.inventory.transfers(),
         api.products.list(),
         api.inventory.transferWarehouses().catch(() => ({ from: [], to: [] }))
       ]);
-      setBoard(b);
       setMovements(m);
       setExpiry(e);
       setTransfers(t);
@@ -167,14 +164,13 @@ export const InventoryPage: React.FC = () => {
           Inventory
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Stock board, stock balance, movements, and warehouse transfers (goods in transit until received).
+          Stock balance, movements, and warehouse transfers (goods in transit until received).
         </p>
       </header>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {(
           [
-            ['board', 'Stock board'],
             ['stock', 'Stock balance'],
             ['movements', 'Movements'],
             ['expiry', 'Expiry'],
@@ -193,46 +189,6 @@ export const InventoryPage: React.FC = () => {
       </div>
 
       {tab === 'stock' ? <StockBalanceReport /> : null}
-
-      {tab === 'board' ? (
-        <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Product</th>
-                  <th className="num">On hand</th>
-                  <th className="num">Available</th>
-                  <th className="num">In transit</th>
-                  <th>Lots</th>
-                  <th>Nearest expiry</th>
-                  <th>Alerts</th>
-                </tr>
-              </thead>
-              <tbody>
-                {board.map((p) => (
-                  <tr key={p.id}>
-                    <td>
-                      {p.name}
-                      <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{p.sku}</div>
-                    </td>
-                    <td className="num">{p.on_hand}</td>
-                    <td className="num">{p.available}</td>
-                    <td className="num">{p.in_transit || 0}</td>
-                    <td>{p.lots_count}</td>
-                    <td>{p.nearest_expiry || '—'}</td>
-                    <td>
-                      {p.is_low_stock ? 'Low stock' : ''}
-                      {p.has_expired_lots ? (p.is_low_stock ? ' · Expired' : 'Expired') : ''}
-                      {!p.is_low_stock && !p.has_expired_lots ? '—' : ''}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : null}
 
       {tab === 'movements' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>

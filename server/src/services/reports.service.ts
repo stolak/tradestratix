@@ -255,6 +255,7 @@ export async function stockBalance(
     available: number;
     in_transit: number;
     expired_qty: number;
+    nearest_expiry: string | null;
     stock_value: number;
     avg_cost: number | null;
   };
@@ -285,6 +286,7 @@ export async function stockBalance(
         available: 0,
         in_transit: 0,
         expired_qty: 0,
+        nearest_expiry: null,
         stock_value: 0,
         avg_cost: null
       } as Row);
@@ -294,6 +296,11 @@ export async function stockBalance(
     row.reserved += Number(lot.quantityReserved);
     row.in_transit += Number(lot.quantityInTransit);
     if (lot.expiryDate && lot.expiryDate < today) row.expired_qty += onHand;
+    if (lot.expiryDate && onHand > 0) {
+      if (!row.nearest_expiry || lot.expiryDate < row.nearest_expiry) {
+        row.nearest_expiry = lot.expiryDate;
+      }
+    }
     row.stock_value += onHand * Number(lot.unitCost || 0);
     rows.set(key, row);
   }
@@ -307,6 +314,7 @@ export async function stockBalance(
       available: qty(r.on_hand - r.reserved - r.in_transit),
       in_transit: qty(r.in_transit),
       expired_qty: qty(r.expired_qty),
+      nearest_expiry: r.nearest_expiry,
       stock_value: roundMoney(r.stock_value),
       avg_cost: r.on_hand > 0 ? roundMoney(r.stock_value / r.on_hand) : null
     }))
