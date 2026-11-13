@@ -21,6 +21,9 @@ const MOVEMENT_TYPES = [
   'transfer_cancel'
 ] as const;
 
+const EXPIRY_DAY_OPTIONS = [7, 14, 30, 60, 90] as const;
+const DEFAULT_EXPIRY_DAYS = 60;
+
 function fmtWhen(value?: string | null) {
   if (!value) return '—';
   return String(value).slice(0, 19).replace('T', ' ');
@@ -31,6 +34,8 @@ export const InventoryPage: React.FC = () => {
   const [movements, setMovements] = useState<any[]>([]);
   const [movementsLoading, setMovementsLoading] = useState(false);
   const [expiry, setExpiry] = useState<any[]>([]);
+  const [expiryLoading, setExpiryLoading] = useState(false);
+  const [expiryDays, setExpiryDays] = useState<number>(DEFAULT_EXPIRY_DAYS);
   const [transfers, setTransfers] = useState<any[]>([]);
   const [transfersLoading, setTransfersLoading] = useState(false);
   const [products, setProducts] = useState<any[]>([]);
@@ -73,6 +78,17 @@ export const InventoryPage: React.FC = () => {
     }
   };
 
+  const loadExpiry = async (days = expiryDays) => {
+    setExpiryLoading(true);
+    try {
+      setExpiry(await api.inventory.expiry(days));
+    } catch (err: any) {
+      await alertError('Expiry', err.message);
+    } finally {
+      setExpiryLoading(false);
+    }
+  };
+
   const loadTransfers = async (filter = transferFilter) => {
     setTransfersLoading(true);
     try {
@@ -93,7 +109,7 @@ export const InventoryPage: React.FC = () => {
     try {
       const [m, e, t, p, w, tw] = await Promise.all([
         api.inventory.movements(),
-        api.inventory.expiry(90),
+        api.inventory.expiry(expiryDays),
         api.inventory.transfers({
           from: transferFilter.from || undefined,
           to: transferFilter.to || undefined
@@ -406,6 +422,36 @@ export const InventoryPage: React.FC = () => {
 
       {tab === 'expiry' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+          <div
+            style={{
+              padding: '0.75rem 1rem',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12
+            }}
+          >
+            <div style={{ fontWeight: 600 }}>Near expiry &amp; expired</div>
+            <div className="field" style={{ margin: 0, minWidth: 160 }}>
+              <label>Period</label>
+              <select
+                value={expiryDays}
+                disabled={expiryLoading}
+                onChange={(e) => {
+                  const days = Number(e.target.value) || DEFAULT_EXPIRY_DAYS;
+                  setExpiryDays(days);
+                  void loadExpiry(days);
+                }}
+              >
+                {EXPIRY_DAY_OPTIONS.map((d) => (
+                  <option key={d} value={d}>
+                    Next {d} days
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
           <div className="table-wrap">
             <table className="table">
               <thead>
@@ -429,7 +475,11 @@ export const InventoryPage: React.FC = () => {
                 ))}
                 {!expiry.length ? (
                   <tr>
-                    <td colSpan={5}>No near-expiry or expired lots in the next 90 days</td>
+                    <td colSpan={5} style={{ color: 'var(--ink-muted)' }}>
+                      {expiryLoading
+                        ? 'Loading…'
+                        : `No near-expiry or expired lots in the next ${expiryDays} days`}
+                    </td>
                   </tr>
                 ) : null}
               </tbody>
