@@ -138,6 +138,38 @@ export async function entityLedger(req: Request, res: Response, next: NextFuncti
   }
 }
 
+export async function ledgerStatement(req: Request, res: Response, next: NextFunction) {
+  try {
+    const accountId =
+      typeof req.query.account_id === 'string' ? req.query.account_id : undefined;
+    if (!accountId) {
+      return res.status(400).json({ error: 'account_id is required' });
+    }
+    const start =
+      typeof req.query.start === 'string'
+        ? req.query.start
+        : typeof req.query.from === 'string'
+          ? req.query.from
+          : undefined;
+    const end =
+      typeof req.query.end === 'string'
+        ? req.query.end
+        : typeof req.query.to === 'string'
+          ? req.query.to
+          : undefined;
+    return res.json(
+      await accountingService.ledgerStatement(req.user!, {
+        accountId,
+        start,
+        end,
+        ...branchListOpts(req)
+      })
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function createJournal(req: Request, res: Response, next: NextFunction) {
   try {
     const body = req.body || {};
@@ -175,7 +207,15 @@ export async function reverseJournal(req: Request, res: Response, next: NextFunc
 
 export async function trialBalance(req: Request, res: Response, next: NextFunction) {
   try {
-    return res.json(await accountingService.trialBalance(req.user!, branchListOpts(req)));
+    const asAt =
+      typeof req.query.as_at === 'string'
+        ? req.query.as_at
+        : typeof req.query.as_of === 'string'
+          ? req.query.as_of
+          : undefined;
+    return res.json(
+      await accountingService.trialBalance(req.user!, { ...branchListOpts(req), asAt })
+    );
   } catch (err) {
     return next(err);
   }
@@ -184,7 +224,14 @@ export async function trialBalance(req: Request, res: Response, next: NextFuncti
 export async function profitAndLoss(req: Request, res: Response, next: NextFunction) {
   try {
     const from = typeof req.query.from === 'string' ? req.query.from : undefined;
-    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+    const to =
+      typeof req.query.to === 'string'
+        ? req.query.to
+        : typeof req.query.as_at === 'string'
+          ? req.query.as_at
+          : typeof req.query.as_of === 'string'
+            ? req.query.as_of
+            : undefined;
     return res.json(
       await accountingService.profitAndLoss(req.user!, from, to, branchListOpts(req))
     );
@@ -195,7 +242,12 @@ export async function profitAndLoss(req: Request, res: Response, next: NextFunct
 
 export async function balanceSheet(req: Request, res: Response, next: NextFunction) {
   try {
-    const asOf = typeof req.query.as_of === 'string' ? req.query.as_of : undefined;
+    const asOf =
+      typeof req.query.as_of === 'string'
+        ? req.query.as_of
+        : typeof req.query.as_at === 'string'
+          ? req.query.as_at
+          : undefined;
     return res.json(await accountingService.balanceSheet(req.user!, asOf, branchListOpts(req)));
   } catch (err) {
     return next(err);

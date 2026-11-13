@@ -35,6 +35,11 @@ router.put(
 );
 router.get('/journals', requirePermission('accounting.view'), accountingController.listJournals);
 router.get(
+  '/ledger-statement',
+  requirePermission('accounting.view', 'reports.view'),
+  accountingController.ledgerStatement
+);
+router.get(
   '/ledgers/:entityType/:entityId',
   requirePermission('accounting.view', 'reports.view'),
   accountingController.entityLedger

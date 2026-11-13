@@ -175,6 +175,13 @@ export const api = {
     },
     entityLedger: (entityType: string, entityId: string) =>
       request<any>(`/accounting/ledgers/${encodeURIComponent(entityType)}/${encodeURIComponent(entityId)}`),
+    ledgerStatement: (params: { account_id: string; start?: string; end?: string }) => {
+      const q = new URLSearchParams();
+      q.set('account_id', params.account_id);
+      if (params.start) q.set('start', params.start);
+      if (params.end) q.set('end', params.end);
+      return request<any>(`/accounting/ledger-statement?${q.toString()}`);
+    },
     defaultAccounts: () => request<any[]>('/accounting/default-accounts'),
     defaultAccountStatus: () => request<any[]>('/accounting/default-accounts/status'),
     defaultAccountCatalog: () => request<any[]>('/accounting/default-accounts/catalog'),
@@ -183,7 +190,10 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(body)
       }),
-    trialBalance: () => request<any>('/accounting/trial-balance'),
+    trialBalance: (asAt?: string) =>
+      request<any>(
+        `/accounting/trial-balance${asAt ? `?as_at=${encodeURIComponent(asAt)}` : ''}`
+      ),
     profitLoss: (from?: string, to?: string) => {
       const params = new URLSearchParams();
       if (from) params.set('from', from);
@@ -192,7 +202,11 @@ export const api = {
       return request<any>(`/accounting/profit-loss${q ? `?${q}` : ''}`);
     },
     balanceSheet: (asOf?: string) =>
-      request<any>(`/accounting/balance-sheet${asOf ? `?as_of=${encodeURIComponent(asOf)}` : ''}`),
+      request<any>(
+        `/accounting/balance-sheet${
+          asOf ? `?as_of=${encodeURIComponent(asOf)}` : ''
+        }`
+      ),
     cashFlow: (from?: string, to?: string) => {
       const params = new URLSearchParams();
       if (from) params.set('from', from);

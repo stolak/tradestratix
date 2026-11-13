@@ -1,12 +1,17 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Eye, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, Eye, Plus, X } from 'lucide-react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
 import { DefaultAccountsPanel } from '../components/DefaultAccountsPanel';
 import { SearchSelect } from '../components/SearchSelect';
+import {
+  buildConsolidatedReportTree,
+  flattenExpandedReportTree,
+  type ConsolidatedReportNode
+} from '../utils/accountReportTree';
 
-type Tab = 'coa' | 'defaults' | 'journals' | 'trial' | 'pl' | 'bs' | 'cf' | 'periods';
+type Tab = 'coa' | 'defaults' | 'journals' | 'trial' | 'pl' | 'bs' | 'cf' | 'ledger' | 'periods';
 
 const ACCOUNT_TYPES = [
   { value: 'asset', label: 'Asset' },
@@ -78,6 +83,15 @@ export const AccountingPage: React.FC = () => {
   const [tab, setTab] = useState<Tab>('coa');
   const [cfFrom, setCfFrom] = useState(yearStartIsoDate);
   const [cfTo, setCfTo] = useState(todayIsoDate);
+  const [asAtDate, setAsAtDate] = useState(todayIsoDate);
+  const [expandedReportIds, setExpandedReportIds] = useState<Set<string>>(() => new Set());
+  const [reportLoading, setReportLoading] = useState(false);
+
+  const [ledgerAccountId, setLedgerAccountId] = useState('');
+  const [ledgerStart, setLedgerStart] = useState(yearStartIsoDate);
+  const [ledgerEnd, setLedgerEnd] = useState(todayIsoDate);
+  const [ledgerStatement, setLedgerStatement] = useState<any>(null);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
 
   const [journalStart, setJournalStart] = useState('');
   const [journalEnd, setJournalEnd] = useState('');
@@ -111,6 +125,43 @@ export const AccountingPage: React.FC = () => {
     accounts.forEach((a) => map.set(a.id, a));
     return map;
   }, [accounts]);
+
+  const trialTree = useMemo(
+    () => buildConsolidatedReportTree(trial?.rows, accounts),
+    [trial, accounts]
+  );
+  const trialDisplayRows = useMemo(
+    () => flattenExpandedReportTree(trialTree, expandedReportIds),
+    [trialTree, expandedReportIds]
+  );
+  const plRevenueTree = useMemo(
+    () => buildConsolidatedReportTree(pl?.revenues || pl?.revenue, accounts),
+    [pl, accounts]
+  );
+  const plCogsTree = useMemo(
+    () => buildConsolidatedReportTree(pl?.cogs, accounts),
+    [pl, accounts]
+  );
+  const plExpenseTree = useMemo(
+    () => buildConsolidatedReportTree(pl?.expenses, accounts),
+    [pl, accounts]
+  );
+  const balanceAssetTree = useMemo(
+    () => buildConsolidatedReportTree(bs?.assets, accounts),
+    [bs, accounts]
+  );
+  const balanceLiabilityTree = useMemo(
+    () => buildConsolidatedReportTree(bs?.liabilities, accounts),
+    [bs, accounts]
+  );
+  const balanceEquityTree = useMemo(
+    () =>
+      buildConsolidatedReportTree(
+        (bs?.equity || []).filter((r: any) => r.account_id !== '__net_income__'),
+        accounts
+      ),
+    [bs, accounts]
+  );
 
   const activeAccountOptions = useMemo(
     () =>
@@ -184,25 +235,77 @@ export const AccountingPage: React.FC = () => {
     }
   };
 
+  const loadTrial = async (asAt = asAtDate) => {
+    try {
+      setReportLoading(true);
+      setTrial(await api.accounting.trialBalance(asAt || undefined));
+    } catch (e: any) {
+      await alertError('Trial balance', e.message);
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  const loadPl = async (asAt = asAtDate) => {
+    try {
+      setReportLoading(true);
+      setPl(await api.accounting.profitLoss(undefined, asAt || undefined));
+    } catch (e: any) {
+      await alertError('Profit & loss', e.message);
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  const loadBs = async (asAt = asAtDate) => {
+    try {
+      setReportLoading(true);
+      setBs(await api.accounting.balanceSheet(asAt || undefined));
+    } catch (e: any) {
+      await alertError('Balance sheet', e.message);
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  const loadLedgerStatement = async () => {
+    if (!ledgerAccountId) {
+      await alertError('Ledger statement', 'Select a ledger account');
+      return;
+    }
+    try {
+      setLedgerLoading(true);
+      setLedgerStatement(
+        await api.accounting.ledgerStatement({
+          account_id: ledgerAccountId,
+          start: ledgerStart || undefined,
+          end: ledgerEnd || undefined
+        })
+      );
+    } catch (e: any) {
+      await alertError('Ledger statement', e.message);
+    } finally {
+      setLedgerLoading(false);
+    }
+  };
+
   const load = async (from = cfFrom, to = cfTo) => {
     try {
-      const [a, t, p, b, c, per] = await Promise.all([
+      const [a, c, per] = await Promise.all([
         api.accounting.accounts(),
-        api.accounting.trialBalance(),
-        api.accounting.profitLoss(),
-        api.accounting.balanceSheet(),
         api.accounting.cashFlow(from || undefined, to || undefined),
         api.accounting.periods()
       ]);
       await loadJournals();
       setAccounts(a);
-      setTrial(t);
-      setPl(p);
-      setBs(b);
       setCf(c);
       setPeriods(per);
+      if (tab === 'trial') await loadTrial();
+      if (tab === 'pl') await loadPl();
+      if (tab === 'bs') await loadBs();
       const active = a.filter((x: any) => x.is_active);
       if (active.length) {
+        setLedgerAccountId((prev) => prev || active[0].id);
         setJournalLines((lines) =>
           lines.every((l) => !l.account_id)
             ? [
@@ -231,6 +334,110 @@ export const AccountingPage: React.FC = () => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (tab === 'trial') void loadTrial();
+    if (tab === 'pl') void loadPl();
+    if (tab === 'bs') void loadBs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab]);
+
+  const toggleReportExpand = (accountId: string) => {
+    setExpandedReportIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(accountId)) next.delete(accountId);
+      else next.add(accountId);
+      return next;
+    });
+  };
+
+  const renderReportName = (node: ConsolidatedReportNode) => {
+    if (node.is_direct) {
+      return (
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+            paddingLeft: node.depth * 14,
+            fontStyle: 'italic',
+            color: 'var(--ink-muted)'
+          }}
+          title="Amounts journaled directly to this parent ledger (not via children)"
+        >
+          {node.name}
+        </span>
+      );
+    }
+
+    return (
+      <button
+        type="button"
+        disabled={!node.has_children}
+        onClick={() => node.has_children && toggleReportExpand(node.account_id)}
+        className="btn btn-ghost"
+        style={{
+          padding: '0.15rem 0.35rem',
+          justifyContent: 'flex-start',
+          paddingLeft: node.depth * 14,
+          fontWeight: node.has_children ? 700 : 500,
+          cursor: node.has_children ? 'pointer' : 'default'
+        }}
+        title={
+          node.has_children
+            ? expandedReportIds.has(node.account_id)
+              ? 'Hide breakdown'
+              : 'Show breakdown (direct + children)'
+            : undefined
+        }
+      >
+        {node.has_children ? (
+          expandedReportIds.has(node.account_id) ? (
+            <ChevronDown size={14} />
+          ) : (
+            <ChevronRight size={14} />
+          )
+        ) : (
+          <span style={{ width: 14, display: 'inline-block' }} />
+        )}
+        <span>
+          {node.code} — {node.name}
+        </span>
+        {node.has_children && !expandedReportIds.has(node.account_id) ? (
+          <span style={{ marginLeft: 6, fontSize: '0.7rem', color: 'var(--ink-muted)' }}>
+            total
+          </span>
+        ) : null}
+      </button>
+    );
+  };
+
+  const asAtToolbar = (onRun: () => void) => (
+    <div
+      style={{
+        padding: '0.75rem 1rem',
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 12,
+        alignItems: 'end',
+        justifyContent: 'space-between'
+      }}
+    >
+      <div style={{ color: 'var(--ink-muted)', fontSize: '0.85rem' }}>
+        Parent totals = direct postings on the parent + all children. Expand a parent to see each
+        part.
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'end' }}>
+        <div className="field" style={{ margin: 0 }}>
+          <label>As at</label>
+          <input type="date" value={asAtDate} onChange={(e) => setAsAtDate(e.target.value)} />
+        </div>
+        <button type="button" className="btn btn-primary" disabled={reportLoading} onClick={onRun}>
+          {reportLoading ? 'Running…' : 'Run report'}
+        </button>
+      </div>
+    </div>
+  );
 
   useEffect(() => {
     if (!showAccountModal && !showJournalModal && !viewingJournal) return;
@@ -372,8 +579,18 @@ export const AccountingPage: React.FC = () => {
     { id: 'pl', label: 'Profit & loss' },
     { id: 'bs', label: 'Balance sheet' },
     { id: 'cf', label: 'Cash flow' },
+    { id: 'ledger', label: 'Ledger statement' },
     { id: 'periods', label: 'Periods' }
   ];
+
+  const ledgerAccountOptions = useMemo(
+    () =>
+      accountTreeRows.map((a) => ({
+        value: a.id,
+        label: `${'— '.repeat(a.depth)}${a.code} — ${a.name}${a.is_active ? '' : ' (disabled)'}`
+      })),
+    [accountTreeRows]
+  );
 
   const renderModalShell = (
     title: string,
@@ -703,128 +920,261 @@ export const AccountingPage: React.FC = () => {
       ) : null}
 
       {tab === 'trial' ? (
-        <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Code</th>
-                  <th>Account</th>
-                  <th>Debit</th>
-                  <th>Credit</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(trial?.rows || []).map((r: any) => (
-                  <tr key={r.account_id}>
-                    <td>{r.code}</td>
-                    <td>{r.name}</td>
-                    <td>{r.balance_debit}</td>
-                    <td>{r.balance_credit}</td>
-                  </tr>
-                ))}
-                <tr>
-                  <td colSpan={2}>
-                    <strong>Totals {trial?.balanced ? '(balanced)' : '(unbalanced)'}</strong>
-                  </td>
-                  <td>
-                    <strong>{trial?.total_debit ?? 0}</strong>
-                  </td>
-                  <td>
-                    <strong>{trial?.total_credit ?? 0}</strong>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : null}
-
-      {tab === 'pl' && pl ? (
-        <div className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 16 }}>
-          {(
-            [
-              ['Revenue', pl.revenue, pl.totals.revenue],
-              ['COGS', pl.cogs, pl.totals.cogs],
-              ['Expenses', pl.expenses, pl.totals.expenses]
-            ] as const
-          ).map(([title, rows, total]) => (
-            <div key={title}>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>{title}</div>
+        <div className="card-surface" style={{ padding: '0.5rem 0', display: 'grid', gap: 0 }}>
+          {asAtToolbar(() => void loadTrial(asAtDate))}
+          {!trial ? (
+            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--ink-muted)' }}>
+              {reportLoading ? 'Loading trial balance…' : 'Run the report to view trial balance.'}
+            </div>
+          ) : (
+            <>
+              <div
+                style={{
+                  margin: '0 1rem 0.75rem',
+                  padding: '0.65rem 0.85rem',
+                  borderRadius: 10,
+                  border: '1px solid var(--line)',
+                  background: trial.balanced
+                    ? 'rgba(16, 185, 129, 0.08)'
+                    : 'rgba(239, 68, 68, 0.08)',
+                  fontSize: '0.9rem',
+                  fontWeight: 600
+                }}
+              >
+                As at {trial.as_at || asAtDate} — Trial balance{' '}
+                {trial.balanced ? 'is balanced' : 'is NOT balanced'} — Debits{' '}
+                {money(trial.total_debit)} / Credits {money(trial.total_credit)}
+              </div>
               <div className="table-wrap">
                 <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Account</th>
+                      <th>Type</th>
+                      <th className="num">Debit</th>
+                      <th className="num">Credit</th>
+                      <th className="num">Balance</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {(rows || []).map((r: any) => (
-                      <tr key={r.code}>
-                        <td>
-                          {r.code} — {r.name}
+                    {trialDisplayRows.map((r) => (
+                      <tr
+                        key={r.row_key}
+                        style={
+                          r.is_direct
+                            ? { background: 'rgba(245, 158, 11, 0.08)' }
+                            : r.has_children
+                              ? { background: 'rgba(15, 23, 42, 0.02)' }
+                              : undefined
+                        }
+                      >
+                        <td>{renderReportName(r)}</td>
+                        <td>{r.account_type}</td>
+                        <td className="num">{money(r.debit)}</td>
+                        <td className="num">{money(r.credit)}</td>
+                        <td className="num">
+                          <strong>{money(r.balance)}</strong>
                         </td>
-                        <td style={{ textAlign: 'right' }}>{Number(r.amount).toLocaleString()}</td>
                       </tr>
                     ))}
                     <tr>
-                      <td>
-                        <strong>Total {title}</strong>
+                      <td colSpan={2}>
+                        <strong>Totals</strong>
                       </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <strong>{Number(total).toLocaleString()}</strong>
+                      <td className="num">
+                        <strong>{money(trial.total_debit)}</strong>
+                      </td>
+                      <td className="num">
+                        <strong>{money(trial.total_credit)}</strong>
+                      </td>
+                      <td className="num">
+                        <strong>
+                          {money(Number(trial.total_debit || 0) - Number(trial.total_credit || 0))}
+                        </strong>
                       </td>
                     </tr>
                   </tbody>
                 </table>
               </div>
-            </div>
-          ))}
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.1rem' }}>
-            <strong>Gross profit</strong>
-            <strong>{Number(pl.totals.gross_profit).toLocaleString()}</strong>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.25rem' }}>
-            <strong>Net profit</strong>
-            <strong>{Number(pl.totals.net_profit).toLocaleString()}</strong>
-          </div>
+            </>
+          )}
         </div>
       ) : null}
 
-      {tab === 'bs' && bs ? (
-        <div className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 16 }}>
-          {(
-            [
-              ['Assets', bs.assets, bs.totals.assets],
-              ['Liabilities', bs.liabilities, bs.totals.liabilities],
-              ['Equity', bs.equity, bs.totals.equity]
-            ] as const
-          ).map(([title, rows, total]) => (
-            <div key={title}>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>{title}</div>
-              <div className="table-wrap">
-                <table className="table">
-                  <tbody>
-                    {(rows || []).map((r: any) => (
-                      <tr key={r.code}>
-                        <td>
-                          {r.code} — {r.name}
-                        </td>
-                        <td style={{ textAlign: 'right' }}>{Number(r.amount).toLocaleString()}</td>
-                      </tr>
-                    ))}
-                    <tr>
-                      <td>
-                        <strong>Total {title}</strong>
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <strong>{Number(total).toLocaleString()}</strong>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
+      {tab === 'pl' ? (
+        <div className="card-surface" style={{ padding: '0.5rem 0', display: 'grid', gap: 0 }}>
+          {asAtToolbar(() => void loadPl(asAtDate))}
+          {!pl ? (
+            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--ink-muted)' }}>
+              {reportLoading ? 'Loading P&L…' : 'Run the report to view profit & loss.'}
+            </div>
+          ) : (
+            <div style={{ padding: '0 1.25rem 1.25rem', display: 'grid', gap: 16 }}>
+              <div
+                style={{
+                  padding: '0.65rem 0.85rem',
+                  borderRadius: 10,
+                  border: '1px solid var(--line)',
+                  background:
+                    Number(pl.net_income ?? pl.totals?.net_profit ?? 0) >= 0
+                      ? 'rgba(16, 185, 129, 0.08)'
+                      : 'rgba(239, 68, 68, 0.08)',
+                  fontSize: '0.9rem',
+                  fontWeight: 600
+                }}
+              >
+                As at {pl.as_at || asAtDate} — Net income{' '}
+                {money(pl.net_income ?? pl.totals?.net_profit)} (Revenue{' '}
+                {money(pl.total_revenue ?? pl.totals?.revenue)} − COGS{' '}
+                {money(pl.total_cogs ?? pl.totals?.cogs)} − Expense{' '}
+                {money(pl.total_expense ?? pl.totals?.expenses)})
+              </div>
+
+              {(
+                [
+                  ['Revenue', plRevenueTree, pl.total_revenue ?? pl.totals?.revenue, 'credit'],
+                  ['COGS', plCogsTree, pl.total_cogs ?? pl.totals?.cogs, 'debit'],
+                  ['Expenses', plExpenseTree, pl.total_expense ?? pl.totals?.expenses, 'debit']
+                ] as const
+              ).map(([title, tree, total, side]) => (
+                <div key={title}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>{title}</div>
+                  <div className="table-wrap">
+                    <table className="table">
+                      <tbody>
+                        {flattenExpandedReportTree(tree, expandedReportIds).map((r) => (
+                          <tr
+                            key={r.row_key}
+                            style={
+                              r.is_direct ? { background: 'rgba(245, 158, 11, 0.08)' } : undefined
+                            }
+                          >
+                            <td>{renderReportName(r)}</td>
+                            <td className="num">
+                              <strong>
+                                {money(
+                                  side === 'credit' ? r.credit - r.debit : r.debit - r.credit
+                                )}
+                              </strong>
+                            </td>
+                          </tr>
+                        ))}
+                        <tr>
+                          <td>
+                            <strong>Total {title}</strong>
+                          </td>
+                          <td className="num">
+                            <strong>{money(total)}</strong>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.1rem' }}>
+                <strong>Gross profit</strong>
+                <strong>{money(pl.totals?.gross_profit)}</strong>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '1.25rem' }}>
+                <strong>Net profit</strong>
+                <strong>{money(pl.net_income ?? pl.totals?.net_profit)}</strong>
               </div>
             </div>
-          ))}
-          <div style={{ color: 'var(--ink-muted)' }}>
-            Liabilities + equity: {Number(bs.totals.liabilities_and_equity).toLocaleString()}{' '}
-            {bs.totals.balanced ? '(balanced)' : '(check net income fold)'}
-          </div>
+          )}
+        </div>
+      ) : null}
+
+      {tab === 'bs' ? (
+        <div className="card-surface" style={{ padding: '0.5rem 0', display: 'grid', gap: 0 }}>
+          {asAtToolbar(() => void loadBs(asAtDate))}
+          {!bs ? (
+            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--ink-muted)' }}>
+              {reportLoading ? 'Loading balance sheet…' : 'Run the report to view balance sheet.'}
+            </div>
+          ) : (
+            <div style={{ padding: '0 1.25rem 1.25rem', display: 'grid', gap: 16 }}>
+              <div
+                style={{
+                  padding: '0.65rem 0.85rem',
+                  borderRadius: 10,
+                  border: '1px solid var(--line)',
+                  background: bs.totals?.balanced
+                    ? 'rgba(16, 185, 129, 0.08)'
+                    : 'rgba(239, 68, 68, 0.08)',
+                  fontSize: '0.9rem',
+                  fontWeight: 600
+                }}
+              >
+                As at {bs.as_at || asAtDate} — Assets {money(bs.total_assets ?? bs.totals?.assets)}{' '}
+                vs Liabilities + Equity{' '}
+                {money(bs.totals?.liabilities_and_equity)}{' '}
+                {bs.totals?.balanced ? '(balanced)' : '(does not balance)'}
+              </div>
+
+              {(
+                [
+                  ['Assets', balanceAssetTree, bs.total_assets ?? bs.totals?.assets, 'debit'],
+                  [
+                    'Liabilities',
+                    balanceLiabilityTree,
+                    bs.total_liabilities ?? bs.totals?.liabilities,
+                    'credit'
+                  ],
+                  ['Equity', balanceEquityTree, bs.total_equity ?? bs.totals?.equity, 'credit']
+                ] as const
+              ).map(([title, tree, total, side]) => (
+                <div key={title}>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>{title}</div>
+                  <div className="table-wrap">
+                    <table className="table">
+                      <tbody>
+                        {flattenExpandedReportTree(tree, expandedReportIds).map((r) => (
+                          <tr
+                            key={r.row_key}
+                            style={
+                              r.is_direct ? { background: 'rgba(245, 158, 11, 0.08)' } : undefined
+                            }
+                          >
+                            <td>{renderReportName(r)}</td>
+                            <td className="num">
+                              <strong>
+                                {money(
+                                  side === 'debit' ? r.debit - r.credit : r.credit - r.debit
+                                )}
+                              </strong>
+                            </td>
+                          </tr>
+                        ))}
+                        {title === 'Equity' && Number(bs.retained_earnings || 0) !== 0 ? (
+                          <tr>
+                            <td>Retained earnings (YTD)</td>
+                            <td className="num">
+                              <strong>{money(bs.retained_earnings)}</strong>
+                            </td>
+                          </tr>
+                        ) : null}
+                        <tr>
+                          <td>
+                            <strong>Total {title}</strong>
+                          </td>
+                          <td className="num">
+                            <strong>{money(total)}</strong>
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ))}
+
+              <div style={{ color: 'var(--ink-muted)' }}>
+                Liabilities + equity: {money(bs.totals?.liabilities_and_equity)}{' '}
+                {bs.totals?.balanced ? '(balanced)' : '(check net income fold)'}
+              </div>
+            </div>
+          )}
         </div>
       ) : null}
 
@@ -970,6 +1320,218 @@ export const AccountingPage: React.FC = () => {
               ? 'Opening + net change reconciles to closing cash.'
               : 'Opening + net change does not match closing — check unclassified journals.'}
           </div>
+        </div>
+      ) : null}
+
+      {tab === 'ledger' ? (
+        <div style={{ display: 'grid', gap: 12 }}>
+          <form
+            className="card-surface cust-bal__filters"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void loadLedgerStatement();
+            }}
+          >
+            <div className="field" style={{ minWidth: 240, flex: 1 }}>
+              <label>Ledger</label>
+              <SearchSelect
+                value={ledgerAccountId}
+                options={ledgerAccountOptions}
+                required
+                placeholder="Search account…"
+                onChange={setLedgerAccountId}
+              />
+            </div>
+            <div className="field">
+              <label>From</label>
+              <input
+                type="date"
+                value={ledgerStart}
+                onChange={(e) => setLedgerStart(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label>To</label>
+              <input type="date" value={ledgerEnd} onChange={(e) => setLedgerEnd(e.target.value)} />
+            </div>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={ledgerLoading || !ledgerAccountId}
+            >
+              {ledgerLoading ? 'Loading…' : 'Run statement'}
+            </button>
+          </form>
+
+          {ledgerLoading && !ledgerStatement ? (
+            <div className="card-surface" style={{ padding: '2rem', textAlign: 'center', color: 'var(--ink-muted)' }}>
+              Loading statement…
+            </div>
+          ) : !ledgerStatement ? (
+            <div className="card-surface" style={{ padding: '2rem', textAlign: 'center', color: 'var(--ink-muted)' }}>
+              Select a ledger and date range, then run the statement.
+            </div>
+          ) : (
+            <>
+              <div className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 16 }}>
+                <div>
+                  <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}>Account</div>
+                  <div style={{ fontWeight: 700, fontFamily: 'ui-monospace, monospace' }}>
+                    {ledgerStatement.account.code} — {ledgerStatement.account.name}
+                  </div>
+                  <div style={{ color: 'var(--ink-muted)', fontSize: '0.85rem', marginTop: 4 }}>
+                    {ledgerStatement.account.account_type}
+                    {!ledgerStatement.account.is_active ? ' · disabled' : ''}
+                    {ledgerStart || ledgerEnd
+                      ? ` · ${ledgerStart || '…'} → ${ledgerEnd || '…'}`
+                      : ''}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                    gap: 12
+                  }}
+                >
+                  {(
+                    [
+                      ['Opening balance', ledgerStatement.opening_balance],
+                      ['Period debit', ledgerStatement.period_debit],
+                      ['Period credit', ledgerStatement.period_credit],
+                      ['Closing balance', ledgerStatement.closing_balance]
+                    ] as const
+                  ).map(([label, value]) => (
+                    <div
+                      key={label}
+                      style={{
+                        border: '1px solid var(--line)',
+                        borderRadius: 10,
+                        padding: '0.75rem 0.85rem'
+                      }}
+                    >
+                      <div style={{ color: 'var(--ink-muted)', fontSize: '0.75rem' }}>{label}</div>
+                      <div style={{ fontWeight: 800, fontFamily: 'ui-monospace, monospace', marginTop: 4 }}>
+                        {money(value)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div style={{ padding: '0.5rem 1rem', color: 'var(--ink-muted)', fontSize: '0.85rem' }}>
+                  {(ledgerStatement.rows || []).length} movement(s) in period · balance is debit −
+                  credit
+                </div>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Entry #</th>
+                        <th>Description</th>
+                        <th>Contra</th>
+                        <th className="num">Debit</th>
+                        <th className="num">Credit</th>
+                        <th className="num">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td colSpan={4} style={{ color: 'var(--ink-muted)' }}>
+                          Opening balance
+                          {ledgerStart ? ` (before ${ledgerStart})` : ''}
+                        </td>
+                        <td className="num">—</td>
+                        <td className="num">—</td>
+                        <td className="num">
+                          <strong>{money(ledgerStatement.opening_balance)}</strong>
+                        </td>
+                      </tr>
+                      {(ledgerStatement.rows || []).length === 0 ? (
+                        <tr>
+                          <td colSpan={7} style={{ color: 'var(--ink-muted)', textAlign: 'center' }}>
+                            No posted transactions in this range.
+                          </td>
+                        </tr>
+                      ) : (
+                        ledgerStatement.rows.map((r: any) => (
+                          <tr key={r.line_id}>
+                            <td>{String(r.entry_date).slice(0, 10)}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                style={{
+                                  padding: '0.1rem 0.35rem',
+                                  fontFamily: 'ui-monospace, monospace',
+                                  fontWeight: 700
+                                }}
+                                onClick={async () => {
+                                  try {
+                                    const found = await api.accounting.journals({
+                                      entry_number: r.entry_number
+                                    });
+                                    const je =
+                                      found.find((j: any) => j.id === r.entry_id) || found[0];
+                                    if (je) setViewingJournal(je);
+                                    else await alertError('Journal', 'Journal not found');
+                                  } catch (err: any) {
+                                    await alertError('Journal', err.message);
+                                  }
+                                }}
+                              >
+                                {r.entry_number}
+                              </button>
+                            </td>
+                            <td>
+                              <div>{r.description || r.memo || '—'}</div>
+                              {r.source_type ? (
+                                <div style={{ color: 'var(--ink-muted)', fontSize: '0.75rem' }}>
+                                  {String(r.source_type).replace(/_/g, ' ')}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td>
+                              {(r.counterparts || []).length === 0
+                                ? '—'
+                                : r.counterparts
+                                    .slice(0, 3)
+                                    .map((c: any) => c.code)
+                                    .join(', ') +
+                                  (r.counterparts.length > 3
+                                    ? ` +${r.counterparts.length - 3}`
+                                    : '')}
+                            </td>
+                            <td className="num">{r.debit ? money(r.debit) : '—'}</td>
+                            <td className="num">{r.credit ? money(r.credit) : '—'}</td>
+                            <td className="num">
+                              <strong>{money(r.balance)}</strong>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                      <tr>
+                        <td colSpan={4}>
+                          <strong>Closing balance</strong>
+                        </td>
+                        <td className="num">
+                          <strong>{money(ledgerStatement.period_debit)}</strong>
+                        </td>
+                        <td className="num">
+                          <strong>{money(ledgerStatement.period_credit)}</strong>
+                        </td>
+                        <td className="num">
+                          <strong>{money(ledgerStatement.closing_balance)}</strong>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       ) : null}
 

@@ -809,14 +809,177 @@ export async function entityLedger(
   });
 }
 
-export async function trialBalance(user: AuthUser, opts?: BranchListOpts) {
+/**
+ * Account ledger statement: opening balance + posted lines in range with running balance.
+ */
+export async function ledgerStatement(
+  user: AuthUser,
+  opts: {
+    accountId: string;
+    start?: string;
+    end?: string;
+  } & BranchListOpts
+) {
+  const accountId = requireString(opts.accountId, 'account_id');
+  const account = await prisma.account.findFirst({
+    where: { id: accountId, businessId: user.businessId }
+  });
+  if (!account) throw httpError(404, 'Account not found');
+
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts.branchId,
+    allowConsolidated: opts.allowConsolidated
+  });
+
+  const start = opts.start ? new Date(opts.start) : null;
+  let end = opts.end ? new Date(opts.end) : null;
+  if (end && typeof opts.end === 'string' && opts.end.length <= 10) {
+    end = endOfDay(end);
+  }
+
+  let opening = 0;
+  if (start && !Number.isNaN(start.getTime())) {
+    const prior = await prisma.journalLine.aggregate({
+      where: {
+        accountId: account.id,
+        journalEntry: {
+          businessId: user.businessId,
+          status: 'posted',
+          ...scope,
+          entryDate: { lt: start }
+        }
+      },
+      _sum: { debit: true, credit: true }
+    });
+    opening = roundMoney(Number(prior._sum.debit || 0) - Number(prior._sum.credit || 0));
+  }
+
+  const lines = await prisma.journalLine.findMany({
+    where: {
+      accountId: account.id,
+      journalEntry: {
+        businessId: user.businessId,
+        status: 'posted',
+        ...scope,
+        ...(start || end
+          ? {
+              entryDate: {
+                ...(start && !Number.isNaN(start.getTime()) ? { gte: start } : {}),
+                ...(end && !Number.isNaN(end.getTime()) ? { lte: end } : {})
+              }
+            }
+          : {})
+      }
+    },
+    include: {
+      journalEntry: {
+        include: {
+          lines: {
+            include: { account: { select: { id: true, code: true, name: true } } },
+            orderBy: { lineNo: 'asc' }
+          }
+        }
+      }
+    },
+    orderBy: [{ journalEntry: { entryDate: 'asc' } }, { lineNo: 'asc' }]
+  });
+
+  let running = opening;
+  let periodDebit = 0;
+  let periodCredit = 0;
+
+  const rows = lines.map((line) => {
+    const debit = Number(line.debit);
+    const credit = Number(line.credit);
+    periodDebit = roundMoney(periodDebit + debit);
+    periodCredit = roundMoney(periodCredit + credit);
+    running = roundMoney(running + debit - credit);
+
+    const counterparts = (line.journalEntry.lines || [])
+      .filter((l) => l.accountId !== account.id)
+      .map((l) => ({
+        account_id: l.accountId,
+        code: l.account.code,
+        name: l.account.name,
+        debit: Number(l.debit),
+        credit: Number(l.credit)
+      }));
+
+    return {
+      line_id: line.id,
+      line_no: line.lineNo,
+      entry_id: line.journalEntryId,
+      entry_number: line.journalEntry.entryNumber,
+      entry_date: line.journalEntry.entryDate,
+      memo: line.journalEntry.memo,
+      source_type: line.journalEntry.sourceType,
+      description: line.description,
+      debit,
+      credit,
+      balance: running,
+      counterparts
+    };
+  });
+
+  const naturalDebit = ['asset', 'expense', 'cogs'].includes(account.accountType);
+
+  return serialize({
+    account: {
+      id: account.id,
+      code: account.code,
+      name: account.name,
+      account_type: account.accountType,
+      is_active: account.isActive,
+      parent_id: account.parentId
+    },
+    filters: {
+      account_id: account.id,
+      start: opts.start || null,
+      end: opts.end || null
+    },
+    opening_balance: opening,
+    closing_balance: running,
+    period_debit: periodDebit,
+    period_credit: periodCredit,
+    natural_side: naturalDebit ? 'debit' : 'credit',
+    rows
+  });
+}
+
+function endOfDay(d: Date) {
+  const out = new Date(d);
+  out.setHours(23, 59, 59, 999);
+  return out;
+}
+
+export async function trialBalance(
+  user: AuthUser,
+  opts?: BranchListOpts & { asAt?: string | Date }
+) {
   const scope = await branchAccess.branchScopeWhere(user, {
     branchId: opts?.branchId,
     allowConsolidated: opts?.allowConsolidated
   });
+  const asAtRaw = opts?.asAt ? new Date(opts.asAt) : new Date();
+  const asAt =
+    opts?.asAt && typeof opts.asAt === 'string' && opts.asAt.length <= 10
+      ? endOfDay(asAtRaw)
+      : asAtRaw;
+  const asAtLabel =
+    opts?.asAt instanceof Date
+      ? opts.asAt.toISOString().slice(0, 10)
+      : typeof opts?.asAt === 'string' && opts.asAt
+        ? opts.asAt.slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+
   const lines = await prisma.journalLine.findMany({
     where: {
-      journalEntry: { businessId: user.businessId, status: 'posted', ...scope }
+      journalEntry: {
+        businessId: user.businessId,
+        status: 'posted',
+        ...scope,
+        entryDate: { lte: asAt }
+      }
     },
     include: { account: true }
   });
@@ -843,19 +1006,26 @@ export async function trialBalance(user: AuthUser, opts?: BranchListOpts) {
 
   const rows = [...map.values()]
     .map((r) => {
-      const net = roundMoney(r.debit - r.credit);
+      const balance = roundMoney(r.debit - r.credit);
       return {
         ...r,
-        balance_debit: net > 0 ? net : 0,
-        balance_credit: net < 0 ? Math.abs(net) : 0
+        balance,
+        balance_debit: balance > 0 ? balance : 0,
+        balance_credit: balance < 0 ? Math.abs(balance) : 0
       };
     })
     .sort((a, b) => a.code.localeCompare(b.code));
 
-  const totalDebit = roundMoney(rows.reduce((s, r) => s + r.balance_debit, 0));
-  const totalCredit = roundMoney(rows.reduce((s, r) => s + r.balance_credit, 0));
+  const totalDebit = roundMoney(rows.reduce((s, r) => s + r.debit, 0));
+  const totalCredit = roundMoney(rows.reduce((s, r) => s + r.credit, 0));
 
-  return { rows, total_debit: totalDebit, total_credit: totalCredit, balanced: totalDebit === totalCredit };
+  return {
+    as_at: asAtLabel,
+    rows,
+    total_debit: totalDebit,
+    total_credit: totalCredit,
+    balanced: totalDebit === totalCredit
+  };
 }
 
 export async function listPeriods(businessId: string) {
@@ -926,40 +1096,64 @@ export async function profitAndLoss(
   to?: string | Date,
   opts?: BranchListOpts
 ) {
-  const fromDate = from ? new Date(from) : null;
-  const toDate = to ? new Date(to) : null;
+  let fromDate = from ? new Date(from) : null;
+  let toDate = to ? new Date(to) : null;
+  if (toDate && typeof to === 'string' && to.length <= 10) {
+    toDate = endOfDay(toDate);
+  }
   const scope = await branchAccess.branchScopeWhere(user, {
     branchId: opts?.branchId,
     allowConsolidated: opts?.allowConsolidated
   });
   const lines = await postedLinesInRange(user.businessId, fromDate, toDate, scope);
 
-  const buckets: Record<string, { code: string; name: string; amount: number }[]> = {
+  type PlRow = {
+    account_id: string;
+    code: string;
+    name: string;
+    account_type: string;
+    debit: number;
+    credit: number;
+    amount: number;
+  };
+  const buckets: Record<string, PlRow[]> = {
     revenue: [],
     cogs: [],
     expense: []
   };
   const totals = { revenue: 0, cogs: 0, expense: 0 };
 
-  const map = new Map<string, { code: string; name: string; type: string; debit: number; credit: number }>();
+  const map = new Map<
+    string,
+    { account_id: string; code: string; name: string; type: string; debit: number; credit: number }
+  >();
   for (const line of lines) {
     const t = line.account.accountType;
     if (!['revenue', 'cogs', 'expense'].includes(t)) continue;
     const cur = map.get(line.accountId) || {
+      account_id: line.accountId,
       code: line.account.code,
       name: line.account.name,
       type: t,
       debit: 0,
       credit: 0
     };
-    cur.debit += Number(line.debit);
-    cur.credit += Number(line.credit);
+    cur.debit = roundMoney(cur.debit + Number(line.debit));
+    cur.credit = roundMoney(cur.credit + Number(line.credit));
     map.set(line.accountId, cur);
   }
 
   for (const row of map.values()) {
     const amount = accountNet(row.debit, row.credit, row.type);
-    buckets[row.type].push({ code: row.code, name: row.name, amount });
+    buckets[row.type].push({
+      account_id: row.account_id,
+      code: row.code,
+      name: row.name,
+      account_type: row.type,
+      debit: row.debit,
+      credit: row.credit,
+      amount
+    });
     totals[row.type as keyof typeof totals] = roundMoney(
       totals[row.type as keyof typeof totals] + amount
     );
@@ -971,13 +1165,24 @@ export async function profitAndLoss(
 
   const grossProfit = roundMoney(totals.revenue - totals.cogs);
   const netProfit = roundMoney(grossProfit - totals.expense);
+  const asAtLabel = to
+    ? typeof to === 'string'
+      ? to.slice(0, 10)
+      : to.toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
 
   return {
+    as_at: asAtLabel,
     from: fromDate?.toISOString() || null,
     to: toDate?.toISOString() || null,
     revenue: buckets.revenue,
+    revenues: buckets.revenue,
     cogs: buckets.cogs,
     expenses: buckets.expense,
+    total_revenue: totals.revenue,
+    total_cogs: totals.cogs,
+    total_expense: totals.expense,
+    net_income: netProfit,
     totals: {
       revenue: totals.revenue,
       cogs: totals.cogs,
@@ -989,33 +1194,52 @@ export async function profitAndLoss(
 }
 
 export async function balanceSheet(user: AuthUser, asOf?: string | Date, opts?: BranchListOpts) {
-  const asOfDate = asOf ? new Date(asOf) : new Date();
+  const asOfLabel =
+    asOf instanceof Date
+      ? asOf.toISOString().slice(0, 10)
+      : typeof asOf === 'string' && asOf
+        ? asOf.slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+  let asOfDate = asOf ? new Date(asOf) : new Date();
+  if (typeof asOf === 'string' && asOf.length <= 10) {
+    asOfDate = endOfDay(asOfDate);
+  }
   const scope = await branchAccess.branchScopeWhere(user, {
     branchId: opts?.branchId,
     allowConsolidated: opts?.allowConsolidated
   });
   const lines = await postedLinesInRange(user.businessId, null, asOfDate, scope);
 
+  type BsRow = {
+    account_id: string;
+    code: string;
+    name: string;
+    account_type: string;
+    debit: number;
+    credit: number;
+    amount: number;
+  };
   const map = new Map<
     string,
-    { code: string; name: string; type: string; debit: number; credit: number }
+    { account_id: string; code: string; name: string; type: string; debit: number; credit: number }
   >();
   for (const line of lines) {
     const t = line.account.accountType;
     if (!['asset', 'liability', 'equity'].includes(t)) continue;
     const cur = map.get(line.accountId) || {
+      account_id: line.accountId,
       code: line.account.code,
       name: line.account.name,
       type: t,
       debit: 0,
       credit: 0
     };
-    cur.debit += Number(line.debit);
-    cur.credit += Number(line.credit);
+    cur.debit = roundMoney(cur.debit + Number(line.debit));
+    cur.credit = roundMoney(cur.credit + Number(line.credit));
     map.set(line.accountId, cur);
   }
 
-  const sections: Record<string, { code: string; name: string; amount: number }[]> = {
+  const sections: Record<string, BsRow[]> = {
     asset: [],
     liability: [],
     equity: []
@@ -1024,7 +1248,15 @@ export async function balanceSheet(user: AuthUser, asOf?: string | Date, opts?: 
 
   for (const row of map.values()) {
     const amount = accountNet(row.debit, row.credit, row.type);
-    sections[row.type].push({ code: row.code, name: row.name, amount });
+    sections[row.type].push({
+      account_id: row.account_id,
+      code: row.code,
+      name: row.name,
+      account_type: row.type,
+      debit: row.debit,
+      credit: row.credit,
+      amount
+    });
     totals[row.type as keyof typeof totals] = roundMoney(
       totals[row.type as keyof typeof totals] + amount
     );
@@ -1035,8 +1267,12 @@ export async function balanceSheet(user: AuthUser, asOf?: string | Date, opts?: 
   const netProfit = pl.totals.net_profit;
   if (netProfit !== 0) {
     sections.equity.push({
+      account_id: '__net_income__',
       code: 'NI',
       name: 'Net income (current period)',
+      account_type: 'equity',
+      debit: netProfit < 0 ? Math.abs(netProfit) : 0,
+      credit: netProfit > 0 ? netProfit : 0,
       amount: netProfit
     });
     totals.equity = roundMoney(totals.equity + netProfit);
@@ -1049,10 +1285,15 @@ export async function balanceSheet(user: AuthUser, asOf?: string | Date, opts?: 
   const liabilitiesAndEquity = roundMoney(totals.liability + totals.equity);
 
   return {
+    as_at: asOfLabel,
     as_of: asOfDate.toISOString(),
     assets: sections.asset,
     liabilities: sections.liability,
     equity: sections.equity,
+    retained_earnings: netProfit,
+    total_assets: totals.asset,
+    total_liabilities: totals.liability,
+    total_equity: totals.equity,
     totals: {
       assets: totals.asset,
       liabilities: totals.liability,
