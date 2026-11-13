@@ -25,6 +25,16 @@ export async function createAccount(req: Request, res: Response, next: NextFunct
   }
 }
 
+export async function updateAccount(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await accountingService.updateAccount(req.user!, req.params.id, req.body || {})
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function listDefaults(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(await accountingService.listDefaultAccountSettings(req.user!.businessId));
@@ -64,6 +74,8 @@ export async function upsertDefault(req: Request, res: Response, next: NextFunct
 export async function listJournals(req: Request, res: Response, next: NextFunction) {
   try {
     const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const entryNumber =
+      typeof req.query.entry_number === 'string' ? req.query.entry_number : undefined;
     const customerId =
       typeof req.query.customer_id === 'string' ? req.query.customer_id : undefined;
     const supplierId =
@@ -74,11 +86,22 @@ export async function listJournals(req: Request, res: Response, next: NextFuncti
         : undefined;
     const sourceType =
       typeof req.query.source_type === 'string' ? req.query.source_type : undefined;
-    const from = typeof req.query.from === 'string' ? req.query.from : undefined;
-    const to = typeof req.query.to === 'string' ? req.query.to : undefined;
+    const from =
+      typeof req.query.from === 'string'
+        ? req.query.from
+        : typeof req.query.start === 'string'
+          ? req.query.start
+          : undefined;
+    const to =
+      typeof req.query.to === 'string'
+        ? req.query.to
+        : typeof req.query.end === 'string'
+          ? req.query.end
+          : undefined;
     return res.json(
       await accountingService.listJournals(req.user!, {
         status,
+        entryNumber,
         customerId,
         supplierId,
         salesRepresentativeId,
@@ -117,8 +140,21 @@ export async function entityLedger(req: Request, res: Response, next: NextFuncti
 
 export async function createJournal(req: Request, res: Response, next: NextFunction) {
   try {
-    const data = await accountingService.createJournal(req.user!, req.body || {});
+    const body = req.body || {};
+    // Medi-plus clients send status: 'draft'; map to post: false.
+    if (body.post === undefined && (body.status === 'draft' || body.status === 'Draft')) {
+      body.post = false;
+    }
+    const data = await accountingService.createJournal(req.user!, body);
     return res.status(201).json(data);
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function postJournal(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await accountingService.postJournal(req.user!, req.params.id));
   } catch (err) {
     return next(err);
   }

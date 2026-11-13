@@ -89,6 +89,69 @@ export async function createAccount(user: AuthUser, body: Record<string, any>) {
   }
 }
 
+export async function updateAccount(user: AuthUser, id: string, body: Record<string, any>) {
+  const existing = await prisma.account.findFirst({
+    where: { id, businessId: user.businessId }
+  });
+  if (!existing) throw httpError(404, 'Account not found');
+
+  if (body.account_type != null || body.accountType != null) {
+    const nextType = String(body.account_type ?? body.accountType);
+    if (!ACCOUNT_TYPES.has(nextType)) throw httpError(400, 'Invalid account_type');
+  }
+
+  const nextType = String(body.account_type ?? body.accountType ?? existing.accountType);
+  const nextParentId =
+    body.parent_id !== undefined || body.parentId !== undefined
+      ? body.parent_id ?? body.parentId ?? null
+      : existing.parentId;
+
+  if (nextParentId === id) throw httpError(400, 'An account cannot be its own parent');
+  await assertValidParent(user.businessId, nextParentId, nextType);
+
+  if (nextParentId) {
+    let cursor: string | null = nextParentId;
+    const seen = new Set<string>([id]);
+    while (cursor) {
+      if (seen.has(cursor)) {
+        throw httpError(400, 'Invalid parent: would create a circular hierarchy');
+      }
+      seen.add(cursor);
+      const row = await prisma.account.findFirst({
+        where: { id: cursor, businessId: user.businessId },
+        select: { parentId: true }
+      });
+      cursor = row?.parentId || null;
+    }
+  }
+
+  try {
+    const updated = await prisma.account.update({
+      where: { id },
+      data: {
+        ...(body.code != null ? { code: String(body.code).trim() } : {}),
+        ...(body.name != null ? { name: String(body.name).trim() } : {}),
+        ...(body.account_type != null || body.accountType != null
+          ? { accountType: nextType }
+          : {}),
+        ...(body.parent_id !== undefined || body.parentId !== undefined
+          ? { parentId: nextParentId }
+          : {}),
+        ...(body.description !== undefined
+          ? { description: body.description ? String(body.description) : null }
+          : {}),
+        ...(body.is_active !== undefined || body.isActive !== undefined
+          ? { isActive: body.is_active ?? body.isActive }
+          : {})
+      }
+    });
+    return serialize(updated);
+  } catch (err: any) {
+    if (err?.code === 'P2002') throw httpError(409, 'An account with this code already exists');
+    throw err;
+  }
+}
+
 export async function getDefaultAccountMap(businessId: string): Promise<Record<string, string>> {
   return loadDefaultAccountMap(businessId);
 }
@@ -517,6 +580,62 @@ export async function createJournal(
   return serialize(created);
 }
 
+export async function postJournal(user: AuthUser, id: string) {
+  const entry = await prisma.journalEntry.findFirst({
+    where: { id, businessId: user.businessId },
+    include: { lines: { include: { account: true } } }
+  });
+  if (!entry) throw httpError(404, 'Journal not found');
+  if (entry.status === 'posted') return serialize(entry);
+  if (entry.status === 'reversed') throw httpError(400, 'Cannot post a reversed entry');
+  if (entry.status !== 'draft') throw httpError(400, 'Only draft journals can be posted');
+
+  await assertPeriodOpen(user.businessId, entry.transactionDate || entry.entryDate);
+
+  const inactive = (entry.lines || [])
+    .map((l) => l.account)
+    .filter((a) => a && !a.isActive);
+  if (inactive.length) {
+    throw httpError(
+      400,
+      `Cannot post to inactive account(s): ${[...new Set(inactive.map((a) => a!.code))].join(', ')}`
+    );
+  }
+
+  const updated = await prisma.journalEntry.update({
+    where: { id },
+    data: {
+      status: 'posted',
+      postedAt: new Date(),
+      postedById: user.id
+    },
+    include: {
+      lines: { include: { account: true } },
+      customer: { select: { id: true, code: true, name: true } },
+      supplier: { select: { id: true, code: true, name: true } },
+      salesRepresentative: {
+        select: {
+          id: true,
+          code: true,
+          employee: { select: { id: true, fullName: true, code: true } }
+        }
+      },
+      branch: { select: { id: true, code: true, name: true } }
+    }
+  });
+
+  await writeAudit({
+    user,
+    action: 'post',
+    module: 'accounting',
+    entityType: 'JournalEntry',
+    entityId: id,
+    summary: `Posted journal ${updated.entryNumber}`
+  });
+
+  return serialize(updated);
+}
+
 export async function reverseJournal(user: AuthUser, id: string, memo?: string) {
   const original = await prisma.journalEntry.findFirst({
     where: { id, businessId: user.businessId },
@@ -563,6 +682,7 @@ export async function listJournals(
   opts?: {
     limit?: number;
     status?: string;
+    entryNumber?: string;
     customerId?: string;
     supplierId?: string;
     salesRepresentativeId?: string;
@@ -577,11 +697,16 @@ export async function listJournals(
   });
   const from = opts?.from ? new Date(opts.from) : null;
   const to = opts?.to ? new Date(opts.to) : null;
+  if (to && !Number.isNaN(to.getTime()) && typeof opts?.to === 'string' && opts.to.length <= 10) {
+    to.setHours(23, 59, 59, 999);
+  }
+  const entryNumber = (opts?.entryNumber || '').trim();
   const rows = await prisma.journalEntry.findMany({
     where: {
       businessId: user.businessId,
       ...scope,
       ...(opts?.status ? { status: opts.status } : {}),
+      ...(entryNumber ? { entryNumber: { contains: entryNumber } } : {}),
       ...(opts?.customerId ? { customerId: opts.customerId } : {}),
       ...(opts?.supplierId ? { supplierId: opts.supplierId } : {}),
       ...(opts?.salesRepresentativeId
@@ -591,8 +716,8 @@ export async function listJournals(
       ...(from || to
         ? {
             entryDate: {
-              ...(from ? { gte: from } : {}),
-              ...(to ? { lte: to } : {})
+              ...(from && !Number.isNaN(from.getTime()) ? { gte: from } : {}),
+              ...(to && !Number.isNaN(to.getTime()) ? { lte: to } : {})
             }
           }
         : {})
@@ -611,7 +736,7 @@ export async function listJournals(
       branch: { select: { id: true, code: true, name: true } }
     },
     orderBy: { entryDate: 'desc' },
-    take: opts?.limit ?? 50
+    take: opts?.limit ?? 200
   });
   return serialize(
     rows.map((r) => ({

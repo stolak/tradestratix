@@ -8,6 +8,11 @@ router.use(authenticate);
 
 router.get('/accounts', requirePermission('accounting.view'), accountingController.listAccounts);
 router.post('/accounts', requirePermission('accounting.create'), accountingController.createAccount);
+router.patch(
+  '/accounts/:id',
+  requirePermission('accounting.edit', 'accounting.create'),
+  accountingController.updateAccount
+);
 router.get(
   '/default-accounts',
   requirePermission('accounting.view'),
@@ -35,6 +40,11 @@ router.get(
   accountingController.entityLedger
 );
 router.post('/journals', requirePermission('accounting.post'), accountingController.createJournal);
+router.post(
+  '/journals/:id/post',
+  requirePermission('accounting.post'),
+  accountingController.postJournal
+);
 router.post(
   '/journals/:id/reverse',
   requirePermission('accounting.reverse'),

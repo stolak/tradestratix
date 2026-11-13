@@ -156,6 +156,13 @@ export const api = {
   },
   accounting: {
     accounts: () => request<any[]>('/accounting/accounts'),
+    createAccount: (body: Record<string, unknown>) =>
+      request<any>('/accounting/accounts', { method: 'POST', body: JSON.stringify(body) }),
+    updateAccount: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/accounting/accounts/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body)
+      }),
     journals: (params?: Record<string, string | undefined>) => {
       const q = new URLSearchParams();
       if (params) {
@@ -200,7 +207,17 @@ export const api = {
         body: JSON.stringify({ locked })
       }),
     createJournal: (body: Record<string, unknown>) =>
-      request<any>('/accounting/journals', { method: 'POST', body: JSON.stringify(body) })
+      request<any>('/accounting/journals', { method: 'POST', body: JSON.stringify(body) }),
+    postJournal: (id: string) =>
+      request<any>(`/accounting/journals/${encodeURIComponent(id)}/post`, {
+        method: 'POST',
+        body: '{}'
+      }),
+    reverseJournal: (id: string, memo?: string) =>
+      request<any>(`/accounting/journals/${encodeURIComponent(id)}/reverse`, {
+        method: 'POST',
+        body: JSON.stringify(memo ? { memo } : {})
+      })
   },
   banking: {
     accounts: () => request<any[]>('/banking/accounts'),
