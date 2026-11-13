@@ -2530,6 +2530,15 @@ body.modal-open {
   border-bottom: 1px dashed var(--line);
 }
 
+.invoice-view__fulfil-card {
+  padding: 0.55rem 0 0.35rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.invoice-view__fulfil-card:last-of-type {
+  border-bottom: none;
+}
+
 @media (max-width: 640px) {
   .invoice-view__meta,
   .invoice-view__bottom {

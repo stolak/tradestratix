@@ -70,6 +70,7 @@ export const PickupsPage: React.FC = () => {
   const canPick = can('fulfilment.pick');
   const canRelease = can('sales.fulfil');
   const canDispatch = can('fulfilment.dispatch');
+  const canPullHere = can('fulfilment.reallocate', 'sales.fulfil');
   const [tab, setTab] = useState<Tab>('to_pick');
   const [warehouseId, setWarehouseId] = useState('');
   const [q, setQ] = useState('');
@@ -129,9 +130,36 @@ export const PickupsPage: React.FC = () => {
     };
   }, [data.tasks]);
 
+  const chooseBranchWarehouse = async (title: string) => {
+    if (!data.warehouses.length) {
+      await alertError(title, 'No warehouses in your current branch');
+      return null;
+    }
+    if (data.warehouses.length === 1) return data.warehouses[0].id;
+    const pick = await Swal.fire({
+      title,
+      text: 'Choose which warehouse to fulfil from',
+      input: 'select',
+      inputOptions: Object.fromEntries(
+        data.warehouses.map((w) => [w.id, `${w.code ? `${w.code} — ` : ''}${w.name}`])
+      ),
+      inputValue: data.warehouses[0].id,
+      showCancelButton: true,
+      confirmButtonText: 'Continue',
+      confirmButtonColor: '#0f5c4c'
+    });
+    if (!pick.isConfirmed || !pick.value) return null;
+    return String(pick.value);
+  };
+
   const startPicking = async (row: any) => {
     try {
-      const task = await api.sales.startPicking({ invoice_id: row.invoice_id, warehouse_id: row.warehouse?.id });
+      let warehouseId = row.warehouse?.id || '';
+      if (row.open_pickup || !warehouseId) {
+        warehouseId = (await chooseBranchWarehouse('Start picking')) || '';
+        if (!warehouseId) return;
+      }
+      const task = await api.sales.startPicking({ invoice_id: row.invoice_id, warehouse_id: warehouseId });
       await load();
       setModal({ kind: 'pick', taskId: task.id });
     } catch (err: any) {
@@ -267,6 +295,8 @@ export const PickupsPage: React.FC = () => {
           key={codePanelKey}
           canRelease={canRelease}
           canPick={canPick}
+          canPullHere={canPullHere}
+          warehouses={data.warehouses}
           onQuick={(row) => setModal({ kind: 'quick', row })}
           onPick={async (invoiceId, warehouseId) => {
             try {
@@ -368,8 +398,10 @@ export const PickupsPage: React.FC = () => {
                     </td>
                     <td>{r.selling_branch?.name || '—'}</td>
                     <td>
-                      {r.warehouse?.name}
-                      <div className="line-items__discount-note">{r.warehouse?.branch?.name}</div>
+                      {r.open_pickup ? 'Choose on pick' : r.warehouse?.name}
+                      <div className="line-items__discount-note">
+                        {r.open_pickup ? 'Open pickup' : r.warehouse?.branch?.name}
+                      </div>
                     </td>
                     <td>
                       {(r.lines || [])
@@ -391,7 +423,28 @@ export const PickupsPage: React.FC = () => {
                         </button>
                       ) : null}{' '}
                       {canRelease && r.fulfilment_mode !== 'delivery' ? (
-                        <button type="button" className="btn btn-ghost" onClick={() => setModal({ kind: 'quick', row: r })}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => {
+                            void (async () => {
+                              if (!r.open_pickup && r.warehouse?.id) {
+                                setModal({ kind: 'quick', row: r });
+                                return;
+                              }
+                              const warehouseId = await chooseBranchWarehouse('Release now');
+                              if (!warehouseId) return;
+                              const wh = data.warehouses.find((w) => w.id === warehouseId);
+                              setModal({
+                                kind: 'quick',
+                                row: {
+                                  ...r,
+                                  warehouse: wh || { id: warehouseId, name: 'Warehouse' }
+                                }
+                              });
+                            })();
+                          }}
+                        >
                           <PackageCheck size={15} /> Release now
                         </button>
                       ) : null}
@@ -844,15 +897,21 @@ function QtyInput({ value, max, onChange }: { value: string; max: number; onChan
 const CodeLookupBar: React.FC<{
   canRelease: boolean;
   canPick: boolean;
+  canPullHere: boolean;
+  warehouses: { id: string; name: string; code?: string; branch?: { name?: string } }[];
   onQuick: (row: any) => void;
   onPick: (invoiceId: string, warehouseId: string) => Promise<void>;
   onCollect: (taskId: string) => void;
   onViewInvoice: (id: string) => void;
   onDone: () => void;
-}> = ({ canRelease, canPick, onQuick, onPick, onCollect, onViewInvoice, onDone }) => {
+}> = ({ canRelease, canPick, canPullHere, warehouses, onQuick, onPick, onCollect, onViewInvoice, onDone }) => {
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
   const [hit, setHit] = useState<any | null>(null);
+  const [pullOpen, setPullOpen] = useState(false);
+  const [pullWarehouseId, setPullWarehouseId] = useState('');
+  const [pullBusy, setPullBusy] = useState(false);
+  const [openWarehouseId, setOpenWarehouseId] = useState('');
 
   const lookup = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -860,12 +919,50 @@ const CodeLookupBar: React.FC<{
     if (!c) return;
     setBusy(true);
     try {
-      setHit(await api.sales.lookupPickupByCode(c));
+      const res = await api.sales.lookupPickupByCode(c);
+      setHit(res);
+      const opts = (res.branch_warehouses?.length ? res.branch_warehouses : warehouses) || [];
+      setOpenWarehouseId(opts[0]?.id || '');
     } catch (err: any) {
       setHit(null);
       await alertError('Pickup code', err.message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const openPullHere = () => {
+    setPullWarehouseId(warehouses[0]?.id || '');
+    setPullOpen(true);
+  };
+
+  const confirmPullHere = async () => {
+    if (!hit || !pullWarehouseId) {
+      await alertError('Switch warehouse', 'Choose a warehouse in your current branch');
+      return;
+    }
+    const sources = (hit.elsewhere || []) as any[];
+    if (!sources.length) {
+      await alertError('Switch warehouse', 'Nothing is reserved elsewhere to move');
+      return;
+    }
+    setPullBusy(true);
+    try {
+      for (const loc of sources) {
+        await api.sales.reallocateOrder(hit.invoice_id, {
+          from_warehouse_id: loc.warehouse.id,
+          to_warehouse_id: pullWarehouseId,
+          reason: 'Customer collecting at this branch — switch allocation here'
+        });
+      }
+      await alertSuccess('Allocation switched to your branch warehouse');
+      setPullOpen(false);
+      setHit(await api.sales.lookupPickupByCode(code.replace(/\s+/g, '')));
+      onDone();
+    } catch (err: any) {
+      await alertError('Could not switch warehouse', err.message);
+    } finally {
+      setPullBusy(false);
     }
   };
 
@@ -888,6 +985,27 @@ const CodeLookupBar: React.FC<{
       to_pick: l.to_collect
     }))
   });
+
+  const renderMessage = () => {
+    const msg = String(hit?.message || '');
+    const showHere = hit?.can_pull_here && canPullHere && warehouses.length > 0 && msg.includes('HERE');
+    if (!showHere) return <div className="line-items__discount-note">{msg}</div>;
+    const [before, after] = msg.split('HERE');
+    return (
+      <div className="line-items__discount-note">
+        {before}
+        <button
+          type="button"
+          className="btn-linkish"
+          style={{ fontWeight: 700, textDecoration: 'underline', padding: 0 }}
+          onClick={openPullHere}
+        >
+          HERE
+        </button>
+        {after}
+      </div>
+    );
+  };
 
   return (
     <div className="card-surface" style={{ padding: '1rem 1.25rem', display: 'grid', gap: 12 }}>
@@ -939,9 +1057,94 @@ const CodeLookupBar: React.FC<{
             </span>
             <span className="line-items__discount-note">Sold at {hit.selling_branch?.name || '—'}</span>
           </div>
-          <div className="line-items__discount-note">{hit.message}</div>
+          {renderMessage()}
 
-          {(hit.collect_here || []).length ? (
+          {hit.open_pickup && (hit.branch_warehouses || warehouses).length ? (
+            <div style={{ display: 'grid', gap: 12 }}>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Lines</th>
+                      <th>To collect</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(hit.lines || [])
+                      .filter((l: any) => Number(l.remaining) > 1e-9)
+                      .map((l: any) => (
+                        <tr key={l.invoice_item_id}>
+                          <td>
+                            <div style={{ fontWeight: 600 }}>
+                              {l.product?.name}
+                              {l.variant?.name ? ` (${l.variant.name})` : ''}
+                            </div>
+                          </td>
+                          <td>
+                            {qty(l.remaining)} {l.uom?.code || ''}
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+              <label className="field" style={{ display: 'grid', gap: 4, maxWidth: 420 }}>
+                <span>Collect from warehouse</span>
+                <select value={openWarehouseId} onChange={(e) => setOpenWarehouseId(e.target.value)}>
+                  {((hit.branch_warehouses?.length ? hit.branch_warehouses : warehouses) as any[]).map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.code ? `${w.code} — ` : ''}
+                      {w.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {canRelease ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={!openWarehouseId}
+                    onClick={() => {
+                      const whList = (hit.branch_warehouses?.length ? hit.branch_warehouses : warehouses) as any[];
+                      const wh = whList.find((w) => w.id === openWarehouseId);
+                      if (!wh) return;
+                      onQuick(
+                        toQuickRow({
+                          warehouse: wh,
+                          lines: (hit.lines || [])
+                            .filter((l: any) => Number(l.remaining) > 1e-9)
+                            .map((l: any) => ({
+                              invoice_item_id: l.invoice_item_id,
+                              product: l.product,
+                              variant: l.variant,
+                              uom: l.uom,
+                              ordered: l.ordered,
+                              collected: l.collected,
+                              to_collect: l.remaining
+                            }))
+                        })
+                      );
+                    }}
+                  >
+                    Release now
+                  </button>
+                ) : null}
+                {canPick ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={!openWarehouseId}
+                    onClick={() => void onPick(hit.invoice_id, openWarehouseId)}
+                  >
+                    Start picking
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          {!hit.open_pickup && (hit.collect_here || []).length ? (
             <div className="table-wrap">
               <table className="table">
                 <thead>
@@ -1023,6 +1226,87 @@ const CodeLookupBar: React.FC<{
           ) : null}
         </div>
       ) : null}
+
+      {pullOpen
+        ? createPortal(
+            <div
+              className="modal-backdrop"
+              onMouseDown={(e) => e.target === e.currentTarget && !pullBusy && setPullOpen(false)}
+            >
+              <div className="modal invoice-view" role="dialog" aria-modal="true">
+                <div className="modal__header">
+                  <div>
+                    <div className="invoice-view__eyebrow">Switch allocation</div>
+                    <h2 className="display invoice-view__number">{hit?.invoice_number || 'Pull here'}</h2>
+                  </div>
+                  <div className="modal__actions">
+                    <button
+                      type="button"
+                      className="line-items__remove"
+                      onClick={() => setPullOpen(false)}
+                      aria-label="Close"
+                      disabled={pullBusy}
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                </div>
+                <div className="modal__body" style={{ display: 'grid', gap: 12 }}>
+                  <p style={{ margin: 0, color: 'var(--ink-muted)' }}>
+                    Choose a warehouse in your current branch. Reserved stock from the other branch will move here so
+                    you can pick and hand over. Needs free stock in the warehouse you select.
+                  </p>
+                  {!warehouses.length ? (
+                    <div className="pickups__warning">No warehouses available in your current branch.</div>
+                  ) : (
+                    <label className="field" style={{ display: 'grid', gap: 4 }}>
+                      <span>Warehouse in this branch</span>
+                      <select
+                        value={pullWarehouseId}
+                        onChange={(e) => setPullWarehouseId(e.target.value)}
+                        disabled={pullBusy}
+                      >
+                        {warehouses.map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.code ? `${w.code} — ` : ''}
+                            {w.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {(hit?.elsewhere || []).length ? (
+                    <div className="line-items__discount-note">
+                      Moving from:{' '}
+                      {(hit.elsewhere as any[])
+                        .map((loc) => `${loc.warehouse.branch?.name || ''} · ${loc.warehouse.name}`)
+                        .join(' · ')}
+                    </div>
+                  ) : null}
+                </div>
+                <div className="modal__footer">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => setPullOpen(false)}
+                    disabled={pullBusy}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={pullBusy || !pullWarehouseId || !warehouses.length}
+                    onClick={() => void confirmPullHere()}
+                  >
+                    {pullBusy ? 'Switching…' : 'Switch warehouse'}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 };

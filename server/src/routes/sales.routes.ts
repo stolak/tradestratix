@@ -28,7 +28,7 @@ router.post('/invoices/:id/cancel', requirePermission('sales.cancel'), salesCont
 router.post('/invoices/:id/amend', requirePermission('sales.amend'), salesController.amendOrder);
 router.post(
   '/invoices/:id/reallocate',
-  requirePermission('fulfilment.reallocate'),
+  requirePermission('fulfilment.reallocate', 'sales.fulfil'),
   salesController.reallocateOrder
 );
 router.post(

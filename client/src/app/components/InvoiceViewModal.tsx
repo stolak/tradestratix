@@ -730,21 +730,184 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                   ) : null}
                   {isPickup && fulfilments.length ? (
                     <div style={{ marginTop: invoice.notes || allocations.length ? '1rem' : 0 }}>
-                      <div className="invoice-view__label">Warehouse fulfilment</div>
-                      {fulfilments.map((f) => (
-                        <div key={f.id} className="invoice-view__payment">
-                          <span>
-                            {f.fulfilment_number} · {f.warehouse?.name} ·{' '}
-                            {fmtDate(f.fulfilled_at || f.dispatched_at || f.picked_at || f.created_at)}
-                            {f.collected_by ? ` · ${f.collected_by}` : ''}
-                            {f.delivery_order ? ` · ${f.delivery_order.delivery_number}` : ''}
-                            {f.discrepancy_notes ? (
-                              <span className="invoice-view__danger"> · {f.discrepancy_notes}</span>
-                            ) : null}
-                          </span>
-                          <span>{TASK_LABELS[f.status] || f.status}</span>
-                        </div>
-                      ))}
+                      <div className="invoice-view__label">Collection history</div>
+                      {(() => {
+                        const orderedTotal = items.reduce(
+                          (s, it) => s + Math.max(0, Number(it.quantity || 0) - Number(it.cancelled_quantity || 0)),
+                          0
+                        );
+                        const handedStatuses = new Set(['released', 'delivered']);
+                        let runningCollected = 0;
+                        const rows = [...fulfilments].sort(
+                          (a, b) =>
+                            new Date(a.fulfilled_at || a.dispatched_at || a.picked_at || a.created_at || 0).getTime() -
+                            new Date(b.fulfilled_at || b.dispatched_at || b.picked_at || b.created_at || 0).getTime()
+                        );
+                        return (
+                          <div style={{ display: 'grid', gap: 10 }}>
+                            {rows.map((f) => {
+                              const fItems: any[] = f.items || [];
+                              const received = fItems.reduce((s, li) => s + Number(li.quantity || 0), 0);
+                              const short = fItems.reduce(
+                                (s, li) => s + Number(li.short_quantity || 0) + Number(li.damaged_quantity || 0),
+                                0
+                              );
+                              const planned = fItems.reduce(
+                                (s, li) =>
+                                  s +
+                                  Number(
+                                    li.planned_quantity ||
+                                      li.picked_quantity ||
+                                      li.quantity ||
+                                      0
+                                  ),
+                                0
+                              );
+                              if (handedStatuses.has(f.status)) runningCollected += received;
+                              const balanceAfter = Math.max(0, orderedTotal - runningCollected);
+                              return (
+                                <div key={f.id} className="invoice-view__fulfil-card">
+                                  <div className="invoice-view__payment" style={{ marginBottom: 6 }}>
+                                    <span>
+                                      <strong>{f.fulfilment_number}</strong>
+                                      {f.warehouse?.name ? ` · ${f.warehouse.name}` : ''}
+                                      {f.branch?.name ? ` (${f.branch.name})` : ''}
+                                      {' · '}
+                                      {fmtDate(f.fulfilled_at || f.dispatched_at || f.picked_at || f.created_at)}
+                                      {f.collected_by ? ` · ${f.collected_by}` : ''}
+                                      {f.delivery_order ? ` · ${f.delivery_order.delivery_number}` : ''}
+                                    </span>
+                                    <span>{TASK_LABELS[f.status] || f.status}</span>
+                                  </div>
+                                  <div className="table-wrap">
+                                    <table className="table" style={{ margin: 0 }}>
+                                      <thead>
+                                        <tr>
+                                          <th>Product</th>
+                                          <th className="num">Received</th>
+                                          {!handedStatuses.has(f.status) ? (
+                                            <th className="num">Planned</th>
+                                          ) : null}
+                                          {short > 1e-9 ? <th className="num">Short / damaged</th> : null}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {fItems.map((li) => {
+                                          const ii = li.invoice_item || {};
+                                          const uom = ii.uom?.code || '';
+                                          const name =
+                                            ii.product?.name ||
+                                            items.find((it) => it.id === li.invoice_item_id)?.product?.name ||
+                                            'Line';
+                                          const variant =
+                                            ii.variant?.name ||
+                                            items.find((it) => it.id === li.invoice_item_id)?.variant?.name;
+                                          const recv = Number(li.quantity || 0);
+                                          const sh =
+                                            Number(li.short_quantity || 0) + Number(li.damaged_quantity || 0);
+                                          const plan = Number(
+                                            li.planned_quantity || li.picked_quantity || li.quantity || 0
+                                          );
+                                          return (
+                                            <tr key={li.invoice_item_id || `${f.id}-${name}`}>
+                                              <td>
+                                                <div className="invoice-view__strong">{name}</div>
+                                                {variant ? (
+                                                  <div className="invoice-view__sub">{variant}</div>
+                                                ) : null}
+                                              </td>
+                                              <td className="num">
+                                                {recv.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                                                {uom ? ` ${uom}` : ''}
+                                              </td>
+                                              {!handedStatuses.has(f.status) ? (
+                                                <td className="num">
+                                                  {plan.toLocaleString(undefined, {
+                                                    maximumFractionDigits: 4
+                                                  })}
+                                                  {uom ? ` ${uom}` : ''}
+                                                </td>
+                                              ) : null}
+                                              {short > 1e-9 ? (
+                                                <td className="num">
+                                                  {sh > 1e-9 ? (
+                                                    <span className="invoice-view__danger">
+                                                      {sh.toLocaleString(undefined, {
+                                                        maximumFractionDigits: 4
+                                                      })}
+                                                      {uom ? ` ${uom}` : ''}
+                                                      {Number(li.damaged_quantity) > 1e-9 ? ' damaged' : ''}
+                                                      {Number(li.short_quantity) > 1e-9 ? ' not found' : ''}
+                                                    </span>
+                                                  ) : (
+                                                    '—'
+                                                  )}
+                                                </td>
+                                              ) : null}
+                                            </tr>
+                                          );
+                                        })}
+                                        {!fItems.length ? (
+                                          <tr>
+                                            <td colSpan={3} style={{ color: 'var(--ink-muted)' }}>
+                                              No line detail
+                                            </td>
+                                          </tr>
+                                        ) : null}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div className="invoice-view__sub" style={{ marginTop: 4 }}>
+                                    {handedStatuses.has(f.status)
+                                      ? `Received this hand-over: ${received.toLocaleString(undefined, {
+                                          maximumFractionDigits: 4
+                                        })}${
+                                          short > 1e-9
+                                            ? ` · Short/damaged: ${short.toLocaleString(undefined, {
+                                                maximumFractionDigits: 4
+                                              })}`
+                                            : ''
+                                        } · Order remaining after this: ${balanceAfter.toLocaleString(undefined, {
+                                          maximumFractionDigits: 4
+                                        })} of ${orderedTotal.toLocaleString(undefined, {
+                                          maximumFractionDigits: 4
+                                        })}`
+                                      : `In progress · planned ${planned.toLocaleString(undefined, {
+                                          maximumFractionDigits: 4
+                                        })}`}
+                                    {f.discrepancy_notes ? (
+                                      <span className="invoice-view__danger"> · {f.discrepancy_notes}</span>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                            {(() => {
+                              const remaining = Math.max(
+                                0,
+                                orderedTotal -
+                                  items.reduce((s, it) => s + Number(it.fulfilled_quantity || 0), 0)
+                              );
+                              return (
+                                <div className="invoice-view__payment" style={{ fontWeight: 600 }}>
+                                  <span>Order collection total</span>
+                                  <span>
+                                    {items
+                                      .reduce((s, it) => s + Number(it.fulfilled_quantity || 0), 0)
+                                      .toLocaleString(undefined, { maximumFractionDigits: 4 })}{' '}
+                                    received
+                                    {remaining > 1e-9
+                                      ? ` · ${remaining.toLocaleString(undefined, {
+                                          maximumFractionDigits: 4
+                                        })} remaining`
+                                      : ' · complete'}
+                                  </span>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        );
+                      })()}
                     </div>
                   ) : null}
                 </div>

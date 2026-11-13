@@ -36,8 +36,14 @@ Payment status (`open | partial | paid | void`) is independent and is computed a
   No revenue journal is posted.
 * **Counter sale** (`fulfilment_mode = immediate`, always for POS): reservations are restricted to the selling
   branch, no backorder is allowed, and everything is handed over in the same transaction.
-* **Pickup** (`fulfilment_mode = pickup`): goods are handed over later from the Pickups page by staff of the
-  warehouse's branch (`sales.fulfil` + branch membership).
+* **Pickup** (`fulfilment_mode = pickup`): goods are handed over later from the Pickups page. The invoice may
+  be raised in any branch; **revenue branch** is still booked as selected.
+  * **Preferred warehouse** (optional): confirming reserves stock there (and any manual allocation).
+  * **Open pickup** (`warehouse_id` null): confirming does **not** lock stock to a warehouse. The customer may
+    walk into any branch that has free stock; staff switched into that branch start picking / release and the
+    system reserves into that warehouse then. Insufficient free stock at that warehouse → pick fails.
+  Staff pick and release only from warehouses of their **active / switched** branch (`sales.fulfil` + membership).
+  Sitting in branch A cannot operate a warehouse in branch B — switch first.
 
 ## Allocation engine (`stock-allocation.service.ts`)
 
@@ -216,7 +222,8 @@ Proof files (JPEG / PNG / WebP / GIF / PDF, max 8 MB) upload to S3 via
 modals.
 
 Customer collection: walk into **any** branch that holds reserved stock for the order, show the pickup code
-(`POST /sales/pickups/by-code`). Staff release what is reserved **here**; partial collection is allowed — the same
+(`POST /sales/pickups/by-code`). Staff must be **switched into that branch**; they release what is reserved
+**here** (active-branch warehouses only). Partial collection is allowed — the same
 code works on a later visit or at another branch for the balance. Locations without access are listed so the
 customer can be directed. Backordered qty must be allocated before it can be collected.
 

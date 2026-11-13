@@ -1360,8 +1360,8 @@ model SalesInvoice {
   id                 String    @id
   businessId         String    @map("business_id")
   customerId         String    @map("customer_id")
-  /// Default fulfilment warehouse for lines that do not name their own
-  warehouseId        String    @map("warehouse_id")
+  /// Preferred fulfilment warehouse; null on open pickup = collect at any branch with stock
+  warehouseId        String?   @map("warehouse_id")
   /// Revenue branch: AR, revenue and COGS are booked here
   branchId           String?   @map("branch_id")
   /// Branch where the sale was made (pricing, rep, discounts); defaults to branchId
@@ -1426,7 +1426,7 @@ model SalesInvoice {
 
   business    Business                    @relation(fields: [businessId], references: [id], onDelete: Cascade)
   customer    Customer                    @relation(fields: [customerId], references: [id])
-  warehouse   Warehouse                   @relation(fields: [warehouseId], references: [id])
+  warehouse   Warehouse?                  @relation(fields: [warehouseId], references: [id])
   branch      Branch?                     @relation("InvoiceRevenueBranch", fields: [branchId], references: [id], onDelete: SetNull)
   sellingBranch Branch?                   @relation("InvoiceSellingBranch", fields: [sellingBranchId], references: [id], onDelete: SetNull)
   salesRep    SalesRep?                   @relation(fields: [salesRepId], references: [id], onDelete: SetNull)

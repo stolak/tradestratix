@@ -10,10 +10,12 @@ import {
   authorisedWarehouseIds,
   fulfilInTx,
   invoiceForFulfilment,
+  isOpenPickup,
   lineFactor,
   listPendingPickups,
   releaseReservations,
   reservationLeft,
+  reserveInvoiceStock,
   type FulfilMeta,
   type FulfilRequest
 } from './fulfilment.service.js';
@@ -39,6 +41,17 @@ async function assertWarehouseStaff(user: AuthUser, warehouseId: string) {
     include: { branch: { select: { id: true, name: true } } }
   });
   if (!warehouse) throw httpError(400, 'Invalid warehouse');
+  const activeBranchId = user.activeBranchId || user.defaultBranchId;
+  if (!activeBranchId) {
+    throw httpError(403, 'Switch to a branch before picking or releasing stock');
+  }
+  if (warehouse.branchId !== activeBranchId) {
+    const where = warehouse.branch?.name || 'that warehouse’s branch';
+    throw httpError(
+      403,
+      `You are switched to another branch. Switch to ${where} to pick or release stock from this warehouse.`
+    );
+  }
   await branchAccess.assertBranchMembership(user, warehouse.branchId);
   await branchAccess.assertBranchActive(user.businessId, warehouse.branchId);
   return warehouse;
@@ -190,8 +203,11 @@ export async function getTask(user: AuthUser, id: string) {
   const row = await prisma.salesFulfilment.findFirst({ where: { id, businessId: user.businessId }, include: taskInclude });
   if (!row) throw httpError(404, 'Fulfilment not found');
   const allowed = await authorisedWarehouseIds(user);
-  if (!allowed.has(row.warehouseId) && !branchAccess.canAccessAllBranches(user)) {
-    throw httpError(403, 'You do not have access to that warehouse');
+  if (!allowed.has(row.warehouseId)) {
+    throw httpError(
+      403,
+      'That picking list belongs to another branch. Switch to that branch to continue.'
+    );
   }
   const reservations = await prisma.salesReservation.findMany({
     where: { invoiceItemId: { in: row.items.map((i) => i.invoiceItemId) }, warehouseId: row.warehouseId, status: 'active' },
@@ -243,9 +259,27 @@ export async function startPicking(user: AuthUser, body: Record<string, any>) {
     if (!invoice) throw httpError(404, 'Invoice not found');
     if (invoice.status !== 'posted') throw httpError(400, 'Only confirmed orders can be picked');
     if (invoice.fulfilmentMode === 'immediate') throw httpError(400, 'Counter sales are handed over at the point of sale');
-    const free = await unclaimedReserved(tx, invoice, warehouse.id);
-    const lines = [...free.entries()].filter(([, v]) => v.free > EPS);
-    if (!lines.length) throw httpError(400, 'Nothing reserved in this warehouse is waiting to be picked for this order');
+    let free = await unclaimedReserved(tx, invoice, warehouse.id);
+    let lines = [...free.entries()].filter(([, v]) => v.free > EPS);
+    // Open pickup: reserve into this warehouse from free stock when the customer collects here.
+    if (isOpenPickup(invoice)) {
+      await reserveInvoiceStock(tx, user, invoice, {
+        restrictToWarehouseIds: [warehouse.id],
+        allowBackorder: false,
+        useSavedPlan: false,
+        method: 'auto'
+      });
+      free = await unclaimedReserved(tx, invoice, warehouse.id);
+      lines = [...free.entries()].filter(([, v]) => v.free > EPS);
+    }
+    if (!lines.length) {
+      throw httpError(
+        400,
+        isOpenPickup(invoice)
+          ? 'Insufficient free stock in this warehouse to pick for this order'
+          : 'Nothing reserved in this warehouse is waiting to be picked for this order'
+      );
+    }
 
     const id = shortId('ful');
     await tx.salesFulfilment.create({
@@ -623,13 +657,23 @@ export async function quickRelease(user: AuthUser, body: ReleaseBody) {
     if (!invoice) throw httpError(404, 'Invoice not found');
     if (invoice.status !== 'posted') throw httpError(400, 'Only confirmed invoices can be fulfilled');
     if (invoice.fulfilmentStatus === 'fulfilled') throw httpError(400, 'This invoice has already been fully collected');
+    if (isOpenPickup(invoice)) {
+      await reserveInvoiceStock(tx, user, invoice, {
+        restrictToWarehouseIds: [warehouse.id],
+        allowBackorder: false,
+        useSavedPlan: false,
+        method: 'auto'
+      });
+    }
     const free = await unclaimedReserved(tx, invoice, warehouse.id);
     for (const r of requests) {
       const avail = free.get(r.invoiceItemId);
-      if (r.quantity > EPS && avail && r.quantity > avail.free + EPS) {
+      if (r.quantity > EPS && (!avail || r.quantity > avail.free + EPS)) {
         throw httpError(
           400,
-          `Only ${avail.free} of the ${avail.reserved} reserved can be released directly; the rest is on a picking list`
+          avail
+            ? `Only ${avail.free} of the ${avail.reserved} reserved can be released directly; the rest is on a picking list`
+            : 'Insufficient free stock in this warehouse to release for this order'
         );
       }
     }
@@ -1153,6 +1197,23 @@ export async function lookupPickupByCode(user: AuthUser, rawCode: string) {
     }
   }
 
+  // Open pickup: do not fan out one collect-here row per warehouse (that duplicates the same
+  // order lines). Return branch warehouses once; UI lets staff pick which warehouse to use.
+  let openPickup = isOpenPickup(inv);
+  let branchWarehouses: { id: string; name: string; code: string; branch: any }[] = [];
+  if (openPickup && allowed.size) {
+    const openWarehouses = await prisma.warehouse.findMany({
+      where: { businessId: user.businessId, id: { in: [...allowed] }, isActive: true },
+      include: { branch: { select: { id: true, name: true, code: true } } },
+      orderBy: { code: 'asc' }
+    });
+    branchWarehouses = openWarehouses.map((wh) => ({
+      id: wh.id,
+      name: wh.name,
+      code: wh.code,
+      branch: wh.branch
+    }));
+  }
   const locations = [...byWh.values()].filter((l) => l.lines.some((x) => x.to_collect > EPS));
   const collectHere = locations.filter((l) => l.can_collect_here);
   const elsewhere = locations.filter((l) => !l.can_collect_here);
@@ -1170,19 +1231,21 @@ export async function lookupPickupByCode(user: AuthUser, rawCode: string) {
         ordered,
         collected,
         remaining,
-        backordered: remaining > EPS
-          ? roundQty(
-              Math.max(
-                0,
-                remaining -
-                  locations.reduce(
-                    (s, loc) =>
-                      s + (loc.lines.find((l) => l.invoice_item_id === i.id)?.to_collect || 0),
-                    0
-                  )
+        backordered: openPickup
+          ? 0
+          : remaining > EPS
+            ? roundQty(
+                Math.max(
+                  0,
+                  remaining -
+                    locations.reduce(
+                      (s, loc) =>
+                        s + (loc.lines.find((l) => l.invoice_item_id === i.id)?.to_collect || 0),
+                      0
+                    )
+                )
               )
-            )
-          : 0
+            : 0
       };
     })
     .filter((l) => l.remaining > EPS || l.collected > EPS);
@@ -1201,14 +1264,19 @@ export async function lookupPickupByCode(user: AuthUser, rawCode: string) {
     selling_branch: inv.sellingBranch || inv.branch,
     revenue_branch: inv.branch,
     lines,
+    open_pickup: openPickup,
+    branch_warehouses: branchWarehouses,
     collect_here: collectHere,
     elsewhere,
-    message: collectHere.length
-      ? elsewhere.length
-        ? 'Collect what is reserved here now. The customer can use the same code at other branches for the rest.'
-        : 'Goods are ready to collect at your warehouse(s). Partial collection is fine � same code for the balance later.'
-      : elsewhere.length
-        ? 'Nothing is reserved in your warehouses. Direct the customer to the branch below, or ask a supervisor to reallocate stock here.'
-        : 'Nothing is reserved yet (backordered). Allocate stock or wait for stock before collecting.'
+    can_pull_here: !collectHere.length && elsewhere.length > 0 && !openPickup,
+    message: openPickup && branchWarehouses.length
+      ? 'Open pickup — choose a warehouse in this branch to release or start picking. Stock is reserved when you proceed.'
+      : collectHere.length
+        ? elsewhere.length
+          ? 'Collect what is reserved here now. The customer can use the same code at other branches for the rest.'
+          : 'Goods are ready to collect at your warehouse(s). Partial collection is fine — same code for the balance later.'
+        : elsewhere.length
+          ? 'This order is not reserved in your warehouses. Direct the customer to the branch below, or click HERE to switch the allocated warehouse to the one in your branch.'
+          : 'Nothing is reserved yet (backordered). Allocate stock or wait for stock before collecting.'
   });
 }

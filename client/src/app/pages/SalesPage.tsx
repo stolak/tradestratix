@@ -445,7 +445,12 @@ export const SalesPage: React.FC = () => {
       return {
         ...f,
         customer_id: nextCustomer,
-        warehouse_id: w.some((x) => x.id === f.warehouse_id) ? f.warehouse_id : w[0]?.id || '',
+        warehouse_id:
+          fulfilmentMode === 'pickup'
+            ? f.warehouse_id
+            : w.some((x) => x.id === f.warehouse_id)
+              ? f.warehouse_id
+              : w[0]?.id || '',
         sales_rep_id: lockRep
           ? resolvedRepId
           : r.some((x) => x.id === f.sales_rep_id)
@@ -500,6 +505,10 @@ export const SalesPage: React.FC = () => {
           ? f
           : { ...f, warehouse_id: warehouses[0]?.id || '' }
       );
+    } else if (mode === 'pickup') {
+      // Open by default — customer may collect at any branch with stock
+      setForm((f) => ({ ...f, warehouse_id: '' }));
+      setLines((rows) => rows.map((r) => ({ ...r, warehouse_id: '', allocations: null })));
     }
   };
 
@@ -510,8 +519,15 @@ export const SalesPage: React.FC = () => {
 
   const createDraft = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!form.customer_id || !form.warehouse_id) {
-      await alertError('Create failed', 'Customer and warehouse are required');
+    if (!form.customer_id) {
+      await alertError('Create failed', 'Customer is required');
+      return;
+    }
+    if (fulfilmentMode !== 'pickup' && !form.warehouse_id) {
+      await alertError(
+        'Create failed',
+        fulfilmentMode === 'delivery' ? 'Ship-from warehouse is required' : 'Warehouse is required'
+      );
       return;
     }
     const payloadItems = lines
@@ -557,7 +573,7 @@ export const SalesPage: React.FC = () => {
     try {
       await api.sales.createInvoice({
         customer_id: form.customer_id,
-        warehouse_id: form.warehouse_id,
+        warehouse_id: form.warehouse_id || undefined,
         sales_rep_id: form.sales_rep_id || undefined,
         notes: form.notes || undefined,
         fulfilment_mode: fulfilmentMode,
@@ -724,9 +740,13 @@ export const SalesPage: React.FC = () => {
               <span className="fulfil-mode__hint">
                 {fulfilmentMode === 'delivery'
                   ? 'Confirming reserves stock in any branch. The warehouse picks and dispatches it; revenue and cost of goods post when delivery is confirmed with proof of delivery.'
-                  : deferred
-                    ? 'Confirming reserves stock — split across warehouses in any branch if needed — and issues the customer a pickup code. Revenue and cost of goods post as each part is collected.'
-                    : 'Goods leave this branch’s warehouses when the sale is confirmed; revenue posts at the same time.'}
+                  : fulfilmentMode === 'pickup'
+                    ? form.warehouse_id
+                      ? 'Confirming reserves stock at the preferred warehouse (and elsewhere if you allocate). The customer receives a pickup code. Revenue posts as each part is collected.'
+                      : 'Open pickup: no warehouse is locked at confirm. The customer can walk into any branch that has free stock; that branch reserves and picks on collection. Revenue branch is still respected.'
+                    : deferred
+                      ? 'Confirming reserves stock and issues a pickup / delivery workflow. Revenue and cost of goods post as each part is handed over.'
+                      : 'Goods leave this branch’s warehouses when the sale is confirmed; revenue posts at the same time.'}
                 {otherBranchPickup
                   ? ' Some lines are collected from another branch; that branch’s inventory is settled through inter-branch clearing.'
                   : ''}
@@ -771,15 +791,34 @@ export const SalesPage: React.FC = () => {
               </div>
               <div className="field">
                 <label>
-                  {fulfilmentMode === 'delivery' ? 'Ship from warehouse' : deferred ? 'Default pickup warehouse' : 'Warehouse'}
+                  {fulfilmentMode === 'delivery'
+                    ? 'Ship from warehouse'
+                    : fulfilmentMode === 'pickup'
+                      ? 'Preferred pickup warehouse'
+                      : 'Warehouse'}
                 </label>
                 <SearchSelect
                   value={form.warehouse_id}
                   options={warehouseOptions}
-                  required
-                  placeholder="Search warehouse…"
-                  onChange={(warehouse_id) => setForm({ ...form, warehouse_id })}
+                  required={fulfilmentMode !== 'pickup'}
+                  allowEmpty={fulfilmentMode === 'pickup'}
+                  emptyLabel="Any warehouse (open)"
+                  placeholder={
+                    fulfilmentMode === 'pickup' ? 'Leave open or search warehouse…' : 'Search warehouse…'
+                  }
+                  onChange={(warehouse_id) => {
+                    setForm({ ...form, warehouse_id });
+                    if (fulfilmentMode === 'pickup') {
+                      setLines((rows) => rows.map((r) => ({ ...r, allocations: null })));
+                    }
+                  }}
                 />
+                {fulfilmentMode === 'pickup' && !form.warehouse_id ? (
+                  <div className="line-items__discount-note">
+                    Open — customer may collect at any branch/warehouse with stock. Revenue stays on the
+                    revenue branch.
+                  </div>
+                ) : null}
               </div>
               {canChooseRevenueBranch ? (
                 <div className="field">
@@ -1001,10 +1040,9 @@ export const SalesPage: React.FC = () => {
                               }
                             >
                               <option value="">
-                                Default
-                                {warehouseById.get(form.warehouse_id)
-                                  ? ` (${warehouseById.get(form.warehouse_id)!.code})`
-                                  : ''}
+                                {form.warehouse_id
+                                  ? `Preferred (${warehouseById.get(form.warehouse_id)?.code || 'header'})`
+                                  : 'Open (any warehouse)'}
                               </option>
                               {fulfilOptions.warehouses.map((w) => (
                                 <option key={w.id} value={w.id}>
@@ -1015,10 +1053,14 @@ export const SalesPage: React.FC = () => {
                                 </option>
                               ))}
                             </select>
-                            {line.product_id ? (
+                            {line.product_id && (line.warehouse_id || form.warehouse_id) ? (
                               <div className="line-items__discount-note">
                                 {freeStock(line.product_id, line.warehouse_id || form.warehouse_id).toLocaleString()}{' '}
                                 {product?.base_uom?.code || 'base units'} free here
+                              </div>
+                            ) : line.product_id && fulfilmentMode === 'pickup' ? (
+                              <div className="line-items__discount-note">
+                                Open — reserved at the collecting branch when the customer arrives
                               </div>
                             ) : null}
                           </td>
@@ -1084,10 +1126,15 @@ export const SalesPage: React.FC = () => {
             {deferred && Object.keys(preview).length ? (
               <div className="alloc">
                 <div className="alloc__head">
-                  <span className="alloc__title">Stock allocation</span>
+                  <span className="alloc__title">
+                    {fulfilmentMode === 'pickup' && !form.warehouse_id
+                      ? 'Stock availability'
+                      : 'Stock allocation'}
+                  </span>
                   <span className="alloc__hint">
-                    Suggested split by free stock (default warehouse first, then its branch, then elsewhere).
-                    Edit a quantity to choose the warehouses yourself.
+                    {fulfilmentMode === 'pickup' && !form.warehouse_id
+                      ? 'Open pickup does not lock stock at confirm. This shows where free stock exists today; the collecting branch reserves when the customer arrives. Optionally pin a warehouse below.'
+                      : 'Suggested split by free stock (preferred warehouse first, then its branch, then elsewhere). Edit a quantity to choose the warehouses yourself.'}
                   </span>
                 </div>
                 {lines.map((line, idx) => {

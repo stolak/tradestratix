@@ -28,9 +28,12 @@ export type InvoiceForFulfilment = {
   invoiceNumber: string;
   branchId: string | null;
   sellingBranchId: string | null;
-  warehouseId: string;
+  warehouseId: string | null;
   customerId: string;
   salesRepId: string | null;
+  status?: string;
+  fulfilmentMode?: string;
+  fulfilmentStatus?: string;
   subtotal: Num;
   taxAmount: Num;
   totalAmount: Num;
@@ -50,6 +53,14 @@ export type InvoiceForFulfilment = {
     allocationPlan: Prisma.JsonValue | null;
   }[];
 };
+
+/** Pickup with no preferred warehouse — stock is reserved at the collecting branch. */
+export function isOpenPickup(invoice: {
+  fulfilmentMode?: string | null;
+  warehouseId?: string | null;
+}) {
+  return invoice.fulfilmentMode === 'pickup' && !invoice.warehouseId;
+}
 
 /** Line UoM units per base unit. */
 export function lineFactor(item: { quantity: Num; baseQuantity: Num | null }) {
@@ -84,6 +95,8 @@ export const reservationLeft = (r: { quantity: Num; fulfilledQuantity: Num; rele
 
 export type ReserveOptions = {
   restrictToBranchId?: string | null;
+  /** Limit candidates to these warehouses (e.g. reserve into the collecting warehouse). */
+  restrictToWarehouseIds?: string[];
   allowBackorder?: boolean;
   excludeWarehouseIds?: string[];
   onlyItemIds?: string[];
@@ -94,6 +107,11 @@ export type ReserveOptions = {
   method?: 'auto' | 'manual' | 'reallocation' | 'backorder';
   /** Apply the split saved on the draft (first confirmation only). */
   useSavedPlan?: boolean;
+  /**
+   * Only reserve lines that already name a warehouse or have a manual allocation plan.
+   * Used for open pickup confirm so unplanned qty stays free until collection.
+   */
+  onlyExplicitPlans?: boolean;
 };
 
 /**
@@ -137,6 +155,12 @@ export async function reserveInvoiceStock(
     const open = roundQty(n(item.quantity) - n(item.fulfilledQuantity) - n(item.cancelledQuantity) - reservedLine);
     const want = Math.min(open, opts.quantities?.get(item.id) ?? open);
     if (want <= EPS) continue;
+    const manual = opts.manual
+      ? opts.manual.get(item.id) ?? null
+      : opts.useSavedPlan
+        ? parseManualPlan(item.allocationPlan)
+        : null;
+    if (opts.onlyExplicitPlans && !item.fulfilmentWarehouseId && !manual?.length) continue;
     inputs.push({
       key: item.id,
       productId: product.id,
@@ -146,11 +170,7 @@ export async function reserveInvoiceStock(
       productName: product.name,
       quantity: want,
       preferredWarehouseId: item.fulfilmentWarehouseId || null,
-      manual: opts.manual
-        ? opts.manual.get(item.id) ?? null
-        : opts.useSavedPlan
-          ? parseManualPlan(item.allocationPlan)
-          : null
+      manual
     });
   }
   if (!inputs.length) return [];
@@ -158,6 +178,7 @@ export async function reserveInvoiceStock(
   const plan = await planAllocation(tx, user.businessId, inputs, {
     defaultWarehouseId: invoice.warehouseId,
     restrictToBranchId: opts.restrictToBranchId,
+    restrictToWarehouseIds: opts.restrictToWarehouseIds,
     excludeWarehouseIds: opts.excludeWarehouseIds
   });
 
@@ -712,19 +733,28 @@ export async function fulfilmentOptions(user: AuthUser, productIds: string[]) {
   });
 }
 
+/**
+ * Warehouses the user may pick / release from right now = active (switched) branch only.
+ * Customer may collect at any branch that holds reserved stock, but staff must be switched
+ * into that branch; sitting in A cannot operate a warehouse in B.
+ */
 export async function authorisedWarehouseIds(user: AuthUser) {
-  const branchIds = await branchAccess.listAuthorisedBranchIds(user.id, user.businessId, user.role);
+  const activeBranchId = user.activeBranchId || user.defaultBranchId;
+  if (!activeBranchId) return new Set<string>();
+  const authorised = await branchAccess.listAuthorisedBranchIds(user.id, user.businessId, user.role);
+  if (!authorised.includes(activeBranchId) && !branchAccess.canAccessAllBranches(user)) {
+    return new Set<string>();
+  }
   const rows = await prisma.warehouse.findMany({
-    where: { businessId: user.businessId, branchId: { in: branchIds } },
+    where: { businessId: user.businessId, branchId: activeBranchId, isActive: true },
     select: { id: true }
   });
   return new Set(rows.map((w) => w.id));
 }
 
 /**
- * Pickup queue: reserved, uncollected quantities in warehouses of the user's branches, grouped by
- * invoice and warehouse. Shows only what the warehouse needs — no prices or customer balances beyond
- * payment status.
+ * Pickup queue: reserved, uncollected quantities in warehouses of the user's *active* branch,
+ * grouped by invoice and warehouse. Other branches' stock is visible only after switching there.
  */
 export async function listPendingPickups(user: AuthUser, opts: { warehouseId?: string; q?: string } = {}) {
   const allowed = await authorisedWarehouseIds(user);
@@ -825,6 +855,94 @@ export async function listPendingPickups(user: AuthUser, opts: { warehouseId?: s
     const left = reservationLeft(r);
     line.remaining = roundQty(line.remaining + left * factor);
     line.lots.push({ batchNumber: r.lot.batchNumber, expiryDate: r.lot.expiryDate, quantity: roundQty(left * factor) });
+  }
+
+  // Open pickups (no preferred warehouse): one queue row per order (not per warehouse).
+  // Staff choose the warehouse when they start picking / release via pickup code.
+  if (allowed.size) {
+    const openInvoices = await prisma.salesInvoice.findMany({
+      where: {
+        businessId: user.businessId,
+        status: 'posted',
+        fulfilmentMode: 'pickup',
+        warehouseId: null,
+        fulfilmentStatus: { in: ['pending', 'partial'] },
+        ...(q
+          ? {
+              OR: [
+                { invoiceNumber: { contains: q } },
+                { customer: { name: { contains: q } } },
+                { customer: { phone: { contains: q } } }
+              ]
+            }
+          : {})
+      },
+      include: {
+        customer: { select: { id: true, name: true, code: true, phone: true } },
+        branch: { select: { id: true, name: true, code: true } },
+        sellingBranch: { select: { id: true, name: true, code: true } },
+        items: {
+          include: {
+            product: { select: { id: true, name: true, sku: true } },
+            variant: { select: { id: true, name: true } },
+            uom: { select: { id: true, code: true, name: true } },
+            reservations: { where: { status: 'active' } }
+          }
+        }
+      },
+      take: 200
+    });
+
+    for (const inv of openInvoices) {
+      const key = `${inv.id}:open`;
+      if ([...groups.keys()].some((k) => k.startsWith(`${inv.id}:`))) continue;
+      const lineMap = new Map<string, any>();
+      for (const item of inv.items) {
+        const reserved = roundQty(
+          item.reservations.reduce((s, r) => s + reservationLeft(r), 0) * lineFactor(item)
+        );
+        const remaining = roundQty(
+          n(item.quantity) - n(item.fulfilledQuantity) - n(item.cancelledQuantity) - reserved
+        );
+        if (remaining <= EPS) continue;
+        lineMap.set(item.id, {
+          invoiceItemId: item.id,
+          product: item.product,
+          variant: item.variant,
+          uom: item.uom,
+          quantity: n(item.quantity),
+          fulfilledQuantity: n(item.fulfilledQuantity),
+          remaining,
+          lots: [],
+          open_pickup: true
+        });
+      }
+      if (!lineMap.size) continue;
+      groups.set(key, {
+        invoiceId: inv.id,
+        invoiceNumber: inv.invoiceNumber,
+        invoiceDate: inv.invoiceDate,
+        paymentStatus: inv.paymentStatus,
+        balance: inv.balance,
+        amountDue: roundMoney(n(inv.totalAmount) - n(inv.cancelledAmount) - n(inv.amountPaid)),
+        fulfilmentStatus: inv.fulfilmentStatus,
+        fulfilmentMode: inv.fulfilmentMode,
+        hasPickupCode: Boolean(inv.pickupCode),
+        authorisedCollectors: Array.isArray(inv.authorisedCollectors) ? inv.authorisedCollectors : [],
+        reservationExpiresAt: inv.reservationExpiresAt,
+        customer: inv.customer,
+        sellingBranch: inv.sellingBranch || inv.branch,
+        revenueBranch: inv.branch,
+        open_pickup: true,
+        warehouse: {
+          id: '',
+          name: 'Any warehouse in this branch',
+          code: 'OPEN',
+          branch: warehouses[0]?.branch || null
+        },
+        lines: lineMap
+      });
+    }
   }
 
   const rows = [...groups.values()]

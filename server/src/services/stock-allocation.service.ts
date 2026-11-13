@@ -163,10 +163,14 @@ export async function planAllocation(
   opts: {
     defaultWarehouseId?: string | null;
     restrictToBranchId?: string | null;
+    restrictToWarehouseIds?: string[];
     excludeWarehouseIds?: string[];
   } = {}
 ): Promise<PlanLineResult[]> {
   const excluded = new Set(opts.excludeWarehouseIds || []);
+  const onlyWarehouses = opts.restrictToWarehouseIds?.length
+    ? new Set(opts.restrictToWarehouseIds)
+    : null;
   const stock = await stockByWarehouse(
     client,
     businessId,
@@ -196,6 +200,7 @@ export async function planAllocation(
     const rows = (stock.get(line.variantId) || []).filter(
       (r) =>
         (!opts.restrictToBranchId || r.branchId === opts.restrictToBranchId) &&
+        (!onlyWarehouses || onlyWarehouses.has(r.warehouseId)) &&
         !excluded.has(r.warehouseId)
     );
     const freeOf = (whId: string) => remainingFree.get(`${line.variantId}:${whId}`) ?? 0;

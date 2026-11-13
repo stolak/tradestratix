@@ -14,6 +14,7 @@ import { createNotification } from './notification.service.js';
 import * as branchAccess from './branch-access.service.js';
 import {
   activeReservations,
+  authorisedWarehouseIds,
   fulfilmentStatusOf,
   invoiceForFulfilment,
   lineFactor,
@@ -40,6 +41,33 @@ async function assertOrderBranch(user: AuthUser, inv: { branchId: string | null;
   const authorised = await branchAccess.listAuthorisedBranchIds(user.id, user.businessId, user.role);
   if (!branches.some((b) => authorised.includes(b))) {
     throw httpError(403, 'You must belong to the selling or revenue branch of this order');
+  }
+}
+
+/**
+ * Selling/revenue branch may always reallocate. Collecting-branch staff may pull reservations
+ * into a warehouse of their *active* branch (customer walked in with a pickup code).
+ */
+async function assertCanReallocate(
+  user: AuthUser,
+  inv: { branchId: string | null; sellingBranchId: string | null },
+  toWarehouseId?: string | null
+) {
+  try {
+    await assertOrderBranch(user, inv);
+    return;
+  } catch {
+    /* fall through — pull-here path */
+  }
+  if (!toWarehouseId) {
+    throw httpError(
+      403,
+      'You must belong to the selling or revenue branch, or choose a warehouse in your active branch to pull stock here'
+    );
+  }
+  const allowed = await authorisedWarehouseIds(user);
+  if (!allowed.has(toWarehouseId)) {
+    throw httpError(403, 'You can only switch allocation into a warehouse of your active branch');
   }
 }
 
@@ -316,7 +344,7 @@ export async function reallocateOrder(user: AuthUser, id: string, body: Record<s
 
   const header = await prisma.salesInvoice.findFirst({ where: { id, businessId: user.businessId } });
   if (!header) throw httpError(404, 'Invoice not found');
-  await assertOrderBranch(user, header);
+  await assertCanReallocate(user, header, toWarehouseId);
   if (header.status !== 'posted' || header.fulfilmentMode === 'immediate') {
     throw httpError(400, 'Only confirmed pickup or delivery orders can be reallocated');
   }

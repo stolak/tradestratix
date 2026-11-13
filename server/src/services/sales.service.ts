@@ -340,7 +340,18 @@ export async function getInvoice(user: AuthUser, id: string) {
               shortQuantity: true,
               damagedQuantity: true,
               quantity: true,
-              recognisedAmount: true
+              recognisedAmount: true,
+              invoiceItem: {
+                select: {
+                  id: true,
+                  quantity: true,
+                  fulfilledQuantity: true,
+                  cancelledQuantity: true,
+                  product: { select: { id: true, name: true, sku: true } },
+                  variant: { select: { id: true, name: true } },
+                  uom: { select: { id: true, code: true, name: true } }
+                }
+              }
             }
           },
           deliveryOrder: { select: { id: true, deliveryNumber: true, status: true, receivedBy: true } }
@@ -353,7 +364,7 @@ export async function getInvoice(user: AuthUser, id: string) {
   await assertInvoiceVisible(user, [
     row.branchId,
     row.sellingBranchId,
-    row.warehouse.branchId,
+    row.warehouse?.branchId,
     ...row.items.map((i) => i.fulfilmentWarehouse?.branch.id),
     ...row.items.flatMap((i) => i.reservations.map((r) => r.warehouse.branch.id))
   ]);
@@ -363,7 +374,7 @@ export async function getInvoice(user: AuthUser, id: string) {
 
 export async function createInvoice(user: AuthUser, body: Record<string, any>) {
   const customerId = requireString(body.customer_id || body.customerId, 'customer_id');
-  const warehouseId = requireString(body.warehouse_id || body.warehouseId, 'warehouse_id');
+  const warehouseIdRaw = body.warehouse_id || body.warehouseId || null;
   const channel = String(body.channel || 'sales').toLowerCase() === 'pos' ? 'pos' : 'sales';
   const itemsInput: any[] = Array.isArray(body.items) ? body.items : [];
 
@@ -437,13 +448,22 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
     return wh;
   };
 
-  const warehouse = await activeWarehouse(warehouseId, 'warehouse_id');
+  const warehouse = warehouseIdRaw
+    ? await activeWarehouse(String(warehouseIdRaw), 'warehouse_id')
+    : null;
+  if (!warehouse && fulfilmentMode !== 'pickup') {
+    throw httpError(400, 'warehouse_id is required for counter sales and deliveries');
+  }
   const lineWarehouseIds: (string | null)[] = [];
   const linePlans: ({ warehouse_id: string; quantity: number }[] | null)[] = [];
   for (const [i, item] of itemsInput.entries()) {
     const whId = item.warehouse_id || item.warehouseId || null;
     lineWarehouseIds.push(
-      !whId || whId === warehouse.id ? null : (await activeWarehouse(whId, `items[${i}].warehouse_id`)).id
+      !whId || (warehouse && whId === warehouse.id)
+        ? null
+        : whId
+          ? (await activeWarehouse(whId, `items[${i}].warehouse_id`)).id
+          : null
     );
 
     const rawPlan: any[] = Array.isArray(item.allocations) ? item.allocations : [];
@@ -512,7 +532,7 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
       id: shortId('inv'),
       businessId: user.businessId,
       customerId,
-      warehouseId: warehouse.id,
+      warehouseId: warehouse?.id ?? null,
       branchId,
       sellingBranchId,
       salesRepId,
@@ -704,10 +724,15 @@ export async function postInvoice(user: AuthUser, id: string, opts: ConfirmOptio
       }
 
       const fulfilmentInvoice = (await invoiceForFulfilment(tx, user.businessId, invoice.id))!;
+      const openPickup = invoice.fulfilmentMode === 'pickup' && !invoice.warehouseId;
+      // Open pickup: do not lock stock to a warehouse at confirm. Reserve when the customer
+      // collects at a branch (start picking / quick release). Explicit line warehouses / plans
+      // still reserve at confirm.
       await reserveInvoiceStock(tx, user, fulfilmentInvoice, {
         restrictToBranchId: immediate ? sellingBranchId : null,
-        allowBackorder,
-        useSavedPlan: true
+        allowBackorder: openPickup ? true : allowBackorder,
+        useSavedPlan: true,
+        onlyExplicitPlans: openPickup
       });
 
       await tx.salesInvoice.update({
