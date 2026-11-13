@@ -24,3 +24,21 @@ Business Owner receives all permissions. Other roles are seeded with module-appr
 
 Permissions are enforced in routes and services; branch membership is also required to release stock from a
 warehouse. See `multi-branch-fulfilment.md`.
+
+## Accounting tabs
+
+Menu access still uses `accounting.view`. Each Accounting tab needs its own permission so two users can both open Accounting but see different tabs.
+
+| Permission | Tab |
+| --- | --- |
+| `accounting.coa` | Chart of accounts |
+| `accounting.defaults` | Default accounts |
+| `accounting.journals` | Journals (create/post still needs `accounting.post`; reverse needs `accounting.reverse`) |
+| `accounting.trial` | Trial balance |
+| `accounting.pl` | Profit & loss |
+| `accounting.bs` | Balance sheet |
+| `accounting.cf` | Cash flow |
+| `accounting.ledger` | Ledger statement |
+| `accounting.periods` | Periods (lock/unlock still needs `accounting.edit`) |
+
+Seeded with `accounting.*` for accountant / finance manager; explicitly for general manager and auditor. Assign per tab on custom roles in Roles.

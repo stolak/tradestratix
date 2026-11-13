@@ -180,6 +180,15 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'sales_reps.*',
       'distribution.*',
       'accounting.view',
+      'accounting.coa',
+      'accounting.defaults',
+      'accounting.journals',
+      'accounting.trial',
+      'accounting.pl',
+      'accounting.bs',
+      'accounting.cf',
+      'accounting.ledger',
+      'accounting.periods',
       'accounting.export',
       'accounting.print',
       'banking.view',
@@ -504,6 +513,15 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       ...MODULES.map((m) => `${m}.view`),
       ...MODULES.map((m) => `${m}.export`),
       ...MODULES.map((m) => `${m}.print`),
+      'accounting.coa',
+      'accounting.defaults',
+      'accounting.journals',
+      'accounting.trial',
+      'accounting.pl',
+      'accounting.bs',
+      'accounting.cf',
+      'accounting.ledger',
+      'accounting.periods',
       'customers.balances',
       'suppliers.balances',
       'branches.report_all',
@@ -709,6 +727,51 @@ async function main() {
       module: 'suppliers',
       action: 'balances',
       description: 'View supplier AP balances (outstanding / prepaid) on the suppliers directory'
+    },
+    {
+      module: 'accounting',
+      action: 'coa',
+      description: 'View and manage the chart of accounts tab'
+    },
+    {
+      module: 'accounting',
+      action: 'defaults',
+      description: 'View default posting account maps'
+    },
+    {
+      module: 'accounting',
+      action: 'journals',
+      description: 'View the journals tab (post/reverse still need accounting.post / accounting.reverse)'
+    },
+    {
+      module: 'accounting',
+      action: 'trial',
+      description: 'View the trial balance report tab'
+    },
+    {
+      module: 'accounting',
+      action: 'pl',
+      description: 'View the profit & loss report tab'
+    },
+    {
+      module: 'accounting',
+      action: 'bs',
+      description: 'View the balance sheet report tab'
+    },
+    {
+      module: 'accounting',
+      action: 'cf',
+      description: 'View the cash flow report tab'
+    },
+    {
+      module: 'accounting',
+      action: 'ledger',
+      description: 'View the ledger statement tab'
+    },
+    {
+      module: 'accounting',
+      action: 'periods',
+      description: 'View accounting periods (lock/unlock still needs accounting.edit)'
     }
   ];
   for (const p of EXTRA_PERMISSIONS) {

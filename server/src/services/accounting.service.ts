@@ -96,15 +96,17 @@ export async function updateAccount(user: AuthUser, id: string, body: Record<str
   if (!existing) throw httpError(404, 'Account not found');
 
   if (body.account_type != null || body.accountType != null) {
-    const nextType = String(body.account_type ?? body.accountType);
-    if (!ACCOUNT_TYPES.has(nextType)) throw httpError(400, 'Invalid account_type');
+    const requested = String(body.account_type ?? body.accountType);
+    if (requested !== existing.accountType) {
+      throw httpError(400, 'Account type cannot be changed after create');
+    }
   }
 
-  const nextType = String(body.account_type ?? body.accountType ?? existing.accountType);
-  const nextParentId =
-    body.parent_id !== undefined || body.parentId !== undefined
-      ? body.parent_id ?? body.parentId ?? null
-      : existing.parentId;
+  const nextType = existing.accountType;
+  const parentProvided = body.parent_id !== undefined || body.parentId !== undefined;
+  const nextParentId = parentProvided
+    ? body.parent_id ?? body.parentId ?? null
+    : existing.parentId;
 
   if (nextParentId === id) throw httpError(400, 'An account cannot be its own parent');
   await assertValidParent(user.businessId, nextParentId, nextType);
@@ -131,12 +133,7 @@ export async function updateAccount(user: AuthUser, id: string, body: Record<str
       data: {
         ...(body.code != null ? { code: String(body.code).trim() } : {}),
         ...(body.name != null ? { name: String(body.name).trim() } : {}),
-        ...(body.account_type != null || body.accountType != null
-          ? { accountType: nextType }
-          : {}),
-        ...(body.parent_id !== undefined || body.parentId !== undefined
-          ? { parentId: nextParentId }
-          : {}),
+        ...(parentProvided ? { parentId: nextParentId } : {}),
         ...(body.description !== undefined
           ? { description: body.description ? String(body.description) : null }
           : {}),

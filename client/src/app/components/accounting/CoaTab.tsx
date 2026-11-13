@@ -1,5 +1,6 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
-import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, Pencil, Plus } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 import { api } from '../../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../../utils/alerts';
 import { SearchSelect } from '../SearchSelect';
@@ -12,8 +13,12 @@ export type CoaTabHandle = {
 };
 
 export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
+  const { can } = useAuth();
+  const canCreate = can('accounting.create');
+  const canEdit = can('accounting.edit', 'accounting.create');
   const [accounts, setAccounts] = useState<any[]>([]);
   const [showAccountModal, setShowAccountModal] = useState(false);
+  const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
   const [togglingAccountId, setTogglingAccountId] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [accountForm, setAccountForm] = useState({
@@ -23,6 +28,7 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
     parent_id: '',
     description: ''
   });
+  const isEditing = !!editingAccountId;
 
   const accountTreeRows = useMemo(() => flattenAccountTree(accounts), [accounts]);
   const accountsById = useMemo(() => {
@@ -40,16 +46,42 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
       return true;
     });
   }, [accountTreeRows, expandedIds, accountsById]);
-  const parentAccountOptions = useMemo(
-    () =>
-      accountTreeRows
-        .filter((a) => a.is_active)
-        .map((a) => ({
-          value: a.id,
-          label: `${'— '.repeat(a.depth)}${a.code} — ${a.name}`
-        })),
-    [accountTreeRows]
-  );
+  const descendantIdsOfEditing = useMemo(() => {
+    if (!editingAccountId) return new Set<string>();
+    const kids = new Set<string>();
+    const walk = (parentId: string) => {
+      for (const a of accounts) {
+        if (a.parent_id === parentId) {
+          kids.add(a.id);
+          walk(a.id);
+        }
+      }
+    };
+    walk(editingAccountId);
+    return kids;
+  }, [accounts, editingAccountId]);
+
+  const parentAccountOptions = useMemo(() => {
+    return accountTreeRows
+      .filter((a) => {
+        if (!a.is_active) return false;
+        if (editingAccountId) {
+          if (a.id === editingAccountId) return false;
+          if (descendantIdsOfEditing.has(a.id)) return false;
+          if (a.account_type !== accountForm.account_type) return false;
+        }
+        return true;
+      })
+      .map((a) => ({
+        value: a.id,
+        label: `${'— '.repeat(a.depth)}${a.code} — ${a.name}`
+      }));
+  }, [
+    accountTreeRows,
+    editingAccountId,
+    descendantIdsOfEditing,
+    accountForm.account_type
+  ]);
 
   const toggleExpand = (accountId: string) => {
     setExpandedIds((prev) => toggleIdInSet(prev, accountId));
@@ -67,6 +99,11 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
     void load();
   }, []);
 
+  const closeAccountModal = () => {
+    setShowAccountModal(false);
+    setEditingAccountId(null);
+  };
+
   const openCreateAccount = (parent?: any | null) => {
     if (parent?.id) {
       setExpandedIds((prev) => {
@@ -75,6 +112,7 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
         return next;
       });
     }
+    setEditingAccountId(null);
     setAccountForm({
       code: '',
       name: '',
@@ -85,27 +123,63 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
     setShowAccountModal(true);
   };
 
+  const openEditAccount = (account: any) => {
+    setEditingAccountId(account.id);
+    setAccountForm({
+      code: account.code || '',
+      name: account.name || '',
+      account_type: account.account_type || 'asset',
+      parent_id: account.parent_id || '',
+      description: account.description || ''
+    });
+    setShowAccountModal(true);
+  };
+
   useImperativeHandle(ref, () => ({
-    openCreate: openCreateAccount,
+    openCreate: (parent?: any | null) => {
+      if (!canCreate) return;
+      openCreateAccount(parent);
+    },
     refresh: load
   }));
 
-  const handleCreateAccount = async (e: React.FormEvent) => {
+  const handleSaveAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await api.accounting.createAccount({
-        code: accountForm.code.trim(),
-        name: accountForm.name.trim(),
-        account_type: accountForm.account_type,
-        parent_id: accountForm.parent_id || null,
-        description: accountForm.description.trim() || undefined,
-        is_active: true
-      });
-      setShowAccountModal(false);
-      await alertSuccess('Account created');
+      if (editingAccountId) {
+        await api.accounting.updateAccount(editingAccountId, {
+          code: accountForm.code.trim(),
+          name: accountForm.name.trim(),
+          parent_id: accountForm.parent_id || null,
+          description: accountForm.description.trim() || null
+        });
+        if (accountForm.parent_id) {
+          setExpandedIds((prev) => {
+            const next = new Set(prev);
+            next.add(accountForm.parent_id);
+            return next;
+          });
+        }
+        closeAccountModal();
+        await alertSuccess('Account updated');
+      } else {
+        await api.accounting.createAccount({
+          code: accountForm.code.trim(),
+          name: accountForm.name.trim(),
+          account_type: accountForm.account_type,
+          parent_id: accountForm.parent_id || null,
+          description: accountForm.description.trim() || undefined,
+          is_active: true
+        });
+        closeAccountModal();
+        await alertSuccess('Account created');
+      }
       await load();
     } catch (err: any) {
-      await alertError('Create account failed', err.message);
+      await alertError(
+        editingAccountId ? 'Update account failed' : 'Create account failed',
+        err.message
+      );
     }
   };
 
@@ -260,24 +334,37 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
                       </td>
                       <td>{a.account_type}</td>
                       <td>{a.is_active ? 'Active' : 'Disabled'}</td>
-                      <td>
+                        <td>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                          <button
-                            type="button"
-                            className="btn btn-ghost"
-                            onClick={() => openCreateAccount(a)}
-                          >
-                            <Plus size={14} /> Add child
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-ghost"
-                            disabled={togglingAccountId === a.id}
-                            onClick={() => void handleToggleAccountActive(a)}
-                            style={a.is_active ? { color: 'var(--danger)' } : undefined}
-                          >
-                            {a.is_active ? 'Disable' : 'Enable'}
-                          </button>
+                          {canEdit ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => openEditAccount(a)}
+                            >
+                              <Pencil size={14} /> Edit
+                            </button>
+                          ) : null}
+                          {canCreate ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => openCreateAccount(a)}
+                            >
+                              <Plus size={14} /> Add child
+                            </button>
+                          ) : null}
+                          {canEdit ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              disabled={togglingAccountId === a.id}
+                              onClick={() => void handleToggleAccountActive(a)}
+                              style={a.is_active ? { color: 'var(--danger)' } : undefined}
+                            >
+                              {a.is_active ? 'Disable' : 'Enable'}
+                            </button>
+                          ) : null}
                         </div>
                       </td>
                     </tr>
@@ -292,29 +379,27 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
       {showAccountModal ? (
         <AccountingModalShell
           title={
-            accountForm.parent_id
-              ? `New child under ${accountsById.get(accountForm.parent_id)?.code || 'parent'}`
-              : 'New ledger account'
+            isEditing
+              ? `Edit ${accountForm.code || 'account'}`
+              : accountForm.parent_id
+                ? `New child under ${accountsById.get(accountForm.parent_id)?.code || 'parent'}`
+                : 'New ledger account'
           }
-          onClose={() => setShowAccountModal(false)}
+          onClose={closeAccountModal}
           footer={
             <>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => setShowAccountModal(false)}
-              >
+              <button type="button" className="btn btn-ghost" onClick={closeAccountModal}>
                 Cancel
               </button>
-              <button type="submit" form="create-account-form" className="btn btn-primary">
-                Create account
+              <button type="submit" form="account-form" className="btn btn-primary">
+                {isEditing ? 'Save changes' : 'Create account'}
               </button>
             </>
           }
         >
           <form
-            id="create-account-form"
-            onSubmit={handleCreateAccount}
+            id="account-form"
+            onSubmit={handleSaveAccount}
             style={{ display: 'grid', gap: 12 }}
           >
             <div className="field">
@@ -326,6 +411,10 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
                 placeholder="None — top level"
                 options={parentAccountOptions}
                 onChange={(parentId) => {
+                  if (isEditing) {
+                    setAccountForm({ ...accountForm, parent_id: parentId });
+                    return;
+                  }
                   const parent = parentId ? accountsById.get(parentId) : null;
                   setAccountForm({
                     ...accountForm,
@@ -347,20 +436,30 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
               </div>
               <div className="field">
                 <label>Type</label>
-                <select
-                  required
-                  value={accountForm.account_type}
-                  disabled={!!accountForm.parent_id}
-                  onChange={(e) =>
-                    setAccountForm({ ...accountForm, account_type: e.target.value })
-                  }
-                >
-                  {ACCOUNT_TYPES.map((t) => (
-                    <option key={t.value} value={t.value}>
-                      {t.label}
-                    </option>
-                  ))}
-                </select>
+                {isEditing ? (
+                  <input
+                    disabled
+                    value={
+                      ACCOUNT_TYPES.find((t) => t.value === accountForm.account_type)?.label ||
+                      accountForm.account_type
+                    }
+                  />
+                ) : (
+                  <select
+                    required
+                    value={accountForm.account_type}
+                    disabled={!!accountForm.parent_id}
+                    onChange={(e) =>
+                      setAccountForm({ ...accountForm, account_type: e.target.value })
+                    }
+                  >
+                    {ACCOUNT_TYPES.map((t) => (
+                      <option key={t.value} value={t.value}>
+                        {t.label}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
             </div>
             <div className="field">

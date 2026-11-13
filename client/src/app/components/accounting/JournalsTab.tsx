@@ -1,5 +1,6 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { Eye } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 import { api } from '../../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../../utils/alerts';
 import { SearchSelect } from '../SearchSelect';
@@ -13,6 +14,9 @@ export type JournalsTabHandle = {
 };
 
 export const JournalsTab = forwardRef<JournalsTabHandle>(function JournalsTab(_props, ref) {
+  const { can } = useAuth();
+  const canPost = can('accounting.post');
+  const canReverse = can('accounting.reverse');
   const [accounts, setAccounts] = useState<any[]>([]);
   const [journals, setJournals] = useState<any[]>([]);
   const [journalsLoading, setJournalsLoading] = useState(false);
@@ -117,7 +121,10 @@ export const JournalsTab = forwardRef<JournalsTabHandle>(function JournalsTab(_p
   }, []);
 
   useImperativeHandle(ref, () => ({
-    openCreate: () => setShowJournalModal(true),
+    openCreate: () => {
+      if (!canPost) return;
+      setShowJournalModal(true);
+    },
     refresh: loadJournals
   }));
 
@@ -291,7 +298,7 @@ export const JournalsTab = forwardRef<JournalsTabHandle>(function JournalsTab(_p
                           >
                             <Eye size={14} /> View
                           </button>
-                          {j.status === 'draft' ? (
+                          {j.status === 'draft' && canPost ? (
                             <button
                               type="button"
                               className="btn btn-primary"
@@ -300,7 +307,7 @@ export const JournalsTab = forwardRef<JournalsTabHandle>(function JournalsTab(_p
                               Post
                             </button>
                           ) : null}
-                          {j.status === 'posted' ? (
+                          {j.status === 'posted' && canReverse ? (
                             <button
                               type="button"
                               className="btn btn-ghost"
@@ -325,12 +332,12 @@ export const JournalsTab = forwardRef<JournalsTabHandle>(function JournalsTab(_p
           journal={viewingJournal}
           accounts={accounts}
           onClose={() => setViewingJournal(null)}
-          onPost={handlePost}
-          onReverse={handleReverse}
+          onPost={canPost ? handlePost : undefined}
+          onReverse={canReverse ? handleReverse : undefined}
         />
       ) : null}
 
-      {showJournalModal ? (
+      {showJournalModal && canPost ? (
         <AccountingModalShell
           title="Create journal entry"
           onClose={() => setShowJournalModal(false)}

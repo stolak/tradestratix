@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { api } from '../../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../../utils/alerts';
 import { SearchSelect } from '../SearchSelect';
@@ -6,6 +7,9 @@ import { JournalViewModal } from './JournalViewModal';
 import { flattenAccountTree, money, todayIsoDate, yearStartIsoDate } from './shared';
 
 export function LedgerStatementTab() {
+  const { can } = useAuth();
+  const canPost = can('accounting.post');
+  const canReverse = can('accounting.reverse');
   const [accounts, setAccounts] = useState<any[]>([]);
   const [ledgerAccountId, setLedgerAccountId] = useState('');
   const [ledgerStart, setLedgerStart] = useState(yearStartIsoDate);
@@ -312,8 +316,8 @@ export function LedgerStatementTab() {
           journal={viewingJournal}
           accounts={accounts}
           onClose={() => setViewingJournal(null)}
-          onPost={handlePost}
-          onReverse={handleReverse}
+          onPost={canPost ? handlePost : undefined}
+          onReverse={canReverse ? handleReverse : undefined}
         />
       ) : null}
     </div>

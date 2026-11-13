@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
+import { useAuth } from '../../context/AuthContext';
 import { api } from '../../utils/api';
 import { alertError, alertSuccess } from '../../utils/alerts';
 
 export function PeriodsTab() {
+  const { can } = useAuth();
+  const canLock = can('accounting.edit');
   const [periods, setPeriods] = useState<any[]>([]);
 
   const load = async () => {
@@ -50,14 +53,16 @@ export function PeriodsTab() {
                 <td>{String(p.ends_on).slice(0, 10)}</td>
                 <td>{p.is_locked ? 'Yes' : 'No'}</td>
                 <td>
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => void toggleLock(p.id, !p.is_locked)}
-                  >
-                    {p.is_locked ? 'Unlock' : 'Lock'}
-                  </button>
-                </td>
+                      {canLock ? (
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={() => void toggleLock(p.id, !p.is_locked)}
+                        >
+                          {p.is_locked ? 'Unlock' : 'Lock'}
+                        </button>
+                      ) : null}
+                    </td>
               </tr>
             ))}
           </tbody>
