@@ -74,15 +74,35 @@ export const PurchasesPage: React.FC = () => {
   }, [poForm.quantity, poForm.unit_cost]);
 
   const [receiveForm, setReceiveForm] = useState({
-    purchase_order_id: '',
-    batch_number: '',
-    expiry_date: ''
+    purchase_order_id: ''
   });
+  /** Per PO-line batch/expiry for GRN (keyed by purchase_order_item id). */
+  const [receiveLines, setReceiveLines] = useState<
+    Record<string, { batch_number: string; expiry_date: string }>
+  >({});
 
   const selectedPo = useMemo(
     () => orders.find((o) => o.id === receiveForm.purchase_order_id),
     [orders, receiveForm.purchase_order_id]
   );
+
+  const productById = useMemo(() => {
+    const map = new Map<string, any>();
+    products.forEach((p) => map.set(p.id, p));
+    return map;
+  }, [products]);
+
+  const selectReceivePo = (poId: string) => {
+    setReceiveForm({ purchase_order_id: poId });
+    const po = orders.find((o) => o.id === poId);
+    const next: Record<string, { batch_number: string; expiry_date: string }> = {};
+    for (const it of po?.items || []) {
+      const remaining = Number(it.quantity_ordered) - Number(it.quantity_received);
+      if (remaining <= 0) continue;
+      next[it.id] = { batch_number: '', expiry_date: '' };
+    }
+    setReceiveLines(next);
+  };
 
   const receivableOrders = useMemo(
     () => orders.filter((o) => ['approved', 'partially_received'].includes(o.status)),
@@ -177,16 +197,37 @@ export const PurchasesPage: React.FC = () => {
       await alertError('Select an approved PO');
       return;
     }
+    for (const it of selectedPo.items) {
+      const remaining = Number(it.quantity_ordered) - Number(it.quantity_received);
+      if (remaining <= 0) continue;
+      const product = it.product || productById.get(it.product_id);
+      const line = receiveLines[it.id] || { batch_number: '', expiry_date: '' };
+      if (product?.track_batch && !line.batch_number.trim()) {
+        await alertError(
+          'Batch required',
+          `${product.name || 'Product'} requires a batch number on receive.`
+        );
+        return;
+      }
+      if (product?.track_expiry && !line.expiry_date) {
+        await alertError(
+          'Expiry required',
+          `${product.name || 'Product'} requires an expiry date on receive.`
+        );
+        return;
+      }
+    }
     const items = selectedPo.items
       .map((it: any) => {
         const remaining = Number(it.quantity_ordered) - Number(it.quantity_received);
         if (remaining <= 0) return null;
+        const line = receiveLines[it.id] || { batch_number: '', expiry_date: '' };
         return {
           purchase_order_item_id: it.id,
           quantity: remaining,
           unit_cost: Number(it.unit_cost),
-          batch_number: receiveForm.batch_number || undefined,
-          expiry_date: receiveForm.expiry_date || undefined
+          batch_number: line.batch_number.trim() || undefined,
+          expiry_date: line.expiry_date || undefined
         };
       })
       .filter(Boolean);
@@ -200,7 +241,8 @@ export const PurchasesPage: React.FC = () => {
         items
       });
       await alertSuccess('GRN posted — stock + AP updated');
-      setReceiveForm({ purchase_order_id: '', batch_number: '', expiry_date: '' });
+      setReceiveForm({ purchase_order_id: '' });
+      setReceiveLines({});
       await load();
       setTab('bills');
     } catch (err: any) {
@@ -438,52 +480,102 @@ export const PurchasesPage: React.FC = () => {
               Posts remaining ordered qty into stock and creates an open AP bill (Dr Inventory / Cr
               AP).
             </p>
-            <div className="form-grid">
-              <div className="field">
-                <label>Approved PO</label>
-                <select
-                  value={receiveForm.purchase_order_id}
-                  onChange={(e) =>
-                    setReceiveForm({ ...receiveForm, purchase_order_id: e.target.value })
-                  }
-                  required
-                >
-                  <option value="">Select…</option>
-                  {receivableOrders.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.po_number} — {o.supplier?.name} ({o.status})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Batch (if tracked)</label>
-                <input
-                  value={receiveForm.batch_number}
-                  onChange={(e) =>
-                    setReceiveForm({ ...receiveForm, batch_number: e.target.value })
-                  }
-                  placeholder="e.g. LOT-2026-01"
-                />
-              </div>
-              <div className="field">
-                <label>Expiry</label>
-                <input
-                  type="date"
-                  value={receiveForm.expiry_date}
-                  onChange={(e) => setReceiveForm({ ...receiveForm, expiry_date: e.target.value })}
-                />
-              </div>
+            <div className="field">
+              <label>Approved PO</label>
+              <select
+                value={receiveForm.purchase_order_id}
+                onChange={(e) => selectReceivePo(e.target.value)}
+                required
+              >
+                <option value="">Select…</option>
+                {receivableOrders.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.po_number} — {o.supplier?.name} ({o.status})
+                  </option>
+                ))}
+              </select>
             </div>
             {selectedPo ? (
-              <div style={{ fontSize: '0.9rem' }}>
-                {(selectedPo.items || []).map((it: any) => (
-                  <div key={it.id}>
-                    {it.product?.name}: remaining{' '}
-                    {Number(it.quantity_ordered) - Number(it.quantity_received)}{' '}
-                    {it.uom?.code || ''} @ {Number(it.unit_cost).toLocaleString()}
-                  </div>
-                ))}
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Product</th>
+                      <th>Remaining</th>
+                      <th>Unit cost</th>
+                      <th>Batch</th>
+                      <th>Expiry</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(selectedPo.items || [])
+                      .filter(
+                        (it: any) =>
+                          Number(it.quantity_ordered) - Number(it.quantity_received) > 0
+                      )
+                      .map((it: any) => {
+                        const remaining =
+                          Number(it.quantity_ordered) - Number(it.quantity_received);
+                        const product = it.product || productById.get(it.product_id);
+                        const trackBatch = !!product?.track_batch;
+                        const trackExpiry = !!product?.track_expiry;
+                        const line = receiveLines[it.id] || {
+                          batch_number: '',
+                          expiry_date: ''
+                        };
+                        return (
+                          <tr key={it.id}>
+                            <td>
+                              <div style={{ fontWeight: 600 }}>{product?.name || '—'}</div>
+                              <div style={{ color: 'var(--ink-muted)', fontSize: '0.75rem' }}>
+                                {[trackBatch ? 'batch' : null, trackExpiry ? 'expiry' : null]
+                                  .filter(Boolean)
+                                  .join(' · ') || 'no lot tracking'}
+                              </div>
+                            </td>
+                            <td>
+                              {remaining} {it.uom?.code || ''}
+                            </td>
+                            <td>{Number(it.unit_cost).toLocaleString()}</td>
+                            <td>
+                              {trackBatch ? (
+                                <input
+                                  required
+                                  value={line.batch_number}
+                                  placeholder="e.g. LOT-2026-01"
+                                  onChange={(e) =>
+                                    setReceiveLines((prev) => ({
+                                      ...prev,
+                                      [it.id]: { ...line, batch_number: e.target.value }
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                <span style={{ color: 'var(--ink-muted)' }}>—</span>
+                              )}
+                            </td>
+                            <td>
+                              {trackExpiry ? (
+                                <input
+                                  type="date"
+                                  required
+                                  value={line.expiry_date}
+                                  onChange={(e) =>
+                                    setReceiveLines((prev) => ({
+                                      ...prev,
+                                      [it.id]: { ...line, expiry_date: e.target.value }
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                <span style={{ color: 'var(--ink-muted)' }}>—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
               </div>
             ) : null}
             <button className="btn btn-primary" type="submit" style={{ justifySelf: 'start' }}>

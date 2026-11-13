@@ -466,6 +466,22 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
       const product = await tx.product.findFirst({ where: { id: gri.productId } });
       if (!product) throw httpError(400, 'Product missing for GRN line');
 
+      const lineIdx = lines.findIndex((l) => l.purchaseOrderItemId === gri.purchaseOrderItemId);
+      const batch = (gri.batchNumber || '').trim();
+      const expiry = gri.expiryDate || null;
+      if (product.trackBatch && !batch) {
+        throw httpError(
+          400,
+          `items[${lineIdx}].batch_number is required for batch-tracked product ${product.sku || product.name}`
+        );
+      }
+      if (product.trackExpiry && !expiry) {
+        throw httpError(
+          400,
+          `items[${lineIdx}].expiry_date is required for expiry-tracked product ${product.sku || product.name}`
+        );
+      }
+
       const txnQty = Number(gri.quantity);
       const txnUomId = gri.uomId || product.baseUomId;
       const baseQty = await convertToBaseQty(

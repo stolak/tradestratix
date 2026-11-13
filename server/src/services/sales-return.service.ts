@@ -384,23 +384,38 @@ export async function postReturn(user: AuthUser, id: string, body: Record<string
       let movementId: string | null = null;
 
       if (it.restock && cost >= 0) {
-        const movement = await createStockMovement(
-          user,
-          {
-            product_id: it.productId,
-            variant_id: it.variantId,
-            warehouse_id: ret.warehouseId,
-            movement_type: 'sales_return',
-            quantity_in: n(it.baseQuantity),
-            unit_cost: unitCost || undefined,
-            reference_type: 'sales_return',
-            reference_id: ret.id,
-            idempotency_key: `ret:${ret.id}:${it.id}`,
-            reason: `${ret.returnNumber} for ${invoice.invoiceNumber}`
-          },
-          tx
-        );
-        movementId = movement.id;
+        const slices = await allocateReturnLots(tx, {
+          businessId: user.businessId,
+          invoiceItemId: it.invoiceItemId,
+          productId: it.productId,
+          variantId: it.variantId,
+          returnWarehouseId: ret.warehouseId,
+          baseQty: n(it.baseQuantity)
+        });
+        let sliceIdx = 0;
+        for (const slice of slices) {
+          const movement = await createStockMovement(
+            user,
+            {
+              product_id: it.productId,
+              variant_id: it.variantId,
+              warehouse_id: ret.warehouseId,
+              movement_type: 'sales_return',
+              quantity_in: slice.qty,
+              unit_cost: unitCost || undefined,
+              lot_id: slice.lotId || undefined,
+              batch_number: slice.batchNumber || undefined,
+              expiry_date: slice.expiryDate || undefined,
+              reference_type: 'sales_return',
+              reference_id: ret.id,
+              idempotency_key: `ret:${ret.id}:${it.id}:${sliceIdx}`,
+              reason: `${ret.returnNumber} for ${invoice.invoiceNumber}`
+            },
+            tx
+          );
+          if (!movementId) movementId = movement.id;
+          sliceIdx += 1;
+        }
         inventoryRestored = roundMoney(inventoryRestored + cost);
       } else if (cost > 0) {
         writeOff = roundMoney(writeOff + cost);
@@ -789,6 +804,112 @@ export async function postReturn(user: AuthUser, id: string, body: Record<string
   });
 
   return serialize(await loadReturn(prisma, user.businessId, postedId));
+}
+
+/**
+ * Restock return qty into the lots that fulfilled the sale (LIFO).
+ * Same-warehouse → reuse lot_id; other warehouse → batch/expiry from source lot.
+ * Untracked products with no reservation history fall back to a plain receipt (BULK).
+ */
+async function allocateReturnLots(
+  tx: Tx,
+  opts: {
+    businessId: string;
+    invoiceItemId: string;
+    productId: string;
+    variantId: string | null;
+    returnWarehouseId: string;
+    baseQty: number;
+  }
+): Promise<
+  { qty: number; lotId: string | null; batchNumber: string | null; expiryDate: string | null }[]
+> {
+  const qtyNeeded = roundQty(opts.baseQty);
+  if (qtyNeeded <= EPS) return [];
+
+  const product = await tx.product.findFirst({
+    where: { id: opts.productId, businessId: opts.businessId },
+    select: { trackBatch: true, trackExpiry: true, sku: true, name: true }
+  });
+  if (!product) throw httpError(404, 'Product not found for return restock');
+
+  const reservations = await tx.salesReservation.findMany({
+    where: {
+      invoiceItemId: opts.invoiceItemId,
+      fulfilledQuantity: { gt: 0 }
+    },
+    include: {
+      lot: {
+        select: {
+          id: true,
+          warehouseId: true,
+          batchNumber: true,
+          expiryDate: true,
+          productId: true,
+          variantId: true
+        }
+      }
+    },
+    orderBy: [{ updatedAt: 'desc' }, { createdAt: 'desc' }]
+  });
+
+  const priorRestocked = await tx.salesReturnItem.aggregate({
+    where: {
+      invoiceItemId: opts.invoiceItemId,
+      restock: true,
+      returnRow: { businessId: opts.businessId, status: 'posted' }
+    },
+    _sum: { baseQuantity: true }
+  });
+  let skip = roundQty(n(priorRestocked._sum.baseQuantity));
+
+  const slices: {
+    qty: number;
+    lotId: string | null;
+    batchNumber: string | null;
+    expiryDate: string | null;
+  }[] = [];
+  let remaining = qtyNeeded;
+
+  for (const r of reservations) {
+    if (remaining <= EPS) break;
+    let avail = roundQty(n(r.fulfilledQuantity));
+    if (skip > EPS) {
+      const cut = Math.min(skip, avail);
+      skip = roundQty(skip - cut);
+      avail = roundQty(avail - cut);
+    }
+    if (avail <= EPS) continue;
+
+    const take = roundQty(Math.min(remaining, avail));
+    const sameWarehouse = r.lot.warehouseId === opts.returnWarehouseId;
+    slices.push({
+      qty: take,
+      lotId: sameWarehouse ? r.lot.id : null,
+      batchNumber: sameWarehouse ? null : r.lot.batchNumber,
+      expiryDate: sameWarehouse ? null : r.lot.expiryDate
+    });
+    remaining = roundQty(remaining - take);
+  }
+
+  if (remaining > EPS) {
+    if (product.trackBatch || product.trackExpiry) {
+      throw httpError(
+        400,
+        `Cannot restock ${product.sku || product.name}: no fulfilled sale lots cover the return qty. ` +
+          `Ensure the original sale reserved stock, or receive manually with batch/expiry.`
+      );
+    }
+    // Untracked: remaining into implicit BULK lot at return warehouse
+    slices.push({
+      qty: remaining,
+      lotId: null,
+      batchNumber: null,
+      expiryDate: null
+    });
+  }
+
+  return slices;
 }
 
 async function averageCostByLine(tx: Tx, invoiceId: string, fulfilmentId: string | null) {

@@ -352,19 +352,10 @@ export async function createStockMovement(user: AuthUser, input: MovementInput, 
       throw httpError(400, 'Movement requires quantity_in or quantity_out');
     }
 
-    // Receipt
+    // Receipt — identity from lot_id or batch/expiry per product tracking flags
     if (qtyIn > 0) {
       let batch = (input.batch_number || '').trim();
       let expiry = normalizeExpiry(input.expiry_date);
-
-      if (product.trackExpiry && !expiry && !input.lot_id) {
-        throw httpError(400, 'expiry_date is required for expiry-tracked products');
-      }
-      if (product.trackBatch && !batch && !input.lot_id) {
-        throw httpError(400, 'batch_number is required for batch-tracked products');
-      }
-      if (!product.trackExpiry) expiry = null;
-      if (!product.trackBatch && !batch) batch = 'BULK';
 
       let lotId = input.lot_id || null;
       if (lotId) {
@@ -372,9 +363,28 @@ export async function createStockMovement(user: AuthUser, input: MovementInput, 
           where: { id: lotId, businessId: user.businessId }
         });
         if (!lot) throw httpError(404, 'Stock lot not found');
+        if (lot.productId !== product.id || lot.variantId !== variantId) {
+          throw httpError(400, 'Stock lot does not match product/variant');
+        }
+        // Same-warehouse restock reuses the lot; cross-warehouse callers must pass batch/expiry instead
+        if (lot.warehouseId !== input.warehouse_id) {
+          throw httpError(
+            400,
+            'lot_id warehouse does not match movement warehouse — pass batch_number/expiry_date instead'
+          );
+        }
         batch = lot.batchNumber;
         expiry = lot.expiryDate;
       } else {
+        if (product.trackExpiry && !expiry) {
+          throw httpError(400, 'expiry_date is required for expiry-tracked products');
+        }
+        if (product.trackBatch && !batch) {
+          throw httpError(400, 'batch_number is required for batch-tracked products');
+        }
+        if (!product.trackExpiry) expiry = null;
+        if (!product.trackBatch && !batch) batch = 'BULK';
+
         const lot = await findOrCreateLot(client, {
           businessId: user.businessId,
           productId: product.id,
