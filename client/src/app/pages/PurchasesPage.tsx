@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
 import { PaySupplierPayment } from '../components/PaySupplierPayment';
+import { SearchSelect } from '../components/SearchSelect';
 
 type Tab = 'orders' | 'receive' | 'bills' | 'payments';
 
@@ -47,6 +48,30 @@ export const PurchasesPage: React.FC = () => {
   );
 
   const purchaseUoms = useMemo(() => uomsForProduct(selectedProduct), [selectedProduct]);
+
+  const supplierOptions = useMemo(
+    () => suppliers.map((s) => ({ value: s.id, label: s.name })),
+    [suppliers]
+  );
+  const warehouseOptions = useMemo(
+    () => warehouses.map((w) => ({ value: w.id, label: `${w.code} — ${w.name}` })),
+    [warehouses]
+  );
+  const productOptions = useMemo(
+    () =>
+      products.map((p) => ({
+        value: p.id,
+        label: p.sku ? `${p.name} (${p.sku})` : p.name
+      })),
+    [products]
+  );
+
+  const lineSubtotal = useMemo(() => {
+    const qty = Number(poForm.quantity);
+    const cost = Number(poForm.unit_cost);
+    if (!Number.isFinite(qty) || !Number.isFinite(cost) || qty <= 0) return 0;
+    return Math.round((qty * cost + Number.EPSILON) * 100) / 100;
+  }, [poForm.quantity, poForm.unit_cost]);
 
   const [receiveForm, setReceiveForm] = useState({
     purchase_order_id: '',
@@ -228,53 +253,41 @@ export const PurchasesPage: React.FC = () => {
             <div className="form-grid">
               <div className="field">
                 <label>Supplier</label>
-                <select
+                <SearchSelect
                   value={poForm.supplier_id}
-                  onChange={(e) => setPoForm({ ...poForm, supplier_id: e.target.value })}
+                  options={supplierOptions}
                   required
-                >
-                  {suppliers.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Search supplier…"
+                  onChange={(supplier_id) => setPoForm({ ...poForm, supplier_id })}
+                />
               </div>
               <div className="field">
                 <label>Warehouse</label>
-                <select
+                <SearchSelect
                   value={poForm.warehouse_id}
-                  onChange={(e) => setPoForm({ ...poForm, warehouse_id: e.target.value })}
+                  options={warehouseOptions}
                   required
-                >
-                  {warehouses.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.code} — {w.name}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Search warehouse…"
+                  onChange={(warehouse_id) => setPoForm({ ...poForm, warehouse_id })}
+                />
               </div>
               <div className="field">
                 <label>Product</label>
-                <select
+                <SearchSelect
                   value={poForm.product_id}
-                  onChange={(e) => {
-                    const p = products.find((x) => x.id === e.target.value);
+                  options={productOptions}
+                  required
+                  placeholder="Search product…"
+                  onChange={(product_id) => {
+                    const p = products.find((x) => x.id === product_id);
                     setPoForm({
                       ...poForm,
-                      product_id: e.target.value,
+                      product_id,
                       uom_id: defaultPurchaseUomId(p),
                       unit_cost: p ? String(p.default_purchase_cost ?? 0) : poForm.unit_cost
                     });
                   }}
-                  required
-                >
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
+                />
               </div>
               <div className="field">
                 <label>Purchase UoM</label>
@@ -315,6 +328,10 @@ export const PurchasesPage: React.FC = () => {
                   onChange={(e) => setPoForm({ ...poForm, unit_cost: e.target.value })}
                   required
                 />
+              </div>
+              <div className="field">
+                <label>Subtotal</label>
+                <input value={lineSubtotal.toLocaleString()} readOnly tabIndex={-1} />
               </div>
               <div className="field">
                 <label>Notes</label>
