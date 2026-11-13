@@ -170,3 +170,158 @@ export function flattenExpandedReportTree(
   walk(roots);
   return out;
 }
+
+export type CashPositionRow = {
+  account_id: string;
+  code: string;
+  name: string;
+  parent_id?: string | null;
+  opening: number;
+  inflow: number;
+  outflow: number;
+  closing: number;
+};
+
+export type CashPositionNode = CashPositionRow & {
+  depth: number;
+  has_children: boolean;
+  own_opening: number;
+  own_inflow: number;
+  own_outflow: number;
+  own_closing: number;
+  children: CashPositionNode[];
+  is_direct?: boolean;
+  row_key: string;
+};
+
+/** Consolidate cash position rows (opening / in / out / closing) by CoA parent. */
+export function buildCashPositionTree(
+  rows: CashPositionRow[] | null | undefined,
+  accounts: CoaAccount[]
+): CashPositionNode[] {
+  const flat = (rows || []).filter(
+    (r) => r.opening !== 0 || r.inflow !== 0 || r.outflow !== 0 || r.closing !== 0
+  );
+  if (flat.length === 0) return [];
+
+  const amountById = new Map(flat.map((r) => [r.account_id, r]));
+  const accountById = new Map(accounts.map((a) => [a.id, a]));
+
+  const relevantIds = new Set<string>();
+  for (const r of flat) {
+    let id: string | null | undefined = r.account_id;
+    while (id) {
+      relevantIds.add(id);
+      id = accountById.get(id)?.parent_id || null;
+    }
+  }
+
+  type Draft = {
+    account_id: string;
+    code: string;
+    name: string;
+    parent_id: string | null;
+    own_opening: number;
+    own_inflow: number;
+    own_outflow: number;
+    own_closing: number;
+    children: Draft[];
+  };
+
+  const drafts = new Map<string, Draft>();
+  for (const id of relevantIds) {
+    const coa = accountById.get(id);
+    const amt = amountById.get(id);
+    drafts.set(id, {
+      account_id: id,
+      code: coa?.code || amt?.code || id,
+      name: coa?.name || amt?.name || id,
+      parent_id: coa?.parent_id || amt?.parent_id || null,
+      own_opening: toFiniteNumber(amt?.opening),
+      own_inflow: toFiniteNumber(amt?.inflow),
+      own_outflow: toFiniteNumber(amt?.outflow),
+      own_closing: toFiniteNumber(amt?.closing),
+      children: []
+    });
+  }
+
+  const roots: Draft[] = [];
+  for (const node of drafts.values()) {
+    if (node.parent_id && drafts.has(node.parent_id)) {
+      drafts.get(node.parent_id)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  const sortDrafts = (nodes: Draft[]) => {
+    nodes.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
+    nodes.forEach((n) => sortDrafts(n.children));
+  };
+  sortDrafts(roots);
+
+  const toNode = (draft: Draft, depth: number): CashPositionNode => {
+    const children = draft.children.map((c) => toNode(c, depth + 1));
+    const opening = money(draft.own_opening + children.reduce((s, c) => s + c.opening, 0));
+    const inflow = money(draft.own_inflow + children.reduce((s, c) => s + c.inflow, 0));
+    const outflow = money(draft.own_outflow + children.reduce((s, c) => s + c.outflow, 0));
+    const closing = money(draft.own_closing + children.reduce((s, c) => s + c.closing, 0));
+    return {
+      account_id: draft.account_id,
+      row_key: draft.account_id,
+      code: draft.code,
+      name: draft.name,
+      parent_id: draft.parent_id,
+      own_opening: draft.own_opening,
+      own_inflow: draft.own_inflow,
+      own_outflow: draft.own_outflow,
+      own_closing: draft.own_closing,
+      opening,
+      inflow,
+      outflow,
+      closing,
+      depth,
+      has_children: children.length > 0,
+      children
+    };
+  };
+
+  return roots.map((r) => toNode(r, 0));
+}
+
+export function flattenExpandedCashPositionTree(
+  roots: CashPositionNode[],
+  expandedIds: Set<string>
+): CashPositionNode[] {
+  const out: CashPositionNode[] = [];
+  const walk = (nodes: CashPositionNode[]) => {
+    for (const n of nodes) {
+      out.push(n);
+      if (n.has_children && expandedIds.has(n.account_id)) {
+        const hasOwn =
+          n.own_opening !== 0 ||
+          n.own_inflow !== 0 ||
+          n.own_outflow !== 0 ||
+          n.own_closing !== 0;
+        if (hasOwn) {
+          out.push({
+            ...n,
+            row_key: `${n.account_id}__direct`,
+            name: `Direct on ${n.code} — ${n.name}`,
+            opening: n.own_opening,
+            inflow: n.own_inflow,
+            outflow: n.own_outflow,
+            closing: n.own_closing,
+            depth: n.depth + 1,
+            has_children: false,
+            children: [],
+            is_direct: true
+          });
+        }
+        walk(n.children);
+      }
+    }
+  };
+  walk(roots);
+  return out;
+}

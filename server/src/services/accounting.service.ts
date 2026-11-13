@@ -1337,32 +1337,45 @@ function humanizeSourceType(sourceType: string | null | undefined) {
 
 async function resolveCashPoolAccountIds(businessId: string): Promise<{
   accountIds: Set<string>;
-  accounts: { id: string; code: string; name: string }[];
+  accounts: { id: string; code: string; name: string; parentId: string | null }[];
 }> {
   const map = await loadDefaultAccountMap(businessId);
-  const ids = new Set<string>();
+  const seedIds = new Set<string>();
   for (const key of CASH_POOL_KEYS) {
     const id = map[key];
-    if (id) ids.add(id);
+    if (id) seedIds.add(id);
   }
 
   const bankAccounts = await prisma.bankAccount.findMany({
     where: { businessId, isActive: true },
     select: { glAccountId: true }
   });
-  for (const b of bankAccounts) ids.add(b.glAccountId);
+  for (const b of bankAccounts) seedIds.add(b.glAccountId);
 
-  if (!ids.size) {
-    return { accountIds: ids, accounts: [] };
+  if (!seedIds.size) {
+    return { accountIds: seedIds, accounts: [] };
   }
 
-  const accounts = await prisma.account.findMany({
-    where: { businessId, id: { in: [...ids] } },
-    select: { id: true, code: true, name: true },
+  // Include all descendants of cash-pool parents (e.g. Bank → GTBank)
+  const allAccounts = await prisma.account.findMany({
+    where: { businessId },
+    select: { id: true, code: true, name: true, parentId: true },
     orderBy: { code: 'asc' }
   });
+  const ids = new Set(seedIds);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const a of allAccounts) {
+      if (a.parentId && ids.has(a.parentId) && !ids.has(a.id)) {
+        ids.add(a.id);
+        grew = true;
+      }
+    }
+  }
 
-  return { accountIds: new Set(accounts.map((a) => a.id)), accounts };
+  const accounts = allAccounts.filter((a) => ids.has(a.id));
+  return { accountIds: ids, accounts };
 }
 
 function classifyCashFlowJournal(opts: {
@@ -1404,7 +1417,10 @@ export async function cashFlow(
   opts?: BranchListOpts
 ) {
   const fromDate = from ? new Date(from) : null;
-  const toDate = to ? new Date(to) : new Date();
+  let toDate = to ? new Date(to) : new Date();
+  if (to && typeof to === 'string' && to.length <= 10) {
+    toDate = endOfDay(toDate);
+  }
   const scope = await branchAccess.branchScopeWhere(user, {
     branchId: opts?.branchId,
     allowConsolidated: opts?.allowConsolidated
@@ -1414,15 +1430,22 @@ export async function cashFlow(
     user.businessId
   );
 
+  const emptySection = { inflows: [], outflows: [], net: 0, inflow: 0, outflow: 0, rows: [] };
   if (!poolIds.size) {
     return {
       from: fromDate?.toISOString() || null,
       to: toDate.toISOString(),
+      opening_balance: 0,
+      closing_balance: 0,
+      net_change: 0,
+      period_net_from_activities: 0,
       cash_accounts: [],
-      operating: { inflows: [], outflows: [], net: 0 },
-      investing: { inflows: [], outflows: [], net: 0 },
-      financing: { inflows: [], outflows: [], net: 0 },
-      internal_transfers: { lines: [], net: 0 },
+      by_account: [],
+      operating: emptySection,
+      investing: emptySection,
+      financing: emptySection,
+      transfers: emptySection,
+      internal_transfers: { lines: [], net: 0, gross: 0 },
       totals: {
         opening_cash: 0,
         operating_net: 0,
@@ -1471,18 +1494,6 @@ export async function cashFlow(
     orderBy: { entryDate: 'asc' }
   });
 
-  const closingLines = await prisma.journalLine.findMany({
-    where: {
-      accountId: { in: [...poolIds] },
-      journalEntry: {
-        businessId: user.businessId,
-        status: 'posted',
-        ...scope,
-        entryDate: { lte: toDate }
-      }
-    }
-  });
-
   const sumPool = (lines: { accountId: string; debit: unknown; credit: unknown }[]) => {
     const byAccount = new Map<string, number>();
     for (const id of poolIds) byAccount.set(id, 0);
@@ -1495,23 +1506,8 @@ export async function cashFlow(
   };
 
   const openingByAcct = sumPool(openingSource);
-  const closingByAcct = sumPool(closingLines);
-
-  const cashAccounts = poolAccounts.map((a) => {
-    const opening = openingByAcct.get(a.id) || 0;
-    const closing = closingByAcct.get(a.id) || 0;
-    return {
-      account_id: a.id,
-      code: a.code,
-      name: a.name,
-      opening,
-      closing,
-      net: roundMoney(closing - opening)
-    };
-  });
-
-  const openingCash = roundMoney(cashAccounts.reduce((s, r) => s + r.opening, 0));
-  const closingCash = roundMoney(cashAccounts.reduce((s, r) => s + r.closing, 0));
+  const periodMove = new Map<string, { inflow: number; outflow: number }>();
+  for (const id of poolIds) periodMove.set(id, { inflow: 0, outflow: 0 });
 
   type AggRow = { key: string; label: string; amount: number };
   const buckets: Record<
@@ -1531,7 +1527,6 @@ export async function cashFlow(
     const side = cashNet >= 0 ? 'inflows' : 'outflows';
     const amount = Math.abs(cashNet);
     if (section === 'internal') {
-      // Show gross shuffle size on a single net-zero line set using absolute pool movement / 2
       const map = buckets.internal.inflows;
       const cur = map.get(key) || { key, label, amount: 0 };
       cur.amount = roundMoney(cur.amount + amount);
@@ -1554,7 +1549,11 @@ export async function cashFlow(
     const outside: { accountType: string; accountId: string }[] = [];
     for (const line of je.lines) {
       if (poolIds.has(line.accountId)) {
-        cashNet = roundMoney(cashNet + Number(line.debit) - Number(line.credit));
+        const delta = roundMoney(Number(line.debit) - Number(line.credit));
+        cashNet = roundMoney(cashNet + delta);
+        const bag = periodMove.get(line.accountId)!;
+        if (delta > 0) bag.inflow = roundMoney(bag.inflow + delta);
+        else if (delta < 0) bag.outflow = roundMoney(bag.outflow + Math.abs(delta));
       } else {
         outside.push({ accountType: line.account.accountType, accountId: line.accountId });
       }
@@ -1568,7 +1567,6 @@ export async function cashFlow(
     });
 
     if (section === 'internal') {
-      // Pool-only moves net to zero; track gross debit into pool for visibility
       const poolDebit = roundMoney(
         je.lines
           .filter((l) => poolIds.has(l.accountId))
@@ -1585,17 +1583,72 @@ export async function cashFlow(
     else if (section === 'financing') financingNet = roundMoney(financingNet + cashNet);
   }
 
+  const byAccount = poolAccounts.map((a) => {
+    const opening = openingByAcct.get(a.id) || 0;
+    const mov = periodMove.get(a.id) || { inflow: 0, outflow: 0 };
+    return {
+      account_id: a.id,
+      code: a.code,
+      name: a.name,
+      parent_id: a.parentId,
+      opening,
+      inflow: mov.inflow,
+      outflow: mov.outflow,
+      closing: roundMoney(opening + mov.inflow - mov.outflow),
+      net: roundMoney(mov.inflow - mov.outflow)
+    };
+  });
+
+  const openingCash = roundMoney(byAccount.reduce((s, r) => s + r.opening, 0));
+  const closingCash = roundMoney(byAccount.reduce((s, r) => s + r.closing, 0));
+
   const toList = (m: Map<string, AggRow>) =>
     [...m.values()].sort((a, b) => a.label.localeCompare(b.label));
 
   const sectionPayload = (section: Exclude<CashFlowSection, 'internal'>, net: number) => {
     const inflows = toList(buckets[section].inflows);
     const outflows = toList(buckets[section].outflows);
-    return {
-      inflows,
-      outflows,
-      net
-    };
+    const inflow = roundMoney(inflows.reduce((s, r) => s + r.amount, 0));
+    const outflow = roundMoney(outflows.reduce((s, r) => s + r.amount, 0));
+    const rows = [
+      ...inflows.map((r) => ({
+        activity: section,
+        account_id: r.key,
+        code: r.key,
+        name: r.label,
+        inflow: r.amount,
+        outflow: 0
+      })),
+      ...outflows.map((r) => ({
+        activity: section,
+        account_id: r.key,
+        code: r.key,
+        name: r.label,
+        inflow: 0,
+        outflow: r.amount
+      }))
+    ].sort((a, b) => a.name.localeCompare(b.name));
+    return { inflows, outflows, net, inflow, outflow, rows };
+  };
+
+  const transferLines = toList(buckets.internal.inflows);
+  const transferInflow = roundMoney(transferLines.reduce((s, r) => s + r.amount, 0));
+  const transfers = {
+    inflows: transferLines,
+    outflows: [] as AggRow[],
+    lines: transferLines,
+    net: 0,
+    gross: internalGross,
+    inflow: transferInflow,
+    outflow: transferInflow,
+    rows: transferLines.map((r) => ({
+      activity: 'transfer' as const,
+      account_id: r.key,
+      code: r.key,
+      name: r.label,
+      inflow: r.amount,
+      outflow: r.amount
+    }))
   };
 
   const netChange = roundMoney(operatingNet + investingNet + financingNet);
@@ -1604,12 +1657,18 @@ export async function cashFlow(
   return {
     from: fromDate?.toISOString() || null,
     to: toDate.toISOString(),
-    cash_accounts: cashAccounts,
+    opening_balance: openingCash,
+    closing_balance: closingCash,
+    net_change: netChange,
+    period_net_from_activities: netChange,
+    cash_accounts: byAccount,
+    by_account: byAccount,
     operating: sectionPayload('operating', operatingNet),
     investing: sectionPayload('investing', investingNet),
     financing: sectionPayload('financing', financingNet),
+    transfers,
     internal_transfers: {
-      lines: toList(buckets.internal.inflows),
+      lines: transferLines,
       net: 0,
       gross: internalGross
     },
