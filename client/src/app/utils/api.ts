@@ -608,7 +608,14 @@ export const api = {
       request<any>('/inventory/issue', { method: 'POST', body: JSON.stringify(body) }),
     adjust: (body: Record<string, unknown>) =>
       request<any>('/inventory/adjust', { method: 'POST', body: JSON.stringify(body) }),
-    transfers: () => request<any[]>('/inventory/transfers'),
+    transfers: (filter: { status?: string; from?: string; to?: string } = {}) => {
+      const params = new URLSearchParams();
+      if (filter.status) params.set('status', filter.status);
+      if (filter.from) params.set('from', filter.from);
+      if (filter.to) params.set('to', filter.to);
+      const qs = params.toString();
+      return request<any[]>(`/inventory/transfers${qs ? `?${qs}` : ''}`);
+    },
     transferWarehouses: () =>
       request<{ from: any[]; to: any[] }>('/inventory/transfers/warehouses'),
     createTransfer: (body: Record<string, unknown>) =>

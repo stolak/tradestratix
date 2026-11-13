@@ -999,6 +999,7 @@ model StockTransfer {
   notes           String?             @db.Text
   requestedById   String?             @map("requested_by_id")
   approvedById    String?             @map("approved_by_id")
+  receivedById    String?             @map("received_by_id")
   dispatchedAt    DateTime?           @map("dispatched_at")
   receivedAt      DateTime?           @map("received_at")
   createdAt       DateTime            @default(now()) @map("created_at")

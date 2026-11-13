@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
 import { StockBalanceReport } from '../components/StockBalanceReport';
@@ -19,17 +21,24 @@ const MOVEMENT_TYPES = [
   'transfer_cancel'
 ] as const;
 
+function fmtWhen(value?: string | null) {
+  if (!value) return '—';
+  return String(value).slice(0, 19).replace('T', ' ');
+}
+
 export const InventoryPage: React.FC = () => {
   const [tab, setTab] = useState<InventoryTab>('stock');
   const [movements, setMovements] = useState<any[]>([]);
   const [movementsLoading, setMovementsLoading] = useState(false);
   const [expiry, setExpiry] = useState<any[]>([]);
   const [transfers, setTransfers] = useState<any[]>([]);
+  const [transfersLoading, setTransfersLoading] = useState(false);
   const [products, setProducts] = useState<any[]>([]);
   const [warehouses, setWarehouses] = useState<any[]>([]);
   const [fromWarehouses, setFromWarehouses] = useState<any[]>([]);
   const [toWarehouses, setToWarehouses] = useState<any[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [viewTransfer, setViewTransfer] = useState<any | null>(null);
   const [movementFilter, setMovementFilter] = useState({
     warehouse_id: '',
     product_id: '',
@@ -37,6 +46,7 @@ export const InventoryPage: React.FC = () => {
     from: '',
     to: ''
   });
+  const [transferFilter, setTransferFilter] = useState({ from: '', to: '' });
   const [transferForm, setTransferForm] = useState({
     from_warehouse_id: '',
     to_warehouse_id: '',
@@ -63,12 +73,31 @@ export const InventoryPage: React.FC = () => {
     }
   };
 
+  const loadTransfers = async (filter = transferFilter) => {
+    setTransfersLoading(true);
+    try {
+      setTransfers(
+        await api.inventory.transfers({
+          from: filter.from || undefined,
+          to: filter.to || undefined
+        })
+      );
+    } catch (err: any) {
+      await alertError('Transfers', err.message);
+    } finally {
+      setTransfersLoading(false);
+    }
+  };
+
   const load = async () => {
     try {
       const [m, e, t, p, w, tw] = await Promise.all([
         api.inventory.movements(),
         api.inventory.expiry(90),
-        api.inventory.transfers(),
+        api.inventory.transfers({
+          from: transferFilter.from || undefined,
+          to: transferFilter.to || undefined
+        }),
         api.products.list(),
         api.warehouses.list().catch(() => []),
         api.inventory.transferWarehouses().catch(() => ({ from: [], to: [] }))
@@ -104,6 +133,19 @@ export const InventoryPage: React.FC = () => {
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    if (!viewTransfer) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setViewTransfer(null);
+    };
+    window.addEventListener('keydown', onKey);
+    document.body.classList.add('modal-open');
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.classList.remove('modal-open');
+    };
+  }, [viewTransfer]);
 
   const fromWh = useMemo(
     () => fromWarehouses.find((w) => w.id === transferForm.from_warehouse_id),
@@ -558,6 +600,46 @@ export const InventoryPage: React.FC = () => {
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
             <div style={{ padding: '0.75rem 1rem', fontWeight: 600 }}>Transfer history</div>
+            <form
+              className="cust-bal__filters"
+              style={{ padding: '0 1rem 0.75rem' }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                void loadTransfers();
+              }}
+            >
+              <div className="field">
+                <label>From</label>
+                <input
+                  type="date"
+                  value={transferFilter.from}
+                  onChange={(e) => setTransferFilter((f) => ({ ...f, from: e.target.value }))}
+                />
+              </div>
+              <div className="field">
+                <label>To</label>
+                <input
+                  type="date"
+                  value={transferFilter.to}
+                  onChange={(e) => setTransferFilter((f) => ({ ...f, to: e.target.value }))}
+                />
+              </div>
+              <button type="submit" className="btn btn-primary" disabled={transfersLoading}>
+                {transfersLoading ? 'Filtering…' : 'Apply'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={transfersLoading}
+                onClick={() => {
+                  const cleared = { from: '', to: '' };
+                  setTransferFilter(cleared);
+                  void loadTransfers(cleared);
+                }}
+              >
+                Clear
+              </button>
+            </form>
             <div className="table-wrap">
               <table className="table">
                 <thead>
@@ -566,6 +648,10 @@ export const InventoryPage: React.FC = () => {
                     <th>From</th>
                     <th>To</th>
                     <th>Status</th>
+                    <th>Date initiated</th>
+                    <th>Date received</th>
+                    <th>Initiated by</th>
+                    <th>Received by</th>
                     <th>Items</th>
                     <th>Actions</th>
                   </tr>
@@ -573,15 +659,27 @@ export const InventoryPage: React.FC = () => {
                 <tbody>
                   {transfers.map((t) => {
                     const busy = busyId === t.id;
+                    const received = t.status === 'received';
                     return (
                       <tr key={t.id}>
                         <td>{t.transfer_number}</td>
                         <td>{t.from_warehouse?.code}</td>
                         <td>{t.to_warehouse?.code}</td>
                         <td>{t.status}</td>
+                        <td>{fmtWhen(t.created_at)}</td>
+                        <td>{received ? fmtWhen(t.received_at) : '—'}</td>
+                        <td>{t.initiated_by || '—'}</td>
+                        <td>{received ? t.received_by || '—' : '—'}</td>
                         <td>{t.items?.length ?? 0}</td>
                         <td>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => setViewTransfer(t)}
+                            >
+                              View
+                            </button>
                             {['pending_approval', 'approved', 'draft'].includes(t.status) ? (
                               <button
                                 type="button"
@@ -620,8 +718,8 @@ export const InventoryPage: React.FC = () => {
                   })}
                   {!transfers.length ? (
                     <tr>
-                      <td colSpan={6} style={{ color: 'var(--ink-muted)' }}>
-                        No transfers yet.
+                      <td colSpan={10} style={{ color: 'var(--ink-muted)' }}>
+                        {transfersLoading ? 'Loading…' : 'No transfers for this filter.'}
                       </td>
                     </tr>
                   ) : null}
@@ -631,6 +729,121 @@ export const InventoryPage: React.FC = () => {
           </div>
         </>
       ) : null}
+
+      {viewTransfer
+        ? createPortal(
+            <div
+              className="modal-backdrop"
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) setViewTransfer(null);
+              }}
+            >
+              <div className="modal invoice-view" role="dialog" aria-modal="true" aria-label="Transfer detail">
+                <div className="modal__header">
+                  <div>
+                    <div className="invoice-view__eyebrow">Stock transfer</div>
+                    <h2 className="display invoice-view__number">{viewTransfer.transfer_number}</h2>
+                  </div>
+                  <div className="modal__actions">
+                    <button
+                      type="button"
+                      className="line-items__remove"
+                      onClick={() => setViewTransfer(null)}
+                      aria-label="Close"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
+                </div>
+                <div className="modal__body">
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                      gap: 12,
+                      marginBottom: 16
+                    }}
+                  >
+                    <div>
+                      <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}>From</div>
+                      <div>{viewTransfer.from_warehouse?.code || '—'}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}>To</div>
+                      <div>{viewTransfer.to_warehouse?.code || '—'}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}>Status</div>
+                      <div>{viewTransfer.status}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}>Date initiated</div>
+                      <div>{fmtWhen(viewTransfer.created_at)}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}>Date received</div>
+                      <div>
+                        {viewTransfer.status === 'received'
+                          ? fmtWhen(viewTransfer.received_at)
+                          : '—'}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}>Initiated by</div>
+                      <div>{viewTransfer.initiated_by || '—'}</div>
+                    </div>
+                    <div>
+                      <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}>Received by</div>
+                      <div>
+                        {viewTransfer.status === 'received'
+                          ? viewTransfer.received_by || '—'
+                          : '—'}
+                      </div>
+                    </div>
+                  </div>
+                  {viewTransfer.notes ? (
+                    <p style={{ margin: '0 0 12px', color: 'var(--ink-muted)' }}>
+                      Notes: {viewTransfer.notes}
+                    </p>
+                  ) : null}
+                  <div className="table-wrap">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Product</th>
+                          <th>Batch</th>
+                          <th className="num">Qty</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(viewTransfer.items || []).map((it: any) => (
+                          <tr key={it.id}>
+                            <td>{it.product?.name || it.product_id}</td>
+                            <td>{it.batch_number || '—'}</td>
+                            <td className="num">{it.quantity}</td>
+                          </tr>
+                        ))}
+                        {!viewTransfer.items?.length ? (
+                          <tr>
+                            <td colSpan={3} style={{ color: 'var(--ink-muted)' }}>
+                              No lines.
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div className="modal__footer">
+                  <button type="button" className="btn btn-ghost" onClick={() => setViewTransfer(null)}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </div>
   );
 };

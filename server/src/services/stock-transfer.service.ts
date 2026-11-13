@@ -66,6 +66,78 @@ async function nextTransferNumber(businessId: string) {
   return nextDocNumber(prisma.stockTransfer, businessId, 'transferNumber', 'TR', 6);
 }
 
+function parseInclusiveDateRange(from?: string | Date, to?: string | Date) {
+  const fromDate = from ? new Date(from) : null;
+  const toDate = to ? new Date(to) : null;
+  if (toDate && !Number.isNaN(toDate.getTime())) {
+    if (typeof to === 'string' && to.length <= 10) {
+      toDate.setHours(23, 59, 59, 999);
+    }
+  }
+  return {
+    fromDate: fromDate && !Number.isNaN(fromDate.getTime()) ? fromDate : null,
+    toDate: toDate && !Number.isNaN(toDate.getTime()) ? toDate : null
+  };
+}
+
+/** Attach initiated_by / received_by display names (and movement fallback for older receives). */
+async function withPeople<T extends {
+  id: string;
+  status: string;
+  requestedById: string | null;
+  receivedById: string | null;
+}>(rows: T[]) {
+  const userIds = new Set<string>();
+  for (const r of rows) {
+    if (r.requestedById) userIds.add(r.requestedById);
+    if (r.receivedById) userIds.add(r.receivedById);
+  }
+
+  const needFallback = rows
+    .filter((r) => r.status === 'received' && !r.receivedById)
+    .map((r) => r.id);
+  const receiverByTransfer = new Map<string, { id: string | null; name: string | null }>();
+  if (needFallback.length) {
+    const movs = await prisma.stockMovement.findMany({
+      where: {
+        referenceType: 'stock_transfer',
+        referenceId: { in: needFallback },
+        movementType: 'transfer_in'
+      },
+      select: { referenceId: true, performedById: true, performedByName: true },
+      orderBy: { createdAt: 'asc' }
+    });
+    for (const m of movs) {
+      if (!m.referenceId || receiverByTransfer.has(m.referenceId)) continue;
+      receiverByTransfer.set(m.referenceId, {
+        id: m.performedById,
+        name: m.performedByName
+      });
+      if (m.performedById) userIds.add(m.performedById);
+    }
+  }
+
+  const users = userIds.size
+    ? await prisma.user.findMany({
+        where: { id: { in: [...userIds] } },
+        select: { id: true, fullName: true }
+      })
+    : [];
+  const nameById = new Map(users.map((u) => [u.id, u.fullName]));
+
+  return rows.map((r) => {
+    const fallback = receiverByTransfer.get(r.id);
+    const receivedById = r.receivedById || fallback?.id || null;
+    return {
+      ...r,
+      initiatedBy: r.requestedById ? nameById.get(r.requestedById) || null : null,
+      receivedBy: receivedById
+        ? nameById.get(receivedById) || fallback?.name || null
+        : fallback?.name || null
+    };
+  });
+}
+
 async function listOne(businessId: string, id: string) {
   const row = await prisma.stockTransfer.findFirst({
     where: { id, businessId },
@@ -76,7 +148,8 @@ async function listOne(businessId: string, id: string) {
     }
   });
   if (!row) throw httpError(404, 'Transfer not found');
-  return serialize(row);
+  const [enriched] = await withPeople([row]);
+  return serialize(enriched);
 }
 
 /** Warehouses the user may send from, plus all active destinations. */
@@ -119,12 +192,15 @@ export async function listTransferWarehouses(user: AuthUser) {
 
 export async function listTransfers(
   user: AuthUser,
-  status?: string,
-  opts?: BranchListOpts
+  filters: {
+    status?: string;
+    from?: string | Date;
+    to?: string | Date;
+  } & BranchListOpts = {}
 ) {
   const scope = await branchAccess.branchScopeWhere(user, {
-    branchId: opts?.branchId,
-    allowConsolidated: opts?.allowConsolidated
+    branchId: filters.branchId,
+    allowConsolidated: filters.allowConsolidated
   });
   const branchFilter =
     typeof scope.branchId === 'string'
@@ -137,17 +213,29 @@ export async function listTransfers(
             { toBranchId: { in: scope.branchId.in } }
           ]
         };
-  return serialize(
-    await prisma.stockTransfer.findMany({
-      where: { businessId: user.businessId, ...branchFilter, ...(status ? { status } : {}) },
-      include: {
-        fromWarehouse: true,
-        toWarehouse: true,
-        items: { include: { product: true, variant: true } }
-      },
-      orderBy: { createdAt: 'desc' }
-    })
-  );
+  const { fromDate, toDate } = parseInclusiveDateRange(filters.from, filters.to);
+  const rows = await prisma.stockTransfer.findMany({
+    where: {
+      businessId: user.businessId,
+      ...branchFilter,
+      ...(filters.status ? { status: filters.status } : {}),
+      ...(fromDate || toDate
+        ? {
+            createdAt: {
+              ...(fromDate ? { gte: fromDate } : {}),
+              ...(toDate ? { lte: toDate } : {})
+            }
+          }
+        : {})
+    },
+    include: {
+      fromWarehouse: true,
+      toWarehouse: true,
+      items: { include: { product: true, variant: true } }
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+  return serialize(await withPeople(rows));
 }
 
 /**
@@ -777,7 +865,11 @@ export async function receiveTransfer(user: AuthUser, id: string) {
 
       await tx.stockTransfer.update({
         where: { id: transfer.id },
-        data: { status: 'received', receivedAt: new Date() }
+        data: {
+          status: 'received',
+          receivedAt: new Date(),
+          receivedById: user.id
+        }
       });
     },
     { timeout: 30000, maxWait: 10000 }

@@ -91,8 +91,14 @@ export async function expiry(req: Request, res: Response, next: NextFunction) {
 
 export async function listTransfers(req: Request, res: Response, next: NextFunction) {
   try {
-    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
-    return res.json(await transferService.listTransfers(req.user!, status, branchListOpts(req)));
+    return res.json(
+      await transferService.listTransfers(req.user!, {
+        status: typeof req.query.status === 'string' ? req.query.status : undefined,
+        from: typeof req.query.from === 'string' ? req.query.from : undefined,
+        to: typeof req.query.to === 'string' ? req.query.to : undefined,
+        ...branchListOpts(req)
+      })
+    );
   } catch (err) {
     return next(err);
   }
