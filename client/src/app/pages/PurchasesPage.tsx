@@ -450,11 +450,11 @@ export const PurchasesPage: React.FC = () => {
                 />
               </div>
               <div className="field">
-                <label>Expiry (YYYY-MM-DD)</label>
+                <label>Expiry</label>
                 <input
+                  type="date"
                   value={receiveForm.expiry_date}
                   onChange={(e) => setReceiveForm({ ...receiveForm, expiry_date: e.target.value })}
-                  placeholder="2027-06-30"
                 />
               </div>
             </div>
