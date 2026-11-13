@@ -1,11 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
+import { StockBalanceReport } from '../components/StockBalanceReport';
 
 type TransferLine = { product_id: string; quantity: string };
+type InventoryTab = 'board' | 'stock' | 'movements' | 'expiry' | 'transfers';
 
 export const InventoryPage: React.FC = () => {
-  const [tab, setTab] = useState<'board' | 'movements' | 'expiry' | 'transfers'>('board');
+  const [tab, setTab] = useState<InventoryTab>('board');
   const [board, setBoard] = useState<any[]>([]);
   const [movements, setMovements] = useState<any[]>([]);
   const [expiry, setExpiry] = useState<any[]>([]);
@@ -165,7 +167,7 @@ export const InventoryPage: React.FC = () => {
           Inventory
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Stock board, movements, and warehouse transfers (goods in transit until received).
+          Stock board, stock balance, movements, and warehouse transfers (goods in transit until received).
         </p>
       </header>
 
@@ -173,6 +175,7 @@ export const InventoryPage: React.FC = () => {
         {(
           [
             ['board', 'Stock board'],
+            ['stock', 'Stock balance'],
             ['movements', 'Movements'],
             ['expiry', 'Expiry'],
             ['transfers', 'Transfers']
@@ -188,6 +191,8 @@ export const InventoryPage: React.FC = () => {
           </button>
         ))}
       </div>
+
+      {tab === 'stock' ? <StockBalanceReport /> : null}
 
       {tab === 'board' ? (
         <div className="card-surface" style={{ padding: '0.5rem 0' }}>

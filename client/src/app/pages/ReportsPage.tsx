@@ -2,9 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
-import { StockBalanceReport } from '../components/StockBalanceReport';
 
-type Tab = 'ar' | 'ap' | 'stock' | 'clearing' | 'fulfilment' | 'sales';
+type Tab = 'ar' | 'ap' | 'clearing' | 'fulfilment' | 'sales';
 
 const money = (v: unknown) =>
   Number(v || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -16,7 +15,6 @@ export const ReportsPage: React.FC = () => {
       [
         can('reports.view', 'sales.view') ? { id: 'ar' as const, label: 'AR aging' } : null,
         can('reports.view', 'purchases.view') ? { id: 'ap' as const, label: 'AP aging' } : null,
-        can('reports.view', 'inventory.view') ? { id: 'stock' as const, label: 'Stock balance' } : null,
         can('reports.view', 'accounting.view')
           ? { id: 'clearing' as const, label: 'Inter-branch clearing' }
           : null,
@@ -86,7 +84,7 @@ export const ReportsPage: React.FC = () => {
           Reports
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Aging, stock, fulfilment pipeline, sales by revenue branch, and inter-branch clearing
+          Aging, fulfilment pipeline, sales by revenue branch, and inter-branch clearing
           reconciliation.
         </p>
       </header>
@@ -107,8 +105,6 @@ export const ReportsPage: React.FC = () => {
           ))}
         </div>
       ) : null}
-
-      {activeTab === 'stock' ? <StockBalanceReport /> : null}
 
       {activeTab === 'ar' || activeTab === 'ap' ? (
         <>
