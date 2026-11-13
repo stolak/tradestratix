@@ -6,15 +6,37 @@ import { StockBalanceReport } from '../components/StockBalanceReport';
 type TransferLine = { product_id: string; quantity: string };
 type InventoryTab = 'stock' | 'movements' | 'expiry' | 'transfers';
 
+const MOVEMENT_TYPES = [
+  'receive',
+  'issue',
+  'sale',
+  'sales_return',
+  'adjust_in',
+  'adjust_out',
+  'transfer_hold',
+  'transfer_out',
+  'transfer_in',
+  'transfer_cancel'
+] as const;
+
 export const InventoryPage: React.FC = () => {
   const [tab, setTab] = useState<InventoryTab>('stock');
   const [movements, setMovements] = useState<any[]>([]);
+  const [movementsLoading, setMovementsLoading] = useState(false);
   const [expiry, setExpiry] = useState<any[]>([]);
   const [transfers, setTransfers] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
   const [fromWarehouses, setFromWarehouses] = useState<any[]>([]);
   const [toWarehouses, setToWarehouses] = useState<any[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [movementFilter, setMovementFilter] = useState({
+    warehouse_id: '',
+    product_id: '',
+    movement_type: '',
+    from: '',
+    to: ''
+  });
   const [transferForm, setTransferForm] = useState({
     from_warehouse_id: '',
     to_warehouse_id: '',
@@ -22,19 +44,40 @@ export const InventoryPage: React.FC = () => {
     lines: [{ product_id: '', quantity: '1' }] as TransferLine[]
   });
 
+  const loadMovements = async (filter = movementFilter) => {
+    setMovementsLoading(true);
+    try {
+      setMovements(
+        await api.inventory.movements({
+          warehouse_id: filter.warehouse_id || undefined,
+          product_id: filter.product_id || undefined,
+          movement_type: filter.movement_type || undefined,
+          from: filter.from || undefined,
+          to: filter.to || undefined
+        })
+      );
+    } catch (err: any) {
+      await alertError('Movements', err.message);
+    } finally {
+      setMovementsLoading(false);
+    }
+  };
+
   const load = async () => {
     try {
-      const [m, e, t, p, tw] = await Promise.all([
+      const [m, e, t, p, w, tw] = await Promise.all([
         api.inventory.movements(),
         api.inventory.expiry(90),
         api.inventory.transfers(),
         api.products.list(),
+        api.warehouses.list().catch(() => []),
         api.inventory.transferWarehouses().catch(() => ({ from: [], to: [] }))
       ]);
       setMovements(m);
       setExpiry(e);
       setTransfers(t);
       setProducts(p);
+      setWarehouses(w);
       setFromWarehouses(tw.from || []);
       setToWarehouses(tw.to || []);
       setTransferForm((f) => {
@@ -191,32 +234,130 @@ export const InventoryPage: React.FC = () => {
       {tab === 'stock' ? <StockBalanceReport /> : null}
 
       {tab === 'movements' ? (
-        <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>When</th>
-                  <th>Type</th>
-                  <th>Product</th>
-                  <th>Warehouse</th>
-                  <th className="num">In</th>
-                  <th className="num">Out</th>
-                </tr>
-              </thead>
-              <tbody>
-                {movements.map((m) => (
-                  <tr key={m.id}>
-                    <td>{String(m.created_at || '').slice(0, 19).replace('T', ' ')}</td>
-                    <td>{m.movement_type}</td>
-                    <td>{m.product?.name}</td>
-                    <td>{m.warehouse?.code}</td>
-                    <td className="num">{m.quantity_in}</td>
-                    <td className="num">{m.quantity_out}</td>
-                  </tr>
+        <div style={{ display: 'grid', gap: 12 }}>
+          <form
+            className="card-surface cust-bal__filters"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void loadMovements();
+            }}
+          >
+            <div className="field">
+              <label>Warehouse</label>
+              <select
+                value={movementFilter.warehouse_id}
+                onChange={(e) => setMovementFilter((f) => ({ ...f, warehouse_id: e.target.value }))}
+              >
+                <option value="">All warehouses</option>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.code} — {w.name}
+                  </option>
                 ))}
-              </tbody>
-            </table>
+              </select>
+            </div>
+            <div className="field">
+              <label>Type</label>
+              <select
+                value={movementFilter.movement_type}
+                onChange={(e) => setMovementFilter((f) => ({ ...f, movement_type: e.target.value }))}
+              >
+                <option value="">All types</option>
+                {MOVEMENT_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Product</label>
+              <select
+                value={movementFilter.product_id}
+                onChange={(e) => setMovementFilter((f) => ({ ...f, product_id: e.target.value }))}
+              >
+                <option value="">All products</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {p.sku ? ` (${p.sku})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>From</label>
+              <input
+                type="date"
+                value={movementFilter.from}
+                onChange={(e) => setMovementFilter((f) => ({ ...f, from: e.target.value }))}
+              />
+            </div>
+            <div className="field">
+              <label>To</label>
+              <input
+                type="date"
+                value={movementFilter.to}
+                onChange={(e) => setMovementFilter((f) => ({ ...f, to: e.target.value }))}
+              />
+            </div>
+            <button type="submit" className="btn btn-primary" disabled={movementsLoading}>
+              {movementsLoading ? 'Filtering…' : 'Apply'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={movementsLoading}
+              onClick={() => {
+                const cleared = {
+                  warehouse_id: '',
+                  product_id: '',
+                  movement_type: '',
+                  from: '',
+                  to: ''
+                };
+                setMovementFilter(cleared);
+                void loadMovements(cleared);
+              }}
+            >
+              Clear
+            </button>
+          </form>
+
+          <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Type</th>
+                    <th>Product</th>
+                    <th>Warehouse</th>
+                    <th className="num">In</th>
+                    <th className="num">Out</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {movements.map((m) => (
+                    <tr key={m.id}>
+                      <td>{String(m.created_at || '').slice(0, 19).replace('T', ' ')}</td>
+                      <td>{m.movement_type}</td>
+                      <td>{m.product?.name}</td>
+                      <td>{m.warehouse?.code}</td>
+                      <td className="num">{m.quantity_in}</td>
+                      <td className="num">{m.quantity_out}</td>
+                    </tr>
+                  ))}
+                  {!movements.length ? (
+                    <tr>
+                      <td colSpan={6} style={{ textAlign: 'center', color: 'var(--ink-muted)' }}>
+                        {movementsLoading ? 'Loading…' : 'No movements for this filter.'}
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       ) : null}

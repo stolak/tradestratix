@@ -677,18 +677,41 @@ export async function listLots(
 
 export async function listMovements(
   user: AuthUser,
-  filters: { product_id?: string; warehouse_id?: string } & BranchListOpts = {}
+  filters: {
+    product_id?: string;
+    warehouse_id?: string;
+    movement_type?: string;
+    from?: string | Date;
+    to?: string | Date;
+  } & BranchListOpts = {}
 ) {
   const scope = await branchAccess.branchScopeWhere(user, {
     branchId: filters.branchId,
     allowConsolidated: filters.allowConsolidated
   });
+  const fromDate = filters.from ? new Date(filters.from) : null;
+  const toDate = filters.to ? new Date(filters.to) : null;
+  if (toDate && !Number.isNaN(toDate.getTime())) {
+    // Inclusive end-of-day when only a date is supplied
+    if (typeof filters.to === 'string' && filters.to.length <= 10) {
+      toDate.setHours(23, 59, 59, 999);
+    }
+  }
   const movements = await prisma.stockMovement.findMany({
     where: {
       businessId: user.businessId,
       ...scope,
       ...(filters.product_id ? { productId: filters.product_id } : {}),
-      ...(filters.warehouse_id ? { warehouseId: filters.warehouse_id } : {})
+      ...(filters.warehouse_id ? { warehouseId: filters.warehouse_id } : {}),
+      ...(filters.movement_type ? { movementType: filters.movement_type } : {}),
+      ...(fromDate || toDate
+        ? {
+            createdAt: {
+              ...(fromDate && !Number.isNaN(fromDate.getTime()) ? { gte: fromDate } : {}),
+              ...(toDate && !Number.isNaN(toDate.getTime()) ? { lte: toDate } : {})
+            }
+          }
+        : {})
     },
     include: {
       product: { select: { id: true, name: true, sku: true } },
@@ -697,7 +720,7 @@ export async function listMovements(
       lot: { select: { id: true, batchNumber: true, expiryDate: true } }
     },
     orderBy: { createdAt: 'desc' },
-    take: 200
+    take: 500
   });
   return serialize(movements);
 }

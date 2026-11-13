@@ -44,6 +44,10 @@ export async function movements(req: Request, res: Response, next: NextFunction)
         product_id: typeof req.query.product_id === 'string' ? req.query.product_id : undefined,
         warehouse_id:
           typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : undefined,
+        movement_type:
+          typeof req.query.movement_type === 'string' ? req.query.movement_type : undefined,
+        from: typeof req.query.from === 'string' ? req.query.from : undefined,
+        to: typeof req.query.to === 'string' ? req.query.to : undefined,
         ...branchListOpts(req)
       })
     );

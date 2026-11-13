@@ -584,7 +584,22 @@ export const api = {
         `/inventory/board${warehouseId ? `?warehouse_id=${warehouseId}` : ''}`
       ),
     lots: () => request<any[]>('/inventory/lots'),
-    movements: () => request<any[]>('/inventory/movements'),
+    movements: (filter: {
+      warehouse_id?: string;
+      product_id?: string;
+      movement_type?: string;
+      from?: string;
+      to?: string;
+    } = {}) => {
+      const params = new URLSearchParams();
+      if (filter.warehouse_id) params.set('warehouse_id', filter.warehouse_id);
+      if (filter.product_id) params.set('product_id', filter.product_id);
+      if (filter.movement_type) params.set('movement_type', filter.movement_type);
+      if (filter.from) params.set('from', filter.from);
+      if (filter.to) params.set('to', filter.to);
+      const qs = params.toString();
+      return request<any[]>(`/inventory/movements${qs ? `?${qs}` : ''}`);
+    },
     expiry: (withinDays = 90) =>
       request<any[]>(`/inventory/expiry?within_days=${withinDays}`),
     receive: (body: Record<string, unknown>) =>
