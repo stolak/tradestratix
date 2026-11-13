@@ -206,9 +206,10 @@ export async function reserveInvoiceStock(
         if (affected !== 1) {
           throw httpError(409, `Stock for ${product.name} changed while reserving; please retry`);
         }
+        const reservationId = shortId('srv');
         await tx.salesReservation.create({
           data: {
-            id: shortId('srv'),
+            id: reservationId,
             businessId: user.businessId,
             invoiceItemId: line.key,
             lotId: lot.lotId,
@@ -219,6 +220,16 @@ export async function reserveInvoiceStock(
             createdById: user.id
           }
         });
+        if (product.trackSerial) {
+          const { reserveSerialsForLot } = await import('./stock-serial.service.js');
+          await reserveSerialsForLot(tx, {
+            businessId: user.businessId,
+            lotId: lot.lotId,
+            reservationId,
+            qty: lot.qty,
+            productName: product.name
+          });
+        }
       }
     }
   }
@@ -243,6 +254,17 @@ export async function releaseReservations(
     const affected = await tx.$executeRaw`
       UPDATE stock_lots SET quantity_reserved = GREATEST(0, quantity_reserved - ${take}) WHERE id = ${r.lotId}`;
     if (affected !== 1) throw httpError(409, 'Reserved lot not found');
+    const reservedSerials = await tx.stockSerial.findMany({
+      where: { reservationId: r.id, status: 'reserved' },
+      orderBy: [{ receivedAt: 'desc' }, { createdAt: 'desc' }],
+      take: Math.round(take)
+    });
+    if (reservedSerials.length) {
+      await tx.stockSerial.updateMany({
+        where: { id: { in: reservedSerials.map((s) => s.id) } },
+        data: { status: 'available', reservationId: null }
+      });
+    }
     const releasedQty = roundQty(n(r.releasedQuantity) + take);
     await tx.salesReservation.update({
       where: { id: r.id },
@@ -422,6 +444,7 @@ export async function fulfilInTx(
           lot_id: r.lotId,
           movement_type: 'sale',
           quantity_out: take,
+          reservation_id: r.id,
           reference_type: 'sales_invoice',
           reference_id: invoice.id,
           idempotency_key: `ful:${fulfilmentId}:${r.id}`,

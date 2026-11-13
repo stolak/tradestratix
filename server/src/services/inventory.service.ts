@@ -4,6 +4,12 @@ import { httpError, roundMoney, serialize, shortId, toDec } from '../utils/helpe
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
+import {
+  assertWholeSerialQty,
+  issueSerials,
+  normalizeSerialList,
+  receiveSerials
+} from './stock-serial.service.js';
 
 type BranchListOpts = {
   branchId?: string | null;
@@ -211,6 +217,10 @@ type MovementInput = {
   transaction_quantity?: number | null;
   transaction_uom_id?: string | null;
   allow_expired?: boolean;
+  /** Required when product.trackSerial on receive/issue (unless reservation_id for issue). */
+  serial_numbers?: string[] | null;
+  /** When issuing reserved stock, prefer serials bound to this reservation. */
+  reservation_id?: string | null;
 };
 
 async function createSingleMovement(
@@ -398,6 +408,33 @@ export async function createStockMovement(user: AuthUser, input: MovementInput, 
         lotId = lot.id;
       }
 
+      // transfer_in / sales_return restore existing serial rows elsewhere — do not mint new ones
+      const mintSerials =
+        product.trackSerial &&
+        input.movement_type !== 'transfer_in' &&
+        input.movement_type !== 'sales_return';
+      if (mintSerials) {
+        assertWholeSerialQty(qtyIn, 'Receipt quantity');
+        const serials = normalizeSerialList(input.serial_numbers);
+        if (serials.length !== Math.round(qtyIn)) {
+          throw httpError(
+            400,
+            `serial_numbers must include exactly ${Math.round(qtyIn)} value(s) for serial-tracked products`
+          );
+        }
+        await receiveSerials(client, {
+          businessId: user.businessId,
+          productId: product.id,
+          variantId,
+          warehouseId: input.warehouse_id,
+          lotId: lotId!,
+          serialNumbers: serials,
+          unitCost: input.unit_cost
+        });
+      } else if (product.trackSerial && input.movement_type === 'sales_return') {
+        assertWholeSerialQty(qtyIn, 'Return quantity');
+      }
+
       return createSingleMovement(client, user, {
         ...input,
         product_id: product.id,
@@ -411,6 +448,13 @@ export async function createStockMovement(user: AuthUser, input: MovementInput, 
     }
 
     // Issue / out
+    if (product.trackSerial && !input.lot_id && !input.reservation_id && !input.serial_numbers?.length) {
+      throw httpError(
+        400,
+        'Serial-tracked products must be issued with serial_numbers (or a reserved lot_id)'
+      );
+    }
+
     if (input.lot_id) {
       const lot = await client.stockLot.findFirst({
         where: { id: input.lot_id, businessId: user.businessId }
@@ -424,6 +468,17 @@ export async function createStockMovement(user: AuthUser, input: MovementInput, 
       ) {
         throw httpError(400, 'Cannot issue expired stock without authorised override');
       }
+      if (product.trackSerial) {
+        await issueSerials(client, {
+          businessId: user.businessId,
+          qty: qtyOut,
+          reservationId: input.reservation_id,
+          lotId: lot.id,
+          serialNumbers: input.serial_numbers,
+          referenceType: input.reference_type || input.movement_type || 'issue',
+          referenceId: input.reference_id || input.idempotency_key || shortId('iss')
+        });
+      }
       return createSingleMovement(client, user, {
         ...input,
         product_id: product.id,
@@ -434,6 +489,13 @@ export async function createStockMovement(user: AuthUser, input: MovementInput, 
         quantity_in: 0,
         quantity_out: qtyOut
       });
+    }
+
+    if (product.trackSerial) {
+      throw httpError(
+        400,
+        'Serial-tracked products cannot auto-allocate by FEFO — provide lot_id and serial_numbers'
+      );
     }
 
     const allocations = await allocateFefo(
@@ -483,6 +545,7 @@ export async function receiveStock(user: AuthUser, body: Record<string, any>) {
     batch_number: body.batch_number || body.batchNumber,
     expiry_date: body.expiry_date || body.expiryDate,
     manufacturing_date: body.manufacturing_date || body.manufacturingDate,
+    serial_numbers: body.serial_numbers || body.serialNumbers,
     reason: body.reason,
     reference_type: body.reference_type || body.referenceType || 'manual_receive',
     reference_id: body.reference_id || body.referenceId,

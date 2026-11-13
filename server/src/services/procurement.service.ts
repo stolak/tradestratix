@@ -19,6 +19,11 @@ import {
   consumePrepaidAgainstBillBalance,
   supplierPrepaidCredit
 } from './supplier-payment.service.js';
+import {
+  assertWholeSerialQty,
+  normalizeSerialList,
+  serializeSerialNumbers
+} from './stock-serial.service.js';
 
 type BranchListOpts = {
   branchId?: string | null;
@@ -384,6 +389,7 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
     batchNumber: string | null;
     expiryDate: string | null;
     manufacturingDate: string | null;
+    serialNumbers: unknown;
   };
 
   const lines: RecLine[] = [];
@@ -405,6 +411,7 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
     }
 
     const unitCost = Number(item.unit_cost ?? item.unitCost ?? poi.unitCost);
+    const serialRaw = item.serial_numbers || item.serialNumbers || null;
     lines.push({
       purchaseOrderItemId: poi.id,
       productId: poi.productId,
@@ -415,7 +422,8 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
       lineTotal: roundMoney(qty * unitCost),
       batchNumber: item.batch_number || item.batchNumber || null,
       expiryDate: item.expiry_date || item.expiryDate || null,
-      manufacturingDate: item.manufacturing_date || item.manufacturingDate || null
+      manufacturingDate: item.manufacturing_date || item.manufacturingDate || null,
+      serialNumbers: serialRaw
     });
   }
 
@@ -443,19 +451,29 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
         billId,
         createdById: user.id,
         items: {
-          create: lines.map((l) => ({
-            id: shortId('gri'),
-            purchaseOrderItemId: l.purchaseOrderItemId,
-            productId: l.productId,
-            variantId: l.variantId,
-            uomId: l.uomId,
-            quantity: toDec(l.quantity),
-            unitCost: toDec(l.unitCost),
-            lineTotal: toDec(l.lineTotal),
-            batchNumber: l.batchNumber,
-            expiryDate: l.expiryDate,
-            manufacturingDate: l.manufacturingDate
-          }))
+          create: lines.map((l) => {
+            let serialJson: string | null = null;
+            try {
+              const serials = normalizeSerialList(l.serialNumbers);
+              serialJson = serializeSerialNumbers(serials);
+            } catch {
+              serialJson = null;
+            }
+            return {
+              id: shortId('gri'),
+              purchaseOrderItemId: l.purchaseOrderItemId,
+              productId: l.productId,
+              variantId: l.variantId,
+              uomId: l.uomId,
+              quantity: toDec(l.quantity),
+              unitCost: toDec(l.unitCost),
+              lineTotal: toDec(l.lineTotal),
+              batchNumber: l.batchNumber,
+              expiryDate: l.expiryDate,
+              manufacturingDate: l.manufacturingDate,
+              serialNumbersJson: serialJson
+            };
+          })
         }
       },
       include: { items: true }
@@ -495,6 +513,22 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
       const unitCostPerBase =
         baseQty > 0 ? roundMoney(lineTotal / baseQty) : Number(gri.unitCost);
 
+      let serialNumbers: string[] | undefined;
+      if (product.trackSerial) {
+        assertWholeSerialQty(baseQty, `items[${lineIdx}] base quantity`);
+        serialNumbers = normalizeSerialList(src.serialNumbers);
+        if (serialNumbers.length !== Math.round(baseQty)) {
+          throw httpError(
+            400,
+            `items[${lineIdx}].serial_numbers must include exactly ${Math.round(baseQty)} value(s)`
+          );
+        }
+        await tx.goodsReceiptItem.update({
+          where: { id: gri.id },
+          data: { serialNumbersJson: serializeSerialNumbers(serialNumbers) }
+        });
+      }
+
       const movement = await createStockMovement(
         user,
         {
@@ -509,6 +543,7 @@ export async function receiveAgainstPurchaseOrder(user: AuthUser, body: Record<s
           batch_number: gri.batchNumber,
           expiry_date: gri.expiryDate,
           manufacturing_date: gri.manufacturingDate,
+          serial_numbers: serialNumbers,
           reference_type: 'grn',
           reference_id: grn.id,
           idempotency_key: `grn:${grn.id}:${gri.id}`,

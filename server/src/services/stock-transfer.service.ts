@@ -294,6 +294,9 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
     expiryDate: string | null;
     fromLotId: string | null;
     trackExpiry: boolean;
+    trackSerial: boolean;
+    productName: string;
+    serialNumbers: unknown;
   };
 
   const lines: LineSpec[] = [];
@@ -318,7 +321,10 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
       batchNumber: it.batch_number || it.batchNumber || null,
       expiryDate: it.expiry_date || it.expiryDate || null,
       fromLotId: it.lot_id || it.lotId || null,
-      trackExpiry: product.trackExpiry
+      trackExpiry: product.trackExpiry,
+      trackSerial: product.trackSerial,
+      productName: product.name,
+      serialNumbers: it.serial_numbers || it.serialNumbers || null
     });
   }
 
@@ -337,9 +343,13 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
         expiryDate: string | null;
         unitCost: number;
         outMovementId: string;
+        serialNumbersJson: string | null;
       }[] = [];
 
       let totalCost = 0;
+      const { holdSerialsForTransfer, serializeSerialNumbers } = await import(
+        './stock-serial.service.js'
+      );
 
       for (const line of lines) {
         let allocations: { lotId: string; batchNumber: string; expiryDate: string | null; qty: number }[];
@@ -378,6 +388,11 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
           );
         }
 
+        // Serial lines: explicit list applies to a single-lot transfer only
+        let remainingSerials = line.trackSerial
+          ? (await import('./stock-serial.service.js')).normalizeSerialList(line.serialNumbers)
+          : [];
+
         for (const alloc of allocations) {
           const lot = await tx.stockLot.findFirst({ where: { id: alloc.lotId } });
           if (!lot) throw httpError(400, 'Lot missing during transfer hold');
@@ -391,6 +406,22 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
             where: { id: lot.id },
             data: { quantityInTransit: toDec(newTransit) }
           });
+
+          let serialNumbersJson: string | null = null;
+          if (line.trackSerial) {
+            const sliceSerials =
+              remainingSerials.length >= Math.round(alloc.qty)
+                ? remainingSerials.splice(0, Math.round(alloc.qty))
+                : remainingSerials.splice(0, remainingSerials.length);
+            const held = await holdSerialsForTransfer(tx, {
+              businessId: user.businessId,
+              lotId: lot.id,
+              qty: alloc.qty,
+              serialNumbers: sliceSerials.length ? sliceSerials : null,
+              productName: line.productName
+            });
+            serialNumbersJson = serializeSerialNumbers(held);
+          }
 
           const movement = await tx.stockMovement.create({
             data: {
@@ -427,7 +458,8 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
             batchNumber: alloc.batchNumber,
             expiryDate: alloc.expiryDate,
             unitCost,
-            outMovementId: movement.id
+            outMovementId: movement.id,
+            serialNumbersJson
           });
         }
       }
@@ -482,6 +514,7 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
               quantity: toDec(it.quantity),
               batchNumber: it.batchNumber,
               expiryDate: it.expiryDate,
+              serialNumbersJson: it.serialNumbersJson,
               outMovementId: it.outMovementId
             }))
           }
@@ -799,6 +832,21 @@ export async function receiveTransfer(user: AuthUser, id: string) {
           },
           tx
         );
+
+        if (item.serialNumbersJson && inMovement.lotId) {
+          const { parseSerialNumbersJson, receiveTransferSerials } = await import(
+            './stock-serial.service.js'
+          );
+          const serials = parseSerialNumbersJson(item.serialNumbersJson);
+          if (serials.length) {
+            await receiveTransferSerials(tx, {
+              businessId: user.businessId,
+              serialNumbers: serials,
+              toWarehouseId: transfer.toWarehouseId,
+              toLotId: inMovement.lotId
+            });
+          }
+        }
 
         await tx.stockTransferItem.update({
           where: { id: item.id },

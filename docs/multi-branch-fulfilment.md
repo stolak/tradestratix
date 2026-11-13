@@ -267,5 +267,5 @@ UI: Reports page tabs. Prefer `consolidated=1` for company-wide views.
 
 ## Not yet implemented (later phases)
 
-* Serial-number reservation (serial tracking does not exist yet).
+* Serial-number reservation is implemented: confirm reserves available `StockSerial` rows on the allocated lot; fulfilment issues those reserved serials.
 * Deeper branch-pair due-to / due-from subledger (today: single clearing account + source pairing).

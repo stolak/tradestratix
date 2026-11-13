@@ -384,6 +384,10 @@ export async function postReturn(user: AuthUser, id: string, body: Record<string
       let movementId: string | null = null;
 
       if (it.restock && cost >= 0) {
+        const product = await tx.product.findFirst({
+          where: { id: it.productId },
+          select: { trackSerial: true }
+        });
         const slices = await allocateReturnLots(tx, {
           businessId: user.businessId,
           invoiceItemId: it.invoiceItemId,
@@ -393,6 +397,7 @@ export async function postReturn(user: AuthUser, id: string, body: Record<string
           baseQty: n(it.baseQuantity)
         });
         let sliceIdx = 0;
+        let serialBudget = n(it.baseQuantity);
         for (const slice of slices) {
           const movement = await createStockMovement(
             user,
@@ -406,6 +411,8 @@ export async function postReturn(user: AuthUser, id: string, body: Record<string
               lot_id: slice.lotId || undefined,
               batch_number: slice.batchNumber || undefined,
               expiry_date: slice.expiryDate || undefined,
+              // Serials are restored separately from sold invoice units (not re-received as new)
+              serial_numbers: undefined,
               reference_type: 'sales_return',
               reference_id: ret.id,
               idempotency_key: `ret:${ret.id}:${it.id}:${sliceIdx}`,
@@ -413,6 +420,20 @@ export async function postReturn(user: AuthUser, id: string, body: Record<string
             },
             tx
           );
+          if (product?.trackSerial && movement.lotId && serialBudget > 0) {
+            const { restockSoldSerials } = await import('./stock-serial.service.js');
+            const take = Math.min(serialBudget, slice.qty);
+            await restockSoldSerials(tx, {
+              businessId: user.businessId,
+              productId: it.productId,
+              variantId: it.variantId,
+              invoiceId: invoice.id,
+              qty: take,
+              warehouseId: ret.warehouseId,
+              lotId: movement.lotId
+            });
+            serialBudget -= take;
+          }
           if (!movementId) movementId = movement.id;
           sliceIdx += 1;
         }

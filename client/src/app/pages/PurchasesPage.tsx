@@ -76,9 +76,9 @@ export const PurchasesPage: React.FC = () => {
   const [receiveForm, setReceiveForm] = useState({
     purchase_order_id: ''
   });
-  /** Per PO-line batch/expiry for GRN (keyed by purchase_order_item id). */
+  /** Per PO-line batch/expiry/serials for GRN (keyed by purchase_order_item id). */
   const [receiveLines, setReceiveLines] = useState<
-    Record<string, { batch_number: string; expiry_date: string }>
+    Record<string, { batch_number: string; expiry_date: string; serial_numbers: string }>
   >({});
 
   const selectedPo = useMemo(
@@ -95,14 +95,21 @@ export const PurchasesPage: React.FC = () => {
   const selectReceivePo = (poId: string) => {
     setReceiveForm({ purchase_order_id: poId });
     const po = orders.find((o) => o.id === poId);
-    const next: Record<string, { batch_number: string; expiry_date: string }> = {};
+    const next: Record<string, { batch_number: string; expiry_date: string; serial_numbers: string }> =
+      {};
     for (const it of po?.items || []) {
       const remaining = Number(it.quantity_ordered) - Number(it.quantity_received);
       if (remaining <= 0) continue;
-      next[it.id] = { batch_number: '', expiry_date: '' };
+      next[it.id] = { batch_number: '', expiry_date: '', serial_numbers: '' };
     }
     setReceiveLines(next);
   };
+
+  const parseSerialInput = (raw: string) =>
+    raw
+      .split(/[\n,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
 
   const receivableOrders = useMemo(
     () => orders.filter((o) => ['approved', 'partially_received'].includes(o.status)),
@@ -201,7 +208,11 @@ export const PurchasesPage: React.FC = () => {
       const remaining = Number(it.quantity_ordered) - Number(it.quantity_received);
       if (remaining <= 0) continue;
       const product = it.product || productById.get(it.product_id);
-      const line = receiveLines[it.id] || { batch_number: '', expiry_date: '' };
+      const line = receiveLines[it.id] || {
+        batch_number: '',
+        expiry_date: '',
+        serial_numbers: ''
+      };
       if (product?.track_batch && !line.batch_number.trim()) {
         await alertError(
           'Batch required',
@@ -216,18 +227,34 @@ export const PurchasesPage: React.FC = () => {
         );
         return;
       }
+      if (product?.track_serial) {
+        const serials = parseSerialInput(line.serial_numbers);
+        if (serials.length !== Math.round(remaining)) {
+          await alertError(
+            'Serials required',
+            `${product.name || 'Product'} needs exactly ${Math.round(remaining)} serial number(s).`
+          );
+          return;
+        }
+      }
     }
     const items = selectedPo.items
       .map((it: any) => {
         const remaining = Number(it.quantity_ordered) - Number(it.quantity_received);
         if (remaining <= 0) return null;
-        const line = receiveLines[it.id] || { batch_number: '', expiry_date: '' };
+        const line = receiveLines[it.id] || {
+          batch_number: '',
+          expiry_date: '',
+          serial_numbers: ''
+        };
+        const serials = parseSerialInput(line.serial_numbers);
         return {
           purchase_order_item_id: it.id,
           quantity: remaining,
           unit_cost: Number(it.unit_cost),
           batch_number: line.batch_number.trim() || undefined,
-          expiry_date: line.expiry_date || undefined
+          expiry_date: line.expiry_date || undefined,
+          serial_numbers: serials.length ? serials : undefined
         };
       })
       .filter(Boolean);
@@ -505,6 +532,7 @@ export const PurchasesPage: React.FC = () => {
                       <th>Unit cost</th>
                       <th>Batch</th>
                       <th>Expiry</th>
+                      <th>Serials</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -519,16 +547,22 @@ export const PurchasesPage: React.FC = () => {
                         const product = it.product || productById.get(it.product_id);
                         const trackBatch = !!product?.track_batch;
                         const trackExpiry = !!product?.track_expiry;
+                        const trackSerial = !!product?.track_serial;
                         const line = receiveLines[it.id] || {
                           batch_number: '',
-                          expiry_date: ''
+                          expiry_date: '',
+                          serial_numbers: ''
                         };
                         return (
                           <tr key={it.id}>
                             <td>
                               <div style={{ fontWeight: 600 }}>{product?.name || '—'}</div>
                               <div style={{ color: 'var(--ink-muted)', fontSize: '0.75rem' }}>
-                                {[trackBatch ? 'batch' : null, trackExpiry ? 'expiry' : null]
+                                {[
+                                  trackBatch ? 'batch' : null,
+                                  trackExpiry ? 'expiry' : null,
+                                  trackSerial ? 'serial' : null
+                                ]
                                   .filter(Boolean)
                                   .join(' · ') || 'no lot tracking'}
                               </div>
@@ -566,6 +600,25 @@ export const PurchasesPage: React.FC = () => {
                                       [it.id]: { ...line, expiry_date: e.target.value }
                                     }))
                                   }
+                                />
+                              ) : (
+                                <span style={{ color: 'var(--ink-muted)' }}>—</span>
+                              )}
+                            </td>
+                            <td>
+                              {trackSerial ? (
+                                <textarea
+                                  required
+                                  rows={Math.min(4, Math.max(2, Math.round(remaining)))}
+                                  value={line.serial_numbers}
+                                  placeholder={`One serial per line (${Math.round(remaining)} required)`}
+                                  onChange={(e) =>
+                                    setReceiveLines((prev) => ({
+                                      ...prev,
+                                      [it.id]: { ...line, serial_numbers: e.target.value }
+                                    }))
+                                  }
+                                  style={{ minWidth: 160, fontFamily: 'ui-monospace, monospace' }}
                                 />
                               ) : (
                                 <span style={{ color: 'var(--ink-muted)' }}>—</span>

@@ -99,6 +99,7 @@ model Business {
   products               Product[]
   productVariants        ProductVariant[]
   stockLots              StockLot[]
+  stockSerials           StockSerial[]
   stockMovements         StockMovement[]
   stockTransfers         StockTransfer[]
   productUnitConversions ProductUnitConversion[]
@@ -263,6 +264,7 @@ model Warehouse {
   branch         Branch             @relation(fields: [branchId], references: [id], onDelete: Cascade)
   warehouseCategory WarehouseCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   stockLots      StockLot[]
+  stockSerials   StockSerial[]
   stockMovements StockMovement[]
   transfersFrom  StockTransfer[]    @relation("TransferFrom")
   transfersTo    StockTransfer[]    @relation("TransferTo")
@@ -781,6 +783,7 @@ model Product {
   sellingPrices      ProductSellingPrice[]
   branchDiscounts    BranchProductDiscount[]
   stockLots          StockLot[]
+  stockSerials       StockSerial[]
   stockMovements     StockMovement[]
   transferItems      StockTransferItem[]
   purchaseOrderItems PurchaseOrderItem[]
@@ -882,6 +885,7 @@ model ProductVariant {
   business           Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
   product            Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
   stockLots          StockLot[]
+  stockSerials       StockSerial[]
   stockMovements     StockMovement[]
   transferItems      StockTransferItem[]
   purchaseOrderItems PurchaseOrderItem[]
@@ -936,11 +940,48 @@ model StockLot {
   movements         StockMovement[]
   transferItems     StockTransferItem[]
   salesReservations SalesReservation[]
+  serials           StockSerial[]
 
   @@unique([businessId, lotKey])
   @@index([variantId, warehouseId])
   @@index([expiryDate])
   @@map("stock_lots")
+}
+
+/// One physical unit for products with trackSerial. Qty is always 1.
+model StockSerial {
+  id                   String    @id
+  businessId           String    @map("business_id")
+  productId            String    @map("product_id")
+  variantId            String    @map("variant_id")
+  warehouseId          String    @map("warehouse_id")
+  lotId                String?   @map("lot_id")
+  serialNumber         String    @map("serial_number")
+  /// available | reserved | in_transit | sold | written_off | quarantine
+  status               String    @default("available")
+  unitCost             Decimal?  @map("unit_cost") @db.Decimal(18, 4)
+  reservationId        String?   @map("reservation_id")
+  /// sales_invoice | stock_transfer | sales_return | …
+  issuedReferenceType  String?   @map("issued_reference_type")
+  issuedReferenceId    String?   @map("issued_reference_id")
+  receivedAt           DateTime? @map("received_at")
+  issuedAt             DateTime? @map("issued_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  business    Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  product     Product           @relation(fields: [productId], references: [id])
+  variant     ProductVariant    @relation(fields: [variantId], references: [id])
+  warehouse   Warehouse         @relation(fields: [warehouseId], references: [id])
+  lot         StockLot?         @relation(fields: [lotId], references: [id], onDelete: SetNull)
+  reservation SalesReservation? @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+
+  @@unique([businessId, productId, serialNumber])
+  @@index([variantId, warehouseId, status])
+  @@index([lotId, status])
+  @@index([reservationId])
+  @@index([issuedReferenceType, issuedReferenceId])
+  @@map("stock_serials")
 }
 
 model StockMovement {
@@ -1019,20 +1060,22 @@ model StockTransfer {
 }
 
 model StockTransferItem {
-  id            String         @id
-  transferId    String         @map("transfer_id")
-  productId     String         @map("product_id")
-  variantId     String         @map("variant_id")
-  fromLotId     String?        @map("from_lot_id")
-  quantity      Decimal        @db.Decimal(18, 4)
-  batchNumber   String?        @map("batch_number")
-  expiryDate    String?        @map("expiry_date")
-  outMovementId String?        @map("out_movement_id")
-  inMovementId  String?        @map("in_movement_id")
-  transfer      StockTransfer  @relation(fields: [transferId], references: [id], onDelete: Cascade)
-  product       Product        @relation(fields: [productId], references: [id])
-  variant       ProductVariant @relation(fields: [variantId], references: [id])
-  fromLot       StockLot?      @relation(fields: [fromLotId], references: [id])
+  id                String         @id
+  transferId        String         @map("transfer_id")
+  productId         String         @map("product_id")
+  variantId         String         @map("variant_id")
+  fromLotId         String?        @map("from_lot_id")
+  quantity          Decimal        @db.Decimal(18, 4)
+  batchNumber       String?        @map("batch_number")
+  expiryDate        String?        @map("expiry_date")
+  /// JSON string array of serial numbers held/moved on this line
+  serialNumbersJson String?        @map("serial_numbers_json") @db.Text
+  outMovementId     String?        @map("out_movement_id")
+  inMovementId      String?        @map("in_movement_id")
+  transfer          StockTransfer  @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  product           Product        @relation(fields: [productId], references: [id])
+  variant           ProductVariant @relation(fields: [variantId], references: [id])
+  fromLot           StockLot?      @relation(fields: [fromLotId], references: [id])
 
   @@index([transferId])
   @@map("stock_transfer_items")
@@ -1180,6 +1223,8 @@ model GoodsReceiptItem {
   batchNumber         String? @map("batch_number")
   expiryDate          String? @map("expiry_date")
   manufacturingDate   String? @map("manufacturing_date")
+  /// JSON string array of serial numbers received on this line
+  serialNumbersJson   String? @map("serial_numbers_json") @db.Text
   stockMovementId     String? @map("stock_movement_id")
 
   grn               GoodsReceiptNote   @relation(fields: [grnId], references: [id], onDelete: Cascade)
@@ -1538,6 +1583,7 @@ model SalesReservation {
   invoiceItem SalesInvoiceItem @relation(fields: [invoiceItemId], references: [id], onDelete: Cascade)
   lot         StockLot         @relation(fields: [lotId], references: [id])
   warehouse   Warehouse        @relation(fields: [warehouseId], references: [id])
+  serials     StockSerial[]
 
   @@index([invoiceItemId])
   @@index([lotId, status])
