@@ -1,10 +1,10 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import { api } from '../../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../../utils/alerts';
 import { SearchSelect } from '../SearchSelect';
 import { AccountingModalShell } from './AccountingModalShell';
-import { ACCOUNT_TYPES, flattenAccountTree } from './shared';
+import { ACCOUNT_TYPES, flattenAccountTree, toggleIdInSet } from './shared';
 
 export type CoaTabHandle = {
   openCreate: (parent?: any | null) => void;
@@ -15,6 +15,7 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [showAccountModal, setShowAccountModal] = useState(false);
   const [togglingAccountId, setTogglingAccountId] = useState<string | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [accountForm, setAccountForm] = useState({
     code: '',
     name: '',
@@ -29,6 +30,16 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
     accounts.forEach((a) => map.set(a.id, a));
     return map;
   }, [accounts]);
+  const visibleAccountRows = useMemo(() => {
+    return accountTreeRows.filter((a) => {
+      let parentId: string | null = a.parent_id || null;
+      while (parentId) {
+        if (!expandedIds.has(parentId)) return false;
+        parentId = accountsById.get(parentId)?.parent_id || null;
+      }
+      return true;
+    });
+  }, [accountTreeRows, expandedIds, accountsById]);
   const parentAccountOptions = useMemo(
     () =>
       accountTreeRows
@@ -39,6 +50,10 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
         })),
     [accountTreeRows]
   );
+
+  const toggleExpand = (accountId: string) => {
+    setExpandedIds((prev) => toggleIdInSet(prev, accountId));
+  };
 
   const load = async () => {
     try {
@@ -53,6 +68,13 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
   }, []);
 
   const openCreateAccount = (parent?: any | null) => {
+    if (parent?.id) {
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        next.add(parent.id);
+        return next;
+      });
+    }
     setAccountForm({
       code: '',
       name: '',
@@ -111,9 +133,42 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
   return (
     <>
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <div style={{ padding: '0.75rem 1rem', color: 'var(--ink-muted)', fontSize: '0.9rem' }}>
-          Chart of accounts is a tree: top-level accounts have no parent; children nest under a
-          parent (same type). Use <strong>Add child</strong> or pick a parent when creating.
+        <div
+          style={{
+            padding: '0.75rem 1rem',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 12,
+            alignItems: 'center',
+            justifyContent: 'space-between'
+          }}
+        >
+          <div style={{ color: 'var(--ink-muted)', fontSize: '0.9rem' }}>
+            Chart of accounts is a tree: top-level accounts have no parent; children nest under a
+            parent (same type). Expand a parent to view its children.
+          </div>
+          {accountTreeRows.some((a) => a.childCount > 0) ? (
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() =>
+                  setExpandedIds(
+                    new Set(accountTreeRows.filter((a) => a.childCount > 0).map((a) => a.id))
+                  )
+                }
+              >
+                Expand all
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setExpandedIds(new Set())}
+              >
+                Collapse all
+              </button>
+            </div>
+          ) : null}
         </div>
         <div className="table-wrap">
           <table className="table">
@@ -134,35 +189,66 @@ export const CoaTab = forwardRef<CoaTabHandle>(function CoaTab(_props, ref) {
                   </td>
                 </tr>
               ) : (
-                accountTreeRows.map((a) => {
+                visibleAccountRows.map((a) => {
                   const parent = a.parent_id ? accountsById.get(a.parent_id) : null;
+                  const isExpanded = expandedIds.has(a.id);
                   return (
                     <tr key={a.id} style={{ opacity: a.is_active ? 1 : 0.65 }}>
                       <td>
-                        <div style={{ paddingLeft: a.depth * 18 }}>
-                          <div style={{ fontWeight: 600 }}>
-                            <span style={{ fontFamily: 'ui-monospace, monospace', marginRight: 8 }}>
-                              {a.code}
-                            </span>
-                            {a.name}
-                            {a.childCount > 0 ? (
+                        <div
+                          style={{
+                            paddingLeft: a.depth * 18,
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: 4
+                          }}
+                        >
+                          {a.childCount > 0 ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              onClick={() => toggleExpand(a.id)}
+                              aria-label={isExpanded ? 'Collapse children' : 'Expand children'}
+                              title={isExpanded ? 'Collapse children' : 'Expand children'}
+                              style={{
+                                padding: '0.15rem',
+                                marginTop: 1,
+                                flexShrink: 0
+                              }}
+                            >
+                              {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                            </button>
+                          ) : (
+                            <span style={{ width: 26, display: 'inline-block', flexShrink: 0 }} />
+                          )}
+                          <div>
+                            <div style={{ fontWeight: a.childCount > 0 ? 700 : 600 }}>
                               <span
-                                style={{
-                                  marginLeft: 8,
-                                  color: 'var(--ink-muted)',
-                                  fontSize: '0.75rem',
-                                  fontWeight: 500
-                                }}
+                                style={{ fontFamily: 'ui-monospace, monospace', marginRight: 8 }}
                               >
-                                {a.childCount} child{a.childCount === 1 ? '' : 'ren'}
+                                {a.code}
                               </span>
+                              {a.name}
+                              {a.childCount > 0 ? (
+                                <span
+                                  style={{
+                                    marginLeft: 8,
+                                    color: 'var(--ink-muted)',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 500
+                                  }}
+                                >
+                                  {a.childCount} child{a.childCount === 1 ? '' : 'ren'}
+                                  {!isExpanded ? ' · collapsed' : ''}
+                                </span>
+                              ) : null}
+                            </div>
+                            {a.description ? (
+                              <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}>
+                                {a.description}
+                              </div>
                             ) : null}
                           </div>
-                          {a.description ? (
-                            <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}>
-                              {a.description}
-                            </div>
-                          ) : null}
                         </div>
                       </td>
                       <td>
