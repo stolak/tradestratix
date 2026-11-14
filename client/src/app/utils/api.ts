@@ -614,7 +614,28 @@ export const api = {
       request<any[]>(
         `/inventory/board${warehouseId ? `?warehouse_id=${warehouseId}` : ''}`
       ),
-    lots: () => request<any[]>('/inventory/lots'),
+    lots: (filter: { product_id?: string; warehouse_id?: string; include_empty?: boolean } = {}) => {
+      const params = new URLSearchParams();
+      if (filter.product_id) params.set('product_id', filter.product_id);
+      if (filter.warehouse_id) params.set('warehouse_id', filter.warehouse_id);
+      if (filter.include_empty) params.set('include_empty', 'true');
+      const qs = params.toString();
+      return request<any[]>(`/inventory/lots${qs ? `?${qs}` : ''}`);
+    },
+    serials: (filter: {
+      product_id?: string;
+      warehouse_id?: string;
+      lot_id?: string;
+      variant_id?: string;
+    } = {}) => {
+      const params = new URLSearchParams();
+      if (filter.product_id) params.set('product_id', filter.product_id);
+      if (filter.warehouse_id) params.set('warehouse_id', filter.warehouse_id);
+      if (filter.lot_id) params.set('lot_id', filter.lot_id);
+      if (filter.variant_id) params.set('variant_id', filter.variant_id);
+      const qs = params.toString();
+      return request<any[]>(`/inventory/serials${qs ? `?${qs}` : ''}`);
+    },
     movements: (filter: {
       warehouse_id?: string;
       product_id?: string;

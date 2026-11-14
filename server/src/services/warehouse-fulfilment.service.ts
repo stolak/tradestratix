@@ -8,6 +8,7 @@ import * as branchAccess from './branch-access.service.js';
 import {
   activeReservations,
   authorisedWarehouseIds,
+  bindIssueChoices,
   fulfilInTx,
   invoiceForFulfilment,
   isOpenPickup,
@@ -172,7 +173,18 @@ const taskInclude = {
           quantity: true,
           fulfilledQuantity: true,
           baseQuantity: true,
-          product: { select: { id: true, name: true, sku: true, barcode: true } },
+          product: {
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              barcode: true,
+              trackBatch: true,
+              trackExpiry: true,
+              trackSerial: true,
+              baseUomId: true
+            }
+          },
           variant: { select: { id: true, name: true, sku: true } },
           uom: { select: { id: true, code: true, name: true } }
         }
@@ -211,8 +223,46 @@ export async function getTask(user: AuthUser, id: string) {
   }
   const reservations = await prisma.salesReservation.findMany({
     where: { invoiceItemId: { in: row.items.map((i) => i.invoiceItemId) }, warehouseId: row.warehouseId, status: 'active' },
-    include: { lot: { select: { batchNumber: true, expiryDate: true } } },
+    include: {
+      lot: { select: { batchNumber: true, expiryDate: true } },
+      serials: {
+        where: { status: 'reserved' },
+        select: { serialNumber: true, lotId: true },
+        orderBy: { serialNumber: 'asc' }
+      }
+    },
     orderBy: { createdAt: 'asc' }
+  });
+  const productIds = [...new Set(row.items.map((i) => i.invoiceItem.product.id))];
+  const variantIds = [
+    ...new Set(row.items.map((i) => i.invoiceItem.variant?.id).filter(Boolean) as string[])
+  ];
+  const { listAvailableSerials } = await import('./stock-serial.service.js');
+  const availableSerials = productIds.length
+    ? await listAvailableSerials(prisma, {
+        businessId: user.businessId,
+        warehouseId: row.warehouseId,
+        take: 1000
+      })
+    : [];
+  const availableLots = await prisma.stockLot.findMany({
+    where: {
+      businessId: user.businessId,
+      warehouseId: row.warehouseId,
+      ...(variantIds.length ? { variantId: { in: variantIds } } : {}),
+      status: 'available',
+      quantityOnHand: { gt: 0 }
+    },
+    select: {
+      id: true,
+      productId: true,
+      variantId: true,
+      batchNumber: true,
+      expiryDate: true,
+      quantityOnHand: true,
+      quantityReserved: true
+    },
+    orderBy: [{ expiryDate: 'asc' }, { createdAt: 'asc' }]
   });
   const { pickupCode, totalAmount, cancelledAmount, amountPaid, ...invoice } = row.invoice;
   return serialize({
@@ -224,15 +274,35 @@ export async function getTask(user: AuthUser, id: string) {
     },
     items: row.items.map((i) => {
       const factor = lineFactor(i.invoiceItem);
+      const lineRes = reservations.filter((r) => r.invoiceItemId === i.invoiceItemId);
+      const productId = i.invoiceItem.product.id;
+      const variantId = i.invoiceItem.variant?.id;
       return {
         ...i,
-        lots: reservations
-          .filter((r) => r.invoiceItemId === i.invoiceItemId)
-          .map((r) => ({
-            lotId: r.lotId,
-            batchNumber: r.lot.batchNumber,
-            expiryDate: r.lot.expiryDate,
-            quantity: roundQty(reservationLeft(r) * factor)
+        lots: lineRes.map((r) => ({
+          lotId: r.lotId,
+          batchNumber: r.lot.batchNumber,
+          expiryDate: r.lot.expiryDate,
+          quantity: roundQty(reservationLeft(r) * factor),
+          serialNumbers: r.serials.map((s) => s.serialNumber)
+        })),
+        reservedSerialNumbers: lineRes.flatMap((r) => r.serials.map((s) => s.serialNumber)),
+        availableLots: availableLots
+          .filter((l) => l.productId === productId && (!variantId || l.variantId === variantId))
+          .map((l) => ({
+            lotId: l.id,
+            batchNumber: l.batchNumber,
+            expiryDate: l.expiryDate,
+            available: roundQty(Number(l.quantityOnHand) - Number(l.quantityReserved))
+          }))
+          .filter((l) => l.available > EPS),
+        availableSerials: availableSerials
+          .filter((s) => s.productId === productId && (!variantId || s.variantId === variantId))
+          .map((s) => ({
+            serialNumber: s.serialNumber,
+            lotId: s.lotId,
+            batchNumber: s.lot?.batchNumber || null,
+            expiryDate: s.lot?.expiryDate || null
           }))
       };
     })
@@ -343,6 +413,12 @@ export async function confirmPicking(user: AuthUser, id: string, body: Record<st
     );
     const claimedElsewhere = await openTaskQuantities(tx, task.invoiceId, task.warehouseId, task.id);
 
+    const products = await tx.product.findMany({
+      where: { id: { in: [...new Set(invoice.items.map((i) => i.productId))] }, businessId: user.businessId },
+      include: { variants: true }
+    });
+    const productById = new Map(products.map((p) => [p.id, p]));
+
     let totalPicked = 0;
     let totalShort = 0;
     const discrepancies: string[] = [];
@@ -367,6 +443,31 @@ export async function confirmPicking(user: AuthUser, id: string, body: Record<st
         await releaseReservations(tx, user.id, lineRes, 'discrepancy', roundQty(shortfall / factor));
         discrepancies.push(`${short > EPS ? `${short} not found` : ''}${short > EPS && damaged > EPS ? ', ' : ''}${damaged > EPS ? `${damaged} damaged` : ''}`);
       }
+
+      const product = productById.get(line.productId);
+      if (!product) throw httpError(400, 'Product missing on invoice line');
+      const variantId =
+        line.variantId || (product.variants.find((v) => v.isDefault) || product.variants[0])?.id;
+      if (!variantId) throw httpError(400, `Product ${product.name} has no variants`);
+
+      if (picked > EPS && (product.trackSerial || input?.lot_id || input?.lotId)) {
+        await bindIssueChoices(tx, user, {
+          invoiceItemId: line.id,
+          warehouseId: task.warehouseId,
+          baseQty: roundQty(picked / factor),
+          lotId: (input?.lot_id || input?.lotId || null) as string | null,
+          serialNumbers: input?.serial_numbers ?? input?.serialNumbers ?? null,
+          product: {
+            id: product.id,
+            name: product.name,
+            trackSerial: product.trackSerial,
+            trackExpiry: product.trackExpiry
+          },
+          variantId,
+          method: 'manual'
+        });
+      }
+
       await tx.salesFulfilmentItem.update({
         where: { id: item.id },
         data: {
@@ -505,7 +606,12 @@ function parseRequests(body: ReleaseBody): FulfilRequest[] | null {
     if (!invoiceItemId) throw httpError(400, `items[${idx}].invoice_item_id is required`);
     const quantity = Number(i.quantity);
     if (!Number.isFinite(quantity) || quantity < 0) throw httpError(400, `items[${idx}].quantity is invalid`);
-    return { invoiceItemId, quantity };
+    return {
+      invoiceItemId,
+      quantity,
+      lotId: i.lot_id || i.lotId || null,
+      serialNumbers: i.serial_numbers || i.serialNumbers || null
+    };
   });
 }
 

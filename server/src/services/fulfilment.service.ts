@@ -220,20 +220,203 @@ export async function reserveInvoiceStock(
             createdById: user.id
           }
         });
-        if (product.trackSerial) {
-          const { reserveSerialsForLot } = await import('./stock-serial.service.js');
-          await reserveSerialsForLot(tx, {
-            businessId: user.businessId,
-            lotId: lot.lotId,
-            reservationId,
-            qty: lot.qty,
-            productName: product.name
-          });
-        }
+        // Serials are NOT auto-picked at confirm — bind explicit serials at pick / release / immediate hand-over.
       }
     }
   }
   return plan;
+}
+
+export type IssueLotChoice = {
+  invoiceItemId: string;
+  /** Optional lot override (FEFO/FIFO reservation is replaced for the qty). */
+  lotId?: string | null;
+  /** Required when product.trackSerial — exact serials to issue/reserve. */
+  serialNumbers?: string[] | null;
+};
+
+/**
+ * Bind explicit lot/serial choices onto active reservations for a warehouse before hand-over or after pick.
+ * - Lot optional: when set, reallocate remaining reserved qty onto that lot.
+ * - Serials mandatory for trackSerial products: never auto-selected.
+ */
+export async function bindIssueChoices(
+  tx: Tx,
+  user: AuthUser,
+  opts: {
+    invoiceItemId: string;
+    warehouseId: string;
+    /** Base-UoM qty to keep reserved / bind (picked or to-release). */
+    baseQty: number;
+    lotId?: string | null;
+    serialNumbers?: string[] | null;
+    product: { id: string; name: string; trackSerial: boolean; trackExpiry: boolean };
+    variantId: string;
+    method?: string;
+  }
+) {
+  const {
+    normalizeSerialList,
+    reserveSerialsForLot,
+    assertWholeSerialQty
+  } = await import('./stock-serial.service.js');
+
+  const baseQty = roundQty(opts.baseQty);
+  if (baseQty <= EPS) return;
+
+  const existing = (await activeReservations(tx, [opts.invoiceItemId])).filter(
+    (r) => r.warehouseId === opts.warehouseId
+  );
+  const reservedLeft = roundQty(existing.reduce((s, r) => s + reservationLeft(r), 0));
+  if (baseQty > reservedLeft + EPS) {
+    throw httpError(
+      400,
+      `Cannot bind ${baseQty} for ${opts.product.name}; only ${reservedLeft} reserved in this warehouse`
+    );
+  }
+
+  // Drop qty we are not keeping on this bind (caller already released shortfall separately when picking).
+  const surplus = roundQty(reservedLeft - baseQty);
+  if (surplus > EPS) {
+    await releaseReservations(tx, user.id, existing, 'reallocated', surplus);
+  }
+
+  let working = (await activeReservations(tx, [opts.invoiceItemId])).filter(
+    (r) => r.warehouseId === opts.warehouseId && reservationLeft(r) > EPS
+  );
+
+  if (opts.product.trackSerial) {
+    assertWholeSerialQty(baseQty, `Picked quantity for ${opts.product.name}`);
+    const serials = normalizeSerialList(opts.serialNumbers);
+    if (serials.length !== Math.round(baseQty)) {
+      throw httpError(
+        400,
+        `Select exactly ${Math.round(baseQty)} serial number(s) for ${opts.product.name} (got ${serials.length})`
+      );
+    }
+    const rows = await tx.stockSerial.findMany({
+      where: {
+        businessId: user.businessId,
+        productId: opts.product.id,
+        warehouseId: opts.warehouseId,
+        serialNumber: { in: serials },
+        status: 'available'
+      }
+    });
+    if (rows.length !== serials.length) {
+      const have = new Set(rows.map((r) => r.serialNumber.toLowerCase()));
+      const missing = serials.filter((s) => !have.has(s.toLowerCase()));
+      throw httpError(400, `Serial not available to pick: ${missing.join(', ')}`);
+    }
+    if (opts.lotId) {
+      const mismatch = rows.filter((r) => r.lotId !== opts.lotId);
+      if (mismatch.length) {
+        throw httpError(400, `Selected serials are not all on the chosen lot for ${opts.product.name}`);
+      }
+    }
+
+    // Release current reservations and recreate per serial lot.
+    await releaseReservations(tx, user.id, working, 'reallocated');
+    const byLot = new Map<string, string[]>();
+    for (const r of rows) {
+      if (!r.lotId) throw httpError(400, `Serial ${r.serialNumber} has no lot`);
+      const list = byLot.get(r.lotId) || [];
+      list.push(r.serialNumber);
+      byLot.set(r.lotId, list);
+    }
+    const warehouse = await tx.warehouse.findFirst({
+      where: { id: opts.warehouseId },
+      select: { branchId: true }
+    });
+    for (const [lotId, lotSerials] of byLot) {
+      const qty = lotSerials.length;
+      const affected = await tx.$executeRaw`
+        UPDATE stock_lots
+           SET quantity_reserved = quantity_reserved + ${qty}
+         WHERE id = ${lotId}
+           AND quantity_on_hand - quantity_reserved >= ${qty - EPS}`;
+      if (affected !== 1) {
+        throw httpError(409, `Stock for ${opts.product.name} changed while binding serials; please retry`);
+      }
+      const reservationId = shortId('srv');
+      await tx.salesReservation.create({
+        data: {
+          id: reservationId,
+          businessId: user.businessId,
+          invoiceItemId: opts.invoiceItemId,
+          lotId,
+          warehouseId: opts.warehouseId,
+          branchId: warehouse?.branchId || null,
+          quantity: toDec(qty),
+          method: opts.method || 'manual',
+          createdById: user.id
+        }
+      });
+      await reserveSerialsForLot(tx, {
+        businessId: user.businessId,
+        lotId,
+        reservationId,
+        qty,
+        serialNumbers: lotSerials,
+        productName: opts.product.name
+      });
+    }
+    return;
+  }
+
+  // Non-serial: optional lot override
+  if (opts.lotId) {
+    const lot = await tx.stockLot.findFirst({
+      where: {
+        id: opts.lotId,
+        businessId: user.businessId,
+        warehouseId: opts.warehouseId,
+        variantId: opts.variantId
+      }
+    });
+    if (!lot) throw httpError(400, `Invalid lot for ${opts.product.name}`);
+    if (
+      opts.product.trackExpiry &&
+      lot.expiryDate &&
+      lot.expiryDate < new Date().toISOString().slice(0, 10)
+    ) {
+      throw httpError(400, `Cannot pick expired lot ${lot.batchNumber} for ${opts.product.name}`);
+    }
+    await releaseReservations(tx, user.id, working, 'reallocated');
+    const free =
+      Number(lot.quantityOnHand) - Number(lot.quantityReserved);
+    if (baseQty > free + EPS) {
+      throw httpError(
+        400,
+        `Insufficient free stock on lot ${lot.batchNumber} for ${opts.product.name} (need ${baseQty}, free ${roundQty(free)})`
+      );
+    }
+    const affected = await tx.$executeRaw`
+      UPDATE stock_lots
+         SET quantity_reserved = quantity_reserved + ${baseQty}
+       WHERE id = ${lot.id}
+         AND quantity_on_hand - quantity_reserved >= ${baseQty - EPS}`;
+    if (affected !== 1) {
+      throw httpError(409, `Stock for ${opts.product.name} changed while binding lot; please retry`);
+    }
+    const warehouse = await tx.warehouse.findFirst({
+      where: { id: opts.warehouseId },
+      select: { branchId: true }
+    });
+    await tx.salesReservation.create({
+      data: {
+        id: shortId('srv'),
+        businessId: user.businessId,
+        invoiceItemId: opts.invoiceItemId,
+        lotId: lot.id,
+        warehouseId: opts.warehouseId,
+        branchId: warehouse?.branchId || null,
+        quantity: toDec(baseQty),
+        method: opts.method || 'manual',
+        createdById: user.id
+      }
+    });
+  }
 }
 
 /** Return reserved-but-unpicked quantity to free stock. `quantity` is in base units per reservation. */
@@ -290,7 +473,12 @@ export function fulfilmentStatusOf(items: { quantity: Num; fulfilledQuantity: Nu
   return allDone ? 'fulfilled' : anyDone ? 'partial' : 'pending';
 }
 
-export type FulfilRequest = { invoiceItemId: string; quantity: number };
+export type FulfilRequest = {
+  invoiceItemId: string;
+  quantity: number;
+  lotId?: string | null;
+  serialNumbers?: string[] | null;
+};
 export type FulfilMeta = {
   collectedBy?: string | null;
   collectorPhone?: string | null;
@@ -396,6 +584,11 @@ export async function fulfilInTx(
 
   const recognising = invoice.recognitionPolicy === 'at_fulfilment';
   const itemsById = new Map(invoice.items.map((i) => [i.id, i]));
+  const products = await tx.product.findMany({
+    where: { id: { in: [...new Set(invoice.items.map((i) => i.productId))] }, businessId: user.businessId },
+    include: { variants: true }
+  });
+  const productById = new Map(products.map((p) => [p.id, p]));
   const seen = new Set<string>();
   let totalCost = 0;
   let recognised = 0;
@@ -409,12 +602,18 @@ export async function fulfilInTx(
     const qty = roundQty(Number(req.quantity));
     if (!(qty > 0)) continue;
 
-    const reservations = await tx.salesReservation.findMany({
+    const product = productById.get(line.productId);
+    if (!product) throw httpError(400, 'Product missing on invoice line');
+    const variantId =
+      line.variantId || (product.variants.find((v) => v.isDefault) || product.variants[0])?.id;
+    if (!variantId) throw httpError(400, `Product ${product.name} has no variants`);
+
+    let reservations = await tx.salesReservation.findMany({
       where: { invoiceItemId: line.id, warehouseId: warehouse.id, status: 'active' },
       orderBy: { createdAt: 'asc' }
     });
     const factor = lineFactor(line);
-    const reservedBase = roundQty(reservations.reduce((s, r) => s + reservationLeft(r), 0));
+    let reservedBase = roundQty(reservations.reduce((s, r) => s + reservationLeft(r), 0));
     const reservedLine = roundQty(reservedBase * factor);
     if (reservedBase <= EPS) {
       throw httpError(400, 'Nothing is reserved for this line in this warehouse');
@@ -423,6 +622,43 @@ export async function fulfilInTx(
       throw httpError(400, `Cannot release ${qty}; only ${reservedLine} reserved in ${warehouse.name}`);
     }
     const baseQty = Math.abs(qty - reservedLine) < EPS ? reservedBase : roundQty(qty / factor);
+
+    // Bind explicit lot/serial choices when provided, or when serials are still unbound.
+    const boundSerialCount = await tx.stockSerial.count({
+      where: {
+        reservationId: { in: reservations.map((r) => r.id) },
+        status: 'reserved'
+      }
+    });
+    const needsSerialBind = product.trackSerial && boundSerialCount < Math.round(baseQty) - EPS;
+    if (needsSerialBind || req.lotId || (req.serialNumbers && req.serialNumbers.length)) {
+      if (needsSerialBind && !(req.serialNumbers && (Array.isArray(req.serialNumbers) ? req.serialNumbers.length : 0))) {
+        throw httpError(
+          400,
+          `Select serial numbers for ${product.name} before handing over (need ${Math.round(baseQty)})`
+        );
+      }
+      await bindIssueChoices(tx, user, {
+        invoiceItemId: line.id,
+        warehouseId: warehouse.id,
+        baseQty,
+        lotId: req.lotId,
+        serialNumbers: req.serialNumbers,
+        product: {
+          id: product.id,
+          name: product.name,
+          trackSerial: product.trackSerial,
+          trackExpiry: product.trackExpiry
+        },
+        variantId,
+        method: 'manual'
+      });
+      reservations = await tx.salesReservation.findMany({
+        where: { invoiceItemId: line.id, warehouseId: warehouse.id, status: 'active' },
+        orderBy: { createdAt: 'asc' }
+      });
+      reservedBase = roundQty(reservations.reduce((s, r) => s + reservationLeft(r), 0));
+    }
 
     let need = baseQty;
     let lineCost = 0;
@@ -809,7 +1045,16 @@ export async function listPendingPickups(user: AuthUser, opts: { warehouseId?: s
       lot: { select: { batchNumber: true, expiryDate: true } },
       invoiceItem: {
         include: {
-          product: { select: { id: true, name: true, sku: true } },
+          product: {
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              trackBatch: true,
+              trackExpiry: true,
+              trackSerial: true
+            }
+          },
           variant: { select: { id: true, name: true } },
           uom: { select: { id: true, code: true, name: true } },
           invoice: {
@@ -869,6 +1114,7 @@ export async function listPendingPickups(user: AuthUser, opts: { warehouseId?: s
         variant: item.variant,
         uom: item.uom,
         quantity: n(item.quantity),
+        baseQuantity: n(item.baseQuantity),
         fulfilledQuantity: n(item.fulfilledQuantity),
         remaining: 0,
         lots: [] as { batchNumber: string; expiryDate: string | null; quantity: number }[]

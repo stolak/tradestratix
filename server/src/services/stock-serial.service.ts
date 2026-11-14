@@ -103,7 +103,10 @@ export async function receiveSerials(
   return serials;
 }
 
-/** Pick available serials from a lot (FIFO by receipt) and mark reserved. */
+/**
+ * Reserve explicitly chosen available serials onto a sales reservation.
+ * Serials are never auto-picked — the caller must supply the exact list.
+ */
 export async function reserveSerialsForLot(
   client: DbClient,
   opts: {
@@ -111,29 +114,37 @@ export async function reserveSerialsForLot(
     lotId: string;
     reservationId: string;
     qty: number;
+    serialNumbers: string[];
     productName?: string;
   }
 ) {
   assertWholeSerialQty(opts.qty, 'Reserved quantity');
   const need = Math.round(opts.qty);
+  const wanted = normalizeSerialList(opts.serialNumbers);
+  if (wanted.length !== need) {
+    throw httpError(
+      400,
+      `Select exactly ${need} serial number(s) for ${opts.productName || 'product'} (got ${wanted.length})`
+    );
+  }
   const available = await client.stockSerial.findMany({
     where: {
       businessId: opts.businessId,
       lotId: opts.lotId,
+      serialNumber: { in: wanted },
       status: 'available'
-    },
-    orderBy: [{ receivedAt: 'asc' }, { createdAt: 'asc' }],
-    take: need
+    }
   });
-  if (available.length < need) {
+  if (available.length !== wanted.length) {
+    const have = new Set(available.map((s) => s.serialNumber.toLowerCase()));
+    const missing = wanted.filter((w) => !have.has(w.toLowerCase()));
     throw httpError(
       400,
-      `Insufficient serials for ${opts.productName || 'product'}: need ${need}, available ${available.length}`
+      `Serial not available on this lot for ${opts.productName || 'product'}: ${missing.join(', ')}`
     );
   }
-  const ids = available.map((s) => s.id);
   await client.stockSerial.updateMany({
-    where: { id: { in: ids } },
+    where: { id: { in: available.map((s) => s.id) } },
     data: { status: 'reserved', reservationId: opts.reservationId }
   });
   return available.map((s) => s.serialNumber);
@@ -209,49 +220,47 @@ export async function issueSerials(
   return rows.map((r) => r.serialNumber);
 }
 
-/** Hold available serials for transfer (in_transit). */
+/**
+ * Hold explicitly chosen available serials for transfer (in_transit).
+ * Serials are never auto-picked — the caller must supply the exact list.
+ */
 export async function holdSerialsForTransfer(
   client: DbClient,
   opts: {
     businessId: string;
     lotId: string;
     qty: number;
-    serialNumbers?: string[] | null;
+    serialNumbers: string[];
     productName?: string;
   }
 ) {
   assertWholeSerialQty(opts.qty, 'Transfer quantity');
   const need = Math.round(opts.qty);
-  let rows: { id: string; serialNumber: string }[];
-
-  if (opts.serialNumbers?.length) {
-    const wanted = normalizeSerialList(opts.serialNumbers);
-    if (wanted.length !== need) {
-      throw httpError(400, `Expected ${need} serial number(s) for transfer, got ${wanted.length}`);
+  const wanted = normalizeSerialList(opts.serialNumbers);
+  if (!wanted.length) {
+    throw httpError(
+      400,
+      `Select ${need} serial number(s) to transfer for ${opts.productName || 'product'}`
+    );
+  }
+  if (wanted.length !== need) {
+    throw httpError(
+      400,
+      `Select exactly ${need} serial number(s) for transfer of ${opts.productName || 'product'} (got ${wanted.length})`
+    );
+  }
+  const rows = await client.stockSerial.findMany({
+    where: {
+      businessId: opts.businessId,
+      lotId: opts.lotId,
+      serialNumber: { in: wanted },
+      status: 'available'
     }
-    rows = await client.stockSerial.findMany({
-      where: {
-        businessId: opts.businessId,
-        lotId: opts.lotId,
-        serialNumber: { in: wanted },
-        status: 'available'
-      }
-    });
-    if (rows.length !== wanted.length) {
-      throw httpError(400, 'One or more serials are not available for transfer');
-    }
-  } else {
-    rows = await client.stockSerial.findMany({
-      where: { businessId: opts.businessId, lotId: opts.lotId, status: 'available' },
-      orderBy: [{ receivedAt: 'asc' }, { createdAt: 'asc' }],
-      take: need
-    });
-    if (rows.length < need) {
-      throw httpError(
-        400,
-        `Insufficient serials to transfer for ${opts.productName || 'product'}: need ${need}, available ${rows.length}`
-      );
-    }
+  });
+  if (rows.length !== wanted.length) {
+    const have = new Set(rows.map((s) => s.serialNumber.toLowerCase()));
+    const missing = wanted.filter((w) => !have.has(w.toLowerCase()));
+    throw httpError(400, `Serial not available for transfer: ${missing.join(', ')}`);
   }
 
   await client.stockSerial.updateMany({
@@ -259,6 +268,42 @@ export async function holdSerialsForTransfer(
     data: { status: 'in_transit' }
   });
   return rows.map((r) => r.serialNumber);
+}
+
+/** Available serials for issue / transfer / pick UIs. */
+export async function listAvailableSerials(
+  client: DbClient,
+  opts: {
+    businessId: string;
+    productId?: string;
+    warehouseId?: string;
+    lotId?: string;
+    variantId?: string;
+    take?: number;
+  }
+) {
+  return client.stockSerial.findMany({
+    where: {
+      businessId: opts.businessId,
+      status: 'available',
+      ...(opts.productId ? { productId: opts.productId } : {}),
+      ...(opts.warehouseId ? { warehouseId: opts.warehouseId } : {}),
+      ...(opts.lotId ? { lotId: opts.lotId } : {}),
+      ...(opts.variantId ? { variantId: opts.variantId } : {})
+    },
+    select: {
+      id: true,
+      serialNumber: true,
+      productId: true,
+      variantId: true,
+      warehouseId: true,
+      lotId: true,
+      receivedAt: true,
+      lot: { select: { id: true, batchNumber: true, expiryDate: true } }
+    },
+    orderBy: [{ receivedAt: 'asc' }, { createdAt: 'asc' }],
+    take: opts.take ?? 500
+  });
 }
 
 /** Complete transfer: move in_transit serials to destination warehouse/lot as available. */

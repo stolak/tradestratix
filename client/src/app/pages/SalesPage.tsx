@@ -7,6 +7,8 @@ import { useAuth } from '../context/AuthContext';
 import { SearchSelect } from '../components/SearchSelect';
 import { InvoiceViewModal } from '../components/InvoiceViewModal';
 import { ReceiveCustomerPayment } from '../components/ReceiveCustomerPayment';
+import { StockIssuePickers } from '../components/StockIssuePickers';
+import { createPortal } from 'react-dom';
 
 type Tab = 'invoices' | 'payments' | 'returns';
 
@@ -183,6 +185,11 @@ export const SalesPage: React.FC = () => {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [returns, setReturns] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
+  const [confirmIssue, setConfirmIssue] = useState<{
+    invoice: any;
+    opts: Record<string, unknown>;
+    resolve: (ok: boolean) => void;
+  } | null>(null);
 
   const [form, setForm] = useState({
     customer_id: '',
@@ -614,6 +621,23 @@ export const SalesPage: React.FC = () => {
 
   const postInvoice = async (id: string, opts: Record<string, unknown> = {}): Promise<boolean> => {
     try {
+      if (!opts.items) {
+        const inv =
+          invoices.find((i) => i.id === id) || (await api.sales.getInvoice(id).catch(() => null));
+        const mode = inv?.fulfilment_mode || 'immediate';
+        if (mode === 'immediate') {
+          const detail = inv?.items ? inv : await api.sales.getInvoice(id);
+          const needsChoice = (detail?.items || []).some((it: any) => {
+            const p = it.product || products.find((x) => x.id === it.product_id);
+            return p?.track_serial || p?.track_batch || p?.track_expiry;
+          });
+          if (needsChoice) {
+            return await new Promise<boolean>((resolve) => {
+              setConfirmIssue({ invoice: detail, opts, resolve });
+            });
+          }
+        }
+      }
       const posted = await api.sales.postInvoice(id, opts);
       if (posted?.fulfilment_mode === 'pickup') {
         await Swal.fire({
@@ -1408,6 +1432,130 @@ export const SalesPage: React.FC = () => {
           onChanged={() => void load()}
         />
       ) : null}
+
+      {confirmIssue ? (
+        <ImmediateIssueModal
+          invoice={confirmIssue.invoice}
+          products={products}
+          onCancel={() => {
+            confirmIssue.resolve(false);
+            setConfirmIssue(null);
+          }}
+          onConfirm={async (items) => {
+            const { invoice, opts, resolve } = confirmIssue;
+            setConfirmIssue(null);
+            const ok = await postInvoice(invoice.id, { ...opts, items });
+            resolve(ok);
+          }}
+        />
+      ) : null}
     </div>
+  );
+};
+
+/** Lot / serial selection before confirming an immediate (counter) sale. */
+const ImmediateIssueModal: React.FC<{
+  invoice: any;
+  products: any[];
+  onCancel: () => void;
+  onConfirm: (items: { invoice_item_id: string; lot_id?: string; serial_numbers?: string[] }[]) => void;
+}> = ({ invoice, products, onCancel, onConfirm }) => {
+  const items: any[] = invoice.items || [];
+  const warehouseId = invoice.warehouse_id || invoice.warehouse?.id || '';
+  const [lotIds, setLotIds] = useState<Record<string, string>>(() =>
+    Object.fromEntries(items.map((i) => [i.id, '']))
+  );
+  const [serialsByLine, setSerialsByLine] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(items.map((i) => [i.id, []]))
+  );
+
+  const productOf = (it: any) => it.product || products.find((p) => p.id === it.product_id);
+  const baseNeeded = (it: any) => {
+    const base = Number(it.base_quantity || 0);
+    if (base > 0) return Math.round(base);
+    return Math.round(Number(it.quantity || 0));
+  };
+
+  const invalid = items.some((it) => {
+    const p = productOf(it);
+    if (!p?.track_serial) return false;
+    return (serialsByLine[it.id] || []).length !== baseNeeded(it);
+  });
+
+  return createPortal(
+    <div className="modal-backdrop" role="presentation" onClick={onCancel}>
+      <div
+        className="modal-card"
+        role="dialog"
+        style={{ maxWidth: 640, width: '92vw' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <header style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>Confirm counter sale</div>
+            <h2 style={{ margin: 0 }}>{invoice.invoice_number}</h2>
+          </div>
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+        </header>
+        <p style={{ color: 'var(--ink-muted)', fontSize: '0.9rem' }}>
+          Choose the lot (optional — FEFO/FIFO if blank). Serial-tracked products require an explicit
+          serial selection.
+        </p>
+        <div style={{ display: 'grid', gap: 12, maxHeight: '60vh', overflow: 'auto' }}>
+          {items.map((it) => {
+            const p = productOf(it);
+            if (!p?.track_serial && !p?.track_batch && !p?.track_expiry) return null;
+            return (
+              <div key={it.id} className="card-surface" style={{ padding: '0.75rem' }}>
+                <div style={{ fontWeight: 600 }}>
+                  {p?.name || 'Product'} · {Number(it.quantity)} {it.uom?.code || ''}
+                </div>
+                <StockIssuePickers
+                  trackBatch={!!p?.track_batch}
+                  trackExpiry={!!p?.track_expiry}
+                  trackSerial={!!p?.track_serial}
+                  serialsNeeded={p?.track_serial ? baseNeeded(it) : 0}
+                  productId={p?.id || it.product_id}
+                  warehouseId={warehouseId}
+                  lotId={lotIds[it.id] || ''}
+                  onLotId={(lot_id) => {
+                    setLotIds((s) => ({ ...s, [it.id]: lot_id }));
+                    setSerialsByLine((s) => ({ ...s, [it.id]: [] }));
+                  }}
+                  serialNumbers={serialsByLine[it.id] || []}
+                  onSerialNumbers={(serial_numbers) =>
+                    setSerialsByLine((s) => ({ ...s, [it.id]: serial_numbers }))
+                  }
+                />
+              </div>
+            );
+          })}
+        </div>
+        <footer style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={invalid || !warehouseId}
+            onClick={() =>
+              onConfirm(
+                items.map((it) => ({
+                  invoice_item_id: it.id,
+                  lot_id: lotIds[it.id] || undefined,
+                  serial_numbers: productOf(it)?.track_serial ? serialsByLine[it.id] : undefined
+                }))
+              )
+            }
+          >
+            Confirm &amp; hand over
+          </button>
+        </footer>
+      </div>
+    </div>,
+    document.body
   );
 };

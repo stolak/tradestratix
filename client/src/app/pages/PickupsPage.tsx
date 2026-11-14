@@ -6,6 +6,7 @@ import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
 import { InvoiceViewModal } from '../components/InvoiceViewModal';
+import { StockIssuePickers } from '../components/StockIssuePickers';
 
 type Tab = 'to_pick' | 'picking' | 'ready' | 'delivery' | 'done' | 'issues';
 
@@ -1318,14 +1319,33 @@ const QuickReleaseModal: React.FC<{ row: any; onClose: () => void; onDone: () =>
   const [quantities, setQuantities] = useState<Record<string, string>>(() =>
     Object.fromEntries(lines.map((l) => [l.invoice_item_id, String(l.to_pick)]))
   );
+  const [lotIds, setLotIds] = useState<Record<string, string>>(() =>
+    Object.fromEntries(lines.map((l) => [l.invoice_item_id, '']))
+  );
+  const [serialsByLine, setSerialsByLine] = useState<Record<string, string[]>>(() =>
+    Object.fromEntries(lines.map((l) => [l.invoice_item_id, []]))
+  );
   const [collector, setCollector] = useState<Collector>(() => ({
     ...emptyCollector(row.customer),
     pickup_code: row.suggested_pickup_code || ''
   }));
   const [busy, setBusy] = useState(false);
+
+  const baseNeeded = (l: any, lineQty: number) => {
+    const ordered = Number(l.quantity || 0);
+    const base = Number(l.base_quantity || 0);
+    if (ordered > 0 && base > 0) return Math.round((lineQty * base) / ordered);
+    return Math.round(lineQty);
+  };
+
   const invalid = lines.some((l) => {
     const v = Number(quantities[l.invoice_item_id] || 0);
-    return !Number.isFinite(v) || v < 0 || v > Number(l.to_pick) + 1e-9;
+    if (!Number.isFinite(v) || v < 0 || v > Number(l.to_pick) + 1e-9) return true;
+    if (l.product?.track_serial && v > 0) {
+      const need = baseNeeded(l, v);
+      return (serialsByLine[l.invoice_item_id] || []).length !== need;
+    }
+    return false;
   });
   const anyQty = lines.some((l) => Number(quantities[l.invoice_item_id] || 0) > 0);
   const due = Number(row.amount_due ?? 0);
@@ -1340,8 +1360,17 @@ const QuickReleaseModal: React.FC<{ row: any; onClose: () => void; onDone: () =>
         warehouse_id: row.warehouse?.id,
         ...collectorPayload(collector),
         items: lines
-          .map((l) => ({ invoice_item_id: l.invoice_item_id, quantity: Number(quantities[l.invoice_item_id] || 0) }))
-          .filter((i) => i.quantity > 0)
+          .map((l) => {
+            const quantity = Number(quantities[l.invoice_item_id] || 0);
+            if (!(quantity > 0)) return null;
+            return {
+              invoice_item_id: l.invoice_item_id,
+              quantity,
+              lot_id: lotIds[l.invoice_item_id] || undefined,
+              serial_numbers: l.product?.track_serial ? serialsByLine[l.invoice_item_id] : undefined
+            };
+          })
+          .filter(Boolean)
       });
       const left = lines.some(
         (l) => Number(quantities[l.invoice_item_id] || 0) < Number(l.to_pick) - 1e-9
@@ -1399,22 +1428,51 @@ const QuickReleaseModal: React.FC<{ row: any; onClose: () => void; onDone: () =>
               </tr>
             </thead>
             <tbody>
-              {lines.map((l) => (
-                <tr key={l.invoice_item_id}>
-                  <td>{lineLabel(l)}</td>
-                  <td>{l.uom?.code || '—'}</td>
-                  <td className="num">{qty(l.quantity)}</td>
-                  <td className="num">{qty(l.fulfilled_quantity)}</td>
-                  <td className="num">{qty(l.to_pick)}</td>
-                  <td className="line-items__col-qty">
-                    <QtyInput
-                      value={quantities[l.invoice_item_id] ?? ''}
-                      max={Number(l.to_pick)}
-                      onChange={(v) => setQuantities((s) => ({ ...s, [l.invoice_item_id]: v }))}
-                    />
-                  </td>
-                </tr>
-              ))}
+              {lines.map((l) => {
+                const releaseQty = Number(quantities[l.invoice_item_id] || 0);
+                const trackSerial = !!l.product?.track_serial;
+                return (
+                  <tr key={l.invoice_item_id}>
+                    <td>
+                      {lineLabel(l)}
+                      {l.product?.track_serial || l.product?.track_batch || l.product?.track_expiry ? (
+                        <StockIssuePickers
+                          compact
+                          trackBatch={!!l.product?.track_batch}
+                          trackExpiry={!!l.product?.track_expiry}
+                          trackSerial={trackSerial}
+                          serialsNeeded={trackSerial && releaseQty > 0 ? baseNeeded(l, releaseQty) : 0}
+                          productId={l.product?.id}
+                          warehouseId={row.warehouse?.id}
+                          lotId={lotIds[l.invoice_item_id] || ''}
+                          onLotId={(lot_id) => {
+                            setLotIds((s) => ({ ...s, [l.invoice_item_id]: lot_id }));
+                            setSerialsByLine((s) => ({ ...s, [l.invoice_item_id]: [] }));
+                          }}
+                          serialNumbers={serialsByLine[l.invoice_item_id] || []}
+                          onSerialNumbers={(serial_numbers) =>
+                            setSerialsByLine((s) => ({ ...s, [l.invoice_item_id]: serial_numbers }))
+                          }
+                        />
+                      ) : null}
+                    </td>
+                    <td>{l.uom?.code || '—'}</td>
+                    <td className="num">{qty(l.quantity)}</td>
+                    <td className="num">{qty(l.fulfilled_quantity)}</td>
+                    <td className="num">{qty(l.to_pick)}</td>
+                    <td className="line-items__col-qty">
+                      <QtyInput
+                        value={quantities[l.invoice_item_id] ?? ''}
+                        max={Number(l.to_pick)}
+                        onChange={(v) => {
+                          setQuantities((s) => ({ ...s, [l.invoice_item_id]: v }));
+                          setSerialsByLine((s) => ({ ...s, [l.invoice_item_id]: [] }));
+                        }}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -1432,20 +1490,47 @@ const PickModal: React.FC<{ taskId: string; onClose: () => void; onDone: () => P
   const task = useTask(taskId);
   const [picked, setPicked] = useState<Record<string, string>>({});
   const [damaged, setDamaged] = useState<Record<string, string>>({});
+  const [lotIds, setLotIds] = useState<Record<string, string>>({});
+  const [serialsByLine, setSerialsByLine] = useState<Record<string, string[]>>({});
   const [notes, setNotes] = useState('');
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!task) return;
     setPicked(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, String(Number(i.planned_quantity))])));
     setDamaged(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, '0'])));
+    setLotIds(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, ''])));
+    setSerialsByLine(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, []])));
   }, [task]);
   if (!task) return <Loading onClose={onClose} />;
+
+  const baseNeeded = (i: any, lineQty: number) => {
+    const ordered = Number(i.invoice_item?.quantity || 0);
+    const base = Number(i.invoice_item?.base_quantity || 0);
+    if (ordered > 0 && base > 0) return Math.round((lineQty * base) / ordered);
+    return Math.round(lineQty);
+  };
 
   const rows = task.items.map((i: any) => {
     const planned = Number(i.planned_quantity);
     const p = Number(picked[i.invoice_item_id] || 0);
     const d = Number(damaged[i.invoice_item_id] || 0);
-    return { i, planned, p, d, short: Math.max(0, planned - p - d), bad: p < 0 || d < 0 || p + d > planned + 1e-9 };
+    const product = i.invoice_item?.product;
+    const trackSerial = !!product?.track_serial;
+    const serials = serialsByLine[i.invoice_item_id] || [];
+    const need = trackSerial && p > 0 ? baseNeeded(i, p) : 0;
+    const serialBad = trackSerial && p > 0 && serials.length !== need;
+    return {
+      i,
+      planned,
+      p,
+      d,
+      short: Math.max(0, planned - p - d),
+      bad: p < 0 || d < 0 || p + d > planned + 1e-9 || serialBad,
+      trackSerial,
+      need,
+      serials,
+      product
+    };
   });
   const invalid = rows.some((r: any) => r.bad);
   const shortTotal = rows.reduce((s: number, r: any) => s + r.short + r.d, 0);
@@ -1456,7 +1541,13 @@ const PickModal: React.FC<{ taskId: string; onClose: () => void; onDone: () => P
     setBusy(true);
     try {
       const res = await api.sales.confirmPicking(taskId, {
-        items: rows.map((r: any) => ({ invoice_item_id: r.i.invoice_item_id, picked_quantity: r.p, damaged_quantity: r.d })),
+        items: rows.map((r: any) => ({
+          invoice_item_id: r.i.invoice_item_id,
+          picked_quantity: r.p,
+          damaged_quantity: r.d,
+          lot_id: lotIds[r.i.invoice_item_id] || undefined,
+          serial_numbers: r.trackSerial ? r.serials : undefined
+        })),
         discrepancy_notes: notes || undefined
       });
       await alertSuccess(
@@ -1535,6 +1626,26 @@ const PickModal: React.FC<{ taskId: string; onClose: () => void; onDone: () => P
                     {r.i.invoice_item?.product?.barcode ? (
                       <div className="invoice-view__sub">Barcode {r.i.invoice_item.product.barcode}</div>
                     ) : null}
+                    {r.product?.track_serial || r.product?.track_batch || r.product?.track_expiry ? (
+                      <StockIssuePickers
+                        compact
+                        trackBatch={!!r.product?.track_batch}
+                        trackExpiry={!!r.product?.track_expiry}
+                        trackSerial={!!r.product?.track_serial}
+                        serialsNeeded={r.need}
+                        lots={r.i.available_lots || []}
+                        serials={r.i.available_serials || []}
+                        lotId={lotIds[r.i.invoice_item_id] || ''}
+                        onLotId={(lot_id) => {
+                          setLotIds((s) => ({ ...s, [r.i.invoice_item_id]: lot_id }));
+                          setSerialsByLine((s) => ({ ...s, [r.i.invoice_item_id]: [] }));
+                        }}
+                        serialNumbers={serialsByLine[r.i.invoice_item_id] || []}
+                        onSerialNumbers={(serial_numbers) =>
+                          setSerialsByLine((s) => ({ ...s, [r.i.invoice_item_id]: serial_numbers }))
+                        }
+                      />
+                    ) : null}
                   </td>
                   <td style={{ fontSize: '0.8rem' }}>
                     {(r.i.lots || []).map((l: any) => (
@@ -1543,6 +1654,11 @@ const PickModal: React.FC<{ taskId: string; onClose: () => void; onDone: () => P
                         {l.expiry_date ? ` · exp ${fmtDate(l.expiry_date)}` : ''}
                       </div>
                     ))}
+                    {(r.i.reserved_serial_numbers || []).length ? (
+                      <div style={{ marginTop: 4, color: 'var(--ink-muted)' }}>
+                        Bound: {(r.i.reserved_serial_numbers as string[]).join(', ')}
+                      </div>
+                    ) : null}
                   </td>
                   <td className="num">
                     {qty(r.planned)} {r.i.invoice_item?.uom?.code}
@@ -1551,7 +1667,10 @@ const PickModal: React.FC<{ taskId: string; onClose: () => void; onDone: () => P
                     <QtyInput
                       value={picked[r.i.invoice_item_id] ?? ''}
                       max={r.planned}
-                      onChange={(v) => setPicked((s) => ({ ...s, [r.i.invoice_item_id]: v }))}
+                      onChange={(v) => {
+                        setPicked((s) => ({ ...s, [r.i.invoice_item_id]: v }));
+                        setSerialsByLine((s) => ({ ...s, [r.i.invoice_item_id]: [] }));
+                      }}
                     />
                   </td>
                   <td className="line-items__col-qty">
@@ -1590,21 +1709,44 @@ const PickModal: React.FC<{ taskId: string; onClose: () => void; onDone: () => P
 const CollectModal: React.FC<{ taskId: string; onClose: () => void; onDone: () => Promise<void> | void }> = ({ taskId, onClose, onDone }) => {
   const task = useTask(taskId);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
+  const [lotIds, setLotIds] = useState<Record<string, string>>({});
+  const [serialsByLine, setSerialsByLine] = useState<Record<string, string[]>>({});
   const [collector, setCollector] = useState<Collector>(() => emptyCollector(null));
   const [proofs, setProofs] = useState<any[]>([]);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!task) return;
     setQuantities(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, String(Number(i.picked_quantity))])));
+    setLotIds(Object.fromEntries(task.items.map((i: any) => [i.invoice_item_id, ''])));
+    setSerialsByLine(
+      Object.fromEntries(
+        task.items.map((i: any) => [i.invoice_item_id, [...(i.reserved_serial_numbers || [])]])
+      )
+    );
     setCollector(emptyCollector(task.invoice?.customer));
     setProofs(task.proofs || []);
   }, [task]);
   if (!task) return <Loading onClose={onClose} />;
 
+  const baseNeeded = (i: any, lineQty: number) => {
+    const ordered = Number(i.invoice_item?.quantity || 0);
+    const base = Number(i.invoice_item?.base_quantity || 0);
+    if (ordered > 0 && base > 0) return Math.round((lineQty * base) / ordered);
+    return Math.round(lineQty);
+  };
+
   const items: any[] = task.items.filter((i: any) => Number(i.picked_quantity) > 0);
   const invalid = items.some((i) => {
     const v = Number(quantities[i.invoice_item_id] || 0);
-    return !Number.isFinite(v) || v < 0 || v > Number(i.picked_quantity) + 1e-9;
+    if (!Number.isFinite(v) || v < 0 || v > Number(i.picked_quantity) + 1e-9) return true;
+    const product = i.invoice_item?.product;
+    if (product?.track_serial && v > 0) {
+      const bound = (i.reserved_serial_numbers || []).length;
+      const need = baseNeeded(i, v);
+      if (bound >= need) return false;
+      return (serialsByLine[i.invoice_item_id] || []).length !== need;
+    }
+    return false;
   });
   const anyQty = items.some((i) => Number(quantities[i.invoice_item_id] || 0) > 0);
   const partial = items.some((i) => Number(quantities[i.invoice_item_id] || 0) < Number(i.picked_quantity) - 1e-9);
@@ -1618,7 +1760,18 @@ const CollectModal: React.FC<{ taskId: string; onClose: () => void; onDone: () =
     try {
       await api.sales.releaseFulfilment(taskId, {
         ...collectorPayload(collector),
-        items: items.map((i) => ({ invoice_item_id: i.invoice_item_id, quantity: Number(quantities[i.invoice_item_id] || 0) }))
+        items: items.map((i) => {
+          const quantity = Number(quantities[i.invoice_item_id] || 0);
+          const product = i.invoice_item?.product;
+          const alreadyBound = (i.reserved_serial_numbers || []).length >= baseNeeded(i, quantity);
+          return {
+            invoice_item_id: i.invoice_item_id,
+            quantity,
+            lot_id: lotIds[i.invoice_item_id] || undefined,
+            serial_numbers:
+              product?.track_serial && !alreadyBound ? serialsByLine[i.invoice_item_id] : undefined
+          };
+        })
       });
       await alertSuccess(
         `${task.fulfilment_number} handed over`,
@@ -1669,20 +1822,62 @@ const CollectModal: React.FC<{ taskId: string; onClose: () => void; onDone: () =
               </tr>
             </thead>
             <tbody>
-              {items.map((i) => (
-                <tr key={i.id}>
-                  <td>{lineLabel(i)}</td>
-                  <td>{i.invoice_item?.uom?.code || '—'}</td>
-                  <td className="num">{qty(i.picked_quantity)}</td>
-                  <td className="line-items__col-qty">
-                    <QtyInput
-                      value={quantities[i.invoice_item_id] ?? ''}
-                      max={Number(i.picked_quantity)}
-                      onChange={(v) => setQuantities((s) => ({ ...s, [i.invoice_item_id]: v }))}
-                    />
-                  </td>
-                </tr>
-              ))}
+              {items.map((i) => {
+                const product = i.invoice_item?.product;
+                const handQty = Number(quantities[i.invoice_item_id] || 0);
+                const need = baseNeeded(i, handQty);
+                const alreadyBound = (i.reserved_serial_numbers || []).length >= need && need > 0;
+                const showPickers =
+                  (product?.track_serial && !alreadyBound) ||
+                  product?.track_batch ||
+                  product?.track_expiry;
+                return (
+                  <tr key={i.id}>
+                    <td>
+                      {lineLabel(i)}
+                      {alreadyBound ? (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>
+                          Serials: {(i.reserved_serial_numbers as string[]).join(', ')}
+                        </div>
+                      ) : null}
+                      {showPickers ? (
+                        <StockIssuePickers
+                          compact
+                          trackBatch={!!product?.track_batch}
+                          trackExpiry={!!product?.track_expiry}
+                          trackSerial={!!product?.track_serial && !alreadyBound}
+                          serialsNeeded={product?.track_serial && !alreadyBound ? need : 0}
+                          lots={i.available_lots || []}
+                          serials={i.available_serials || []}
+                          lotId={lotIds[i.invoice_item_id] || ''}
+                          onLotId={(lot_id) => {
+                            setLotIds((s) => ({ ...s, [i.invoice_item_id]: lot_id }));
+                            setSerialsByLine((s) => ({ ...s, [i.invoice_item_id]: [] }));
+                          }}
+                          serialNumbers={serialsByLine[i.invoice_item_id] || []}
+                          onSerialNumbers={(serial_numbers) =>
+                            setSerialsByLine((s) => ({ ...s, [i.invoice_item_id]: serial_numbers }))
+                          }
+                        />
+                      ) : null}
+                    </td>
+                    <td>{i.invoice_item?.uom?.code || '—'}</td>
+                    <td className="num">{qty(i.picked_quantity)}</td>
+                    <td className="line-items__col-qty">
+                      <QtyInput
+                        value={quantities[i.invoice_item_id] ?? ''}
+                        max={Number(i.picked_quantity)}
+                        onChange={(v) => {
+                          setQuantities((s) => ({ ...s, [i.invoice_item_id]: v }));
+                          if (!alreadyBound) {
+                            setSerialsByLine((s) => ({ ...s, [i.invoice_item_id]: [] }));
+                          }
+                        }}
+                      />
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

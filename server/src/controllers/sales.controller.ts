@@ -197,6 +197,7 @@ export async function postInvoice(req: Request, res: Response, next: NextFunctio
     const b = req.body || {};
     return res.json(
       await salesService.postInvoice(req.user!, req.params.id, {
+        items: Array.isArray(b.items) ? b.items : undefined,
         pay_now: Boolean(b.pay_now ?? b.payNow),
         payment_method: b.payment_method || b.paymentMethod,
         account_id: b.account_id || b.accountId,

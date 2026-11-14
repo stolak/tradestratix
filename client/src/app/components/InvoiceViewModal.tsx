@@ -685,6 +685,57 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                           {n(it.returned_quantity) > 0 ? (
                             <div className="invoice-view__sub">{q(n(it.returned_quantity))} returned</div>
                           ) : null}
+                          {(() => {
+                            const track =
+                              it.tracking ||
+                              (it.product?.track_batch ||
+                              it.product?.track_expiry ||
+                              it.product?.track_serial
+                                ? {
+                                    track_batch: !!it.product?.track_batch,
+                                    track_expiry: !!it.product?.track_expiry,
+                                    track_serial: !!it.product?.track_serial,
+                                    lots: [],
+                                    serial_numbers: []
+                                  }
+                                : null);
+                            if (!track) return null;
+                            const lots: any[] = track.lots || [];
+                            const serials: string[] = track.serial_numbers || [];
+                            const showLot = track.track_batch || track.track_expiry;
+                            return (
+                              <div className="invoice-view__sub" style={{ marginTop: 4 }}>
+                                {showLot ? (
+                                  <div>
+                                    Batch / expiry:{' '}
+                                    {lots.length
+                                      ? lots
+                                          .map((l: any) => {
+                                            const bits = [
+                                              l.batch_number && l.batch_number !== 'BULK'
+                                                ? l.batch_number
+                                                : null,
+                                              l.expiry_date ? `exp ${fmtDate(l.expiry_date)}` : null,
+                                              Number(l.quantity) > 0
+                                                ? `× ${q(Number(l.quantity))}`
+                                                : null
+                                            ].filter(Boolean);
+                                            return bits.length
+                                              ? bits.join(' · ')
+                                              : l.batch_number || 'lot';
+                                          })
+                                          .join('; ')
+                                      : 'pending pick'}
+                                  </div>
+                                ) : null}
+                                {track.track_serial ? (
+                                  <div>
+                                    Serials: {serials.length ? serials.join(', ') : 'pending pick'}
+                                  </div>
+                                ) : null}
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td>{it.uom?.code || it.uom?.name || '—'}</td>
                         <td className="num">{Number(it.quantity).toLocaleString()}</td>

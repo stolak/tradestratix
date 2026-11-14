@@ -10,6 +10,7 @@ import {
 } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { allocateFefo, createStockMovement, lotAvailable } from './inventory.service.js';
+import { parseSerialNumbersJson } from './stock-serial.service.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import { assertUserCanAccessWarehouse, canManageAllWarehouses } from './warehouse.service.js';
@@ -133,9 +134,39 @@ async function withPeople<T extends {
       initiatedBy: r.requestedById ? nameById.get(r.requestedById) || null : null,
       receivedBy: receivedById
         ? nameById.get(receivedById) || fallback?.name || null
-        : fallback?.name || null
+        : fallback?.name || null,
+      items: Array.isArray((r as any).items)
+        ? (r as any).items.map((it: any) => presentTransferItem(it))
+        : (r as any).items
     };
   });
+}
+
+/** Expose parsed serials + product tracking flags for transfer detail UIs. */
+function presentTransferItem(it: {
+  serialNumbersJson?: string | null;
+  product?: {
+    trackBatch?: boolean;
+    trackExpiry?: boolean;
+    trackSerial?: boolean;
+    [k: string]: unknown;
+  } | null;
+  [k: string]: unknown;
+}) {
+  const serialNumbers = parseSerialNumbersJson(it.serialNumbersJson);
+  return {
+    ...it,
+    serialNumbers,
+    tracking:
+      it.product?.trackBatch || it.product?.trackExpiry || it.product?.trackSerial
+        ? {
+            trackBatch: !!it.product?.trackBatch,
+            trackExpiry: !!it.product?.trackExpiry,
+            trackSerial: !!it.product?.trackSerial,
+            serialNumbers
+          }
+        : null
+  };
 }
 
 async function listOne(businessId: string, id: string) {
@@ -388,10 +419,25 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
           );
         }
 
-        // Serial lines: explicit list applies to a single-lot transfer only
-        let remainingSerials = line.trackSerial
-          ? (await import('./stock-serial.service.js')).normalizeSerialList(line.serialNumbers)
-          : [];
+        // Serial lines: user must pick exact serials (no auto FIFO). Prefer a single lot when serials are set.
+        const { normalizeSerialList } = await import('./stock-serial.service.js');
+        const allSerials = line.trackSerial ? normalizeSerialList(line.serialNumbers) : [];
+        if (line.trackSerial) {
+          const need = Math.round(line.quantity);
+          if (allSerials.length !== need) {
+            throw httpError(
+              400,
+              `Select exactly ${need} serial number(s) to transfer ${line.productName} (got ${allSerials.length})`
+            );
+          }
+          if (allocations.length > 1 && !line.fromLotId) {
+            throw httpError(
+              400,
+              `${line.productName} is serial-tracked — pick a lot (or enough free qty on one lot) so serials map to a single batch`
+            );
+          }
+        }
+        let remainingSerials = [...allSerials];
 
         for (const alloc of allocations) {
           const lot = await tx.stockLot.findFirst({ where: { id: alloc.lotId } });
@@ -409,15 +455,12 @@ export async function createTransfer(user: AuthUser, body: Record<string, any>) 
 
           let serialNumbersJson: string | null = null;
           if (line.trackSerial) {
-            const sliceSerials =
-              remainingSerials.length >= Math.round(alloc.qty)
-                ? remainingSerials.splice(0, Math.round(alloc.qty))
-                : remainingSerials.splice(0, remainingSerials.length);
+            const sliceSerials = remainingSerials.splice(0, Math.round(alloc.qty));
             const held = await holdSerialsForTransfer(tx, {
               businessId: user.businessId,
               lotId: lot.id,
               qty: alloc.qty,
-              serialNumbers: sliceSerials.length ? sliceSerials : null,
+              serialNumbers: sliceSerials,
               productName: line.productName
             });
             serialNumbersJson = serializeSerialNumbers(held);

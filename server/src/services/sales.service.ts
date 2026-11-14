@@ -320,7 +320,12 @@ export async function getInvoice(user: AuthUser, id: string) {
                   branch: { select: { id: true, name: true, code: true } }
                 }
               },
-              lot: { select: { batchNumber: true, expiryDate: true } }
+              lot: { select: { id: true, batchNumber: true, expiryDate: true } },
+              serials: {
+                where: { status: 'reserved' },
+                select: { serialNumber: true, lotId: true },
+                orderBy: { serialNumber: 'asc' }
+              }
             },
             orderBy: { createdAt: 'asc' }
           }
@@ -368,8 +373,126 @@ export async function getInvoice(user: AuthUser, id: string) {
     ...row.items.map((i) => i.fulfilmentWarehouse?.branch.id),
     ...row.items.flatMap((i) => i.reservations.map((r) => r.warehouse.branch.id))
   ]);
-  const presented = presentInvoiceSalesRep(row);
-  return serialize((await canSeePickupCode(user, row)) ? { ...presented, hasPickupCode: Boolean(row.pickupCode) } : redactPickupCode(presented));
+
+  // Sold serials are unbound from reservations at issue — load by invoice reference.
+  const soldSerials = await prisma.stockSerial.findMany({
+    where: {
+      businessId: user.businessId,
+      issuedReferenceType: 'sales_invoice',
+      issuedReferenceId: id,
+      status: 'sold'
+    },
+    select: {
+      serialNumber: true,
+      productId: true,
+      variantId: true,
+      lotId: true,
+      lot: { select: { id: true, batchNumber: true, expiryDate: true } }
+    },
+    orderBy: { serialNumber: 'asc' }
+  });
+  // Allocate sold serials to lines by product+variant, consuming fulfilled base qty per line.
+  const soldQueue = new Map<string, typeof soldSerials>();
+  for (const s of soldSerials) {
+    const key = `${s.productId}:${s.variantId || ''}`;
+    const list = soldQueue.get(key) || [];
+    list.push(s);
+    soldQueue.set(key, list);
+  }
+
+  const itemsWithTracking = row.items.map((item) => {
+    const product = item.product as {
+      trackBatch?: boolean;
+      trackExpiry?: boolean;
+      trackSerial?: boolean;
+    } | null;
+    const tracks =
+      !!product?.trackBatch || !!product?.trackExpiry || !!product?.trackSerial;
+    if (!tracks) return { ...item, tracking: null };
+
+    const factor =
+      Number(item.baseQuantity || 0) > 0
+        ? Number(item.quantity) / Number(item.baseQuantity)
+        : 1;
+    const lotMap = new Map<
+      string,
+      { lotId: string; batchNumber: string; expiryDate: string | null; quantity: number; status: string }
+    >();
+    const reservedSerials: string[] = [];
+    let fulfilledBase = 0;
+    for (const r of item.reservations) {
+      fulfilledBase += Number(r.fulfilledQuantity || 0);
+      const left = Number(r.quantity) - Number(r.fulfilledQuantity) - Number(r.releasedQuantity);
+      const qtyLine =
+        r.status === 'fulfilled' || Number(r.fulfilledQuantity) > 0
+          ? Number(r.fulfilledQuantity) * factor
+          : Math.max(0, left) * factor;
+      const showLot = qtyLine > 1e-9 || r.serials.length > 0 || Number(r.fulfilledQuantity) > 0;
+      if (showLot) {
+        const existing = lotMap.get(r.lotId);
+        const addQty =
+          Number(r.fulfilledQuantity) > 0
+            ? Number(r.fulfilledQuantity) * factor + Math.max(0, left) * factor
+            : qtyLine;
+        if (existing) {
+          existing.quantity += addQty;
+        } else {
+          lotMap.set(r.lotId, {
+            lotId: r.lotId,
+            batchNumber: r.lot.batchNumber,
+            expiryDate: r.lot.expiryDate,
+            quantity: addQty,
+            status: r.status
+          });
+        }
+      }
+      for (const s of r.serials) reservedSerials.push(s.serialNumber);
+    }
+
+    const soldKey = `${item.productId}:${item.variantId || ''}`;
+    const queue = soldQueue.get(soldKey) || [];
+    const take = Math.max(0, Math.round(fulfilledBase) - reservedSerials.length);
+    const soldForLine = queue.splice(0, take);
+    soldQueue.set(soldKey, queue);
+
+    for (const s of soldForLine) {
+      if (!s.lotId) continue;
+      if (!lotMap.has(s.lotId)) {
+        lotMap.set(s.lotId, {
+          lotId: s.lotId,
+          batchNumber: s.lot?.batchNumber || 'BULK',
+          expiryDate: s.lot?.expiryDate || null,
+          quantity: 0,
+          status: 'sold'
+        });
+      }
+    }
+
+    const serialNumbers = [
+      ...new Set([...reservedSerials, ...soldForLine.map((s) => s.serialNumber)])
+    ].sort((a, b) => a.localeCompare(b));
+
+    return {
+      ...item,
+      tracking: {
+        trackBatch: !!product?.trackBatch,
+        trackExpiry: !!product?.trackExpiry,
+        trackSerial: !!product?.trackSerial,
+        lots: [...lotMap.values()].map((l) => ({
+          ...l,
+          quantity: Math.round(l.quantity * 1e4) / 1e4
+        })),
+        serialNumbers
+      }
+    };
+  });
+
+  const presented = presentInvoiceSalesRep({ ...row, items: itemsWithTracking });
+  return serialize(
+    (await canSeePickupCode(user, row))
+      ? { ...presented, hasPickupCode: Boolean(row.pickupCode) }
+      : redactPickupCode(presented)
+  );
 }
 
 export async function createInvoice(user: AuthUser, body: Record<string, any>) {
@@ -621,6 +744,18 @@ export type ConfirmOptions = {
   allow_backorder?: boolean;
   override_credit?: boolean;
   override_reason?: string;
+  /**
+   * Per-line lot/serial choices for immediate hand-over.
+   * Serial-tracked products must include serial_numbers when fulfilment is immediate.
+   */
+  items?: {
+    invoice_item_id?: string;
+    invoiceItemId?: string;
+    lot_id?: string | null;
+    lotId?: string | null;
+    serial_numbers?: string[] | null;
+    serialNumbers?: string[] | null;
+  }[];
 };
 
 /**
@@ -793,6 +928,59 @@ export async function postInvoice(user: AuthUser, id: string, opts: ConfirmOptio
 
       if (immediate) {
         const reloaded = (await invoiceForFulfilment(tx, user.businessId, invoice.id))!;
+        const products = await tx.product.findMany({
+          where: {
+            id: { in: [...new Set(reloaded.items.map((i) => i.productId))] },
+            businessId: user.businessId
+          },
+          include: { variants: true }
+        });
+        const productById = new Map(products.map((p) => [p.id, p]));
+        const choiceByItem = new Map<
+          string,
+          { lotId: string | null; serialNumbers: string[] | null }
+        >();
+        for (const raw of opts.items || []) {
+          const itemId = String(raw.invoice_item_id || raw.invoiceItemId || '');
+          if (!itemId) continue;
+          choiceByItem.set(itemId, {
+            lotId: (raw.lot_id || raw.lotId || null) as string | null,
+            serialNumbers: (raw.serial_numbers || raw.serialNumbers || null) as string[] | null
+          });
+        }
+        const { bindIssueChoices, lineFactor } = await import('./fulfilment.service.js');
+        const { roundQty } = await import('./stock-allocation.service.js');
+        const warehouseId = invoice.warehouseId;
+        if (!warehouseId) throw httpError(400, 'Immediate sales require a warehouse');
+        for (const line of reloaded.items) {
+          const product = productById.get(line.productId);
+          if (!product) continue;
+          const open = roundQty(
+            Number(line.quantity) - Number(line.fulfilledQuantity) - Number(line.cancelledQuantity)
+          );
+          if (open <= 1e-6) continue;
+          const choice = choiceByItem.get(line.id) || { lotId: null, serialNumbers: null };
+          if (!product.trackSerial && !choice.lotId) continue;
+          const variantId =
+            line.variantId || (product.variants.find((v) => v.isDefault) || product.variants[0])?.id;
+          if (!variantId) throw httpError(400, `Product ${product.name} has no variants`);
+          const factor = lineFactor(line);
+          await bindIssueChoices(tx, user, {
+            invoiceItemId: line.id,
+            warehouseId,
+            baseQty: roundQty(open / factor),
+            lotId: choice.lotId,
+            serialNumbers: choice.serialNumbers,
+            product: {
+              id: product.id,
+              name: product.name,
+              trackSerial: product.trackSerial,
+              trackExpiry: product.trackExpiry
+            },
+            variantId,
+            method: 'manual'
+          });
+        }
         await fulfilAllInTx(tx, user, reloaded, {
           collectedBy: invoice.customer.name,
           notes: `Handed over at sale ${invoice.invoiceNumber}`

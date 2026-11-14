@@ -37,6 +37,23 @@ export async function lots(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function serials(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await inventoryService.listAvailableSerials(req.user!, {
+        product_id: typeof req.query.product_id === 'string' ? req.query.product_id : undefined,
+        warehouse_id:
+          typeof req.query.warehouse_id === 'string' ? req.query.warehouse_id : undefined,
+        lot_id: typeof req.query.lot_id === 'string' ? req.query.lot_id : undefined,
+        variant_id: typeof req.query.variant_id === 'string' ? req.query.variant_id : undefined,
+        ...branchListOpts(req)
+      })
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function movements(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(

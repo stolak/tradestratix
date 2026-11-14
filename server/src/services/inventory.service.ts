@@ -699,14 +699,20 @@ export async function inventoryBoard(
   return serialize(board);
 }
 
-export async function listLots(
+/**
+ * Warehouses the caller may read stock from for lot/serial pickers.
+ * An explicit warehouse_id (e.g. transfer From) is allowed when the user can access
+ * that warehouse — even if it is not the active branch (inter-branch transfer).
+ */
+async function stockPickerWarehouseIds(
   user: AuthUser,
-  filters: {
-    product_id?: string;
-    warehouse_id?: string;
-    include_empty?: boolean;
-  } & BranchListOpts = {}
-) {
+  filters: { warehouse_id?: string; branchId?: string | null; allowConsolidated?: boolean }
+): Promise<string[]> {
+  if (filters.warehouse_id) {
+    const { assertUserCanAccessWarehouse } = await import('./warehouse.service.js');
+    await assertUserCanAccessWarehouse(user, filters.warehouse_id);
+    return [filters.warehouse_id];
+  }
   const scope = await branchAccess.branchScopeWhere(user, {
     branchId: filters.branchId,
     allowConsolidated: filters.allowConsolidated
@@ -715,20 +721,64 @@ export async function listLots(
     where: { businessId: user.businessId, ...scope },
     select: { id: true }
   });
-  const warehouseIds = warehouses.map((w) => w.id);
+  return warehouses.map((w) => w.id);
+}
+
+export async function listAvailableSerials(
+  user: AuthUser,
+  filters: {
+    product_id?: string;
+    warehouse_id?: string;
+    lot_id?: string;
+    variant_id?: string;
+  } & BranchListOpts = {}
+) {
+  const warehouseIds = await stockPickerWarehouseIds(user, filters);
+  if (!warehouseIds.length) return serialize([]);
+  const { listAvailableSerials: list } = await import('./stock-serial.service.js');
+  const rows = await list(prisma, {
+    businessId: user.businessId,
+    productId: filters.product_id,
+    warehouseId: filters.warehouse_id || undefined,
+    lotId: filters.lot_id,
+    variantId: filters.variant_id,
+    take: 1000
+  });
+  const allowed = new Set(warehouseIds);
+  return serialize(rows.filter((r) => allowed.has(r.warehouseId)));
+}
+
+export async function listLots(
+  user: AuthUser,
+  filters: {
+    product_id?: string;
+    warehouse_id?: string;
+    include_empty?: boolean;
+  } & BranchListOpts = {}
+) {
+  const warehouseIds = await stockPickerWarehouseIds(user, filters);
   const lots = await prisma.stockLot.findMany({
     where: {
       businessId: user.businessId,
       ...(filters.product_id ? { productId: filters.product_id } : {}),
-      ...(filters.warehouse_id
-        ? { warehouseId: filters.warehouse_id }
+      warehouseId: filters.warehouse_id
+        ? filters.warehouse_id
         : warehouseIds.length
-          ? { warehouseId: { in: warehouseIds } }
-          : { warehouseId: { in: [] as string[] } }),
+          ? { in: warehouseIds }
+          : { in: [] as string[] },
       ...(!filters.include_empty ? { quantityOnHand: { gt: 0 } } : {})
     },
     include: {
-      product: { select: { id: true, name: true, trackExpiry: true, sku: true } },
+      product: {
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          trackBatch: true,
+          trackExpiry: true,
+          trackSerial: true
+        }
+      },
       variant: { select: { id: true, name: true, sku: true } },
       warehouse: { select: { id: true, name: true, code: true } }
     },

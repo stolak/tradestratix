@@ -5,7 +5,7 @@
  * customers, suppliers, sales reps, employees, users, roles, permissions, menus,
  * memberships / overrides, bank accounts, vehicles, SaaS plans/subscriptions, settings.
  *
- * Cleared: sales / purchases / stock movements & lots / journals / banking txns /
+ * Cleared: sales / purchases / stock movements, lots & serials / journals / banking txns /
  * expenses / assets & budgets / payroll & attendance / deliveries / audit & sessions /
  * notifications / customer notes.
  *
@@ -58,6 +58,7 @@ const TRANSACTION_TABLES = [
   'stock_transfer_items',
   'stock_transfers',
   'stock_movements',
+  'stock_serials',
   'stock_lots',
 
   // Banking / expenses / assets / budgets

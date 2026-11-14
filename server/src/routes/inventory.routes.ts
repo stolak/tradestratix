@@ -8,6 +8,7 @@ router.use(authenticate);
 
 router.get('/board', requirePermission('inventory.view'), inventoryController.board);
 router.get('/lots', requirePermission('inventory.view'), inventoryController.lots);
+router.get('/serials', requirePermission('inventory.view'), inventoryController.serials);
 router.get('/movements', requirePermission('inventory.view'), inventoryController.movements);
 router.get('/expiry', requirePermission('inventory.view'), inventoryController.expiry);
 

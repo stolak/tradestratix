@@ -4,8 +4,14 @@ import { X } from 'lucide-react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
 import { StockBalanceReport } from '../components/StockBalanceReport';
+import { StockIssuePickers } from '../components/StockIssuePickers';
 
-type TransferLine = { product_id: string; quantity: string };
+type TransferLine = {
+  product_id: string;
+  quantity: string;
+  lot_id: string;
+  serial_numbers: string[];
+};
 type InventoryTab = 'stock' | 'movements' | 'expiry' | 'transfers';
 
 const MOVEMENT_TYPES = [
@@ -56,7 +62,7 @@ export const InventoryPage: React.FC = () => {
     from_warehouse_id: '',
     to_warehouse_id: '',
     notes: '',
-    lines: [{ product_id: '', quantity: '1' }] as TransferLine[]
+    lines: [{ product_id: '', quantity: '1', lot_id: '', serial_numbers: [] }] as TransferLine[]
   });
 
   const loadMovements = async (filter = movementFilter) => {
@@ -138,7 +144,7 @@ export const InventoryPage: React.FC = () => {
           to_warehouse_id: toId,
           lines: f.lines[0]?.product_id
             ? f.lines
-            : [{ product_id: p[0]?.id || '', quantity: '1' }]
+            : [{ product_id: p[0]?.id || '', quantity: '1', lot_id: '', serial_numbers: [] }]
         };
       });
     } catch (err: any) {
@@ -205,10 +211,26 @@ export const InventoryPage: React.FC = () => {
       );
       return;
     }
+    for (const l of transferForm.lines) {
+      if (!l.product_id || !(Number(l.quantity) > 0)) continue;
+      const product = products.find((p) => p.id === l.product_id);
+      if (product?.track_serial) {
+        const need = Math.round(Number(l.quantity));
+        if (l.serial_numbers.length !== need) {
+          await alertError(
+            'Serials required',
+            `${product.name}: select exactly ${need} serial number(s) (got ${l.serial_numbers.length}).`
+          );
+          return;
+        }
+      }
+    }
     const items = transferForm.lines
       .map((l) => ({
         product_id: l.product_id,
-        quantity: Number(l.quantity)
+        quantity: Number(l.quantity),
+        lot_id: l.lot_id || undefined,
+        serial_numbers: l.serial_numbers.length ? l.serial_numbers : undefined
       }))
       .filter((l) => l.product_id && l.quantity > 0);
     if (!items.length) {
@@ -226,7 +248,7 @@ export const InventoryPage: React.FC = () => {
       setTransferForm((f) => ({
         ...f,
         notes: '',
-        lines: [{ product_id: products[0]?.id || '', quantity: '1' }]
+        lines: [{ product_id: products[0]?.id || '', quantity: '1', lot_id: '', serial_numbers: [] }]
       }));
       await load();
     } catch (err: any) {
@@ -513,7 +535,12 @@ export const InventoryPage: React.FC = () => {
                         f.to_warehouse_id === nextFrom
                           ? toWarehouses.find((w) => w.id !== nextFrom)?.id || ''
                           : f.to_warehouse_id;
-                      return { ...f, from_warehouse_id: nextFrom, to_warehouse_id: nextTo };
+                      return {
+                        ...f,
+                        from_warehouse_id: nextFrom,
+                        to_warehouse_id: nextTo,
+                        lines: f.lines.map((l) => ({ ...l, lot_id: '', serial_numbers: [] }))
+                      };
                     });
                   }}
                   required
@@ -559,69 +586,109 @@ export const InventoryPage: React.FC = () => {
 
             <div className="line-items">
               <div className="line-items__scroll">
-                <table className="line-items__table" style={{ minWidth: 480, width: '100%' }}>
+                <table className="line-items__table" style={{ minWidth: 640, width: '100%' }}>
                   <thead>
                     <tr>
                       <th>Product</th>
-                      <th className="num" style={{ width: 120 }}>
+                      <th className="num" style={{ width: 100 }}>
                         Qty
                       </th>
+                      <th>Lot / serials</th>
                       <th style={{ width: 80 }} />
                     </tr>
                   </thead>
                   <tbody>
-                    {transferForm.lines.map((line, idx) => (
-                      <tr key={idx}>
-                        <td>
-                          <select
-                            value={line.product_id}
-                            onChange={(e) => {
-                              const lines = [...transferForm.lines];
-                              lines[idx] = { ...lines[idx], product_id: e.target.value };
-                              setTransferForm({ ...transferForm, lines });
-                            }}
-                            required
-                          >
-                            {products.map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td>
-                          <input
-                            type="number"
-                            min="0.0001"
-                            step="any"
-                            className="qty-input"
-                            style={{ textAlign: 'right' }}
-                            value={line.quantity}
-                            onChange={(e) => {
-                              const lines = [...transferForm.lines];
-                              lines[idx] = { ...lines[idx], quantity: e.target.value };
-                              setTransferForm({ ...transferForm, lines });
-                            }}
-                            required
-                          />
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="btn btn-ghost"
-                            disabled={transferForm.lines.length <= 1}
-                            onClick={() =>
-                              setTransferForm({
-                                ...transferForm,
-                                lines: transferForm.lines.filter((_, i) => i !== idx)
-                              })
-                            }
-                          >
-                            Remove
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {transferForm.lines.map((line, idx) => {
+                      const product = products.find((p) => p.id === line.product_id);
+                      const trackSerial = !!product?.track_serial;
+                      const qty = Math.round(Number(line.quantity) || 0);
+                      return (
+                        <tr key={idx}>
+                          <td>
+                            <select
+                              value={line.product_id}
+                              onChange={(e) => {
+                                const lines = [...transferForm.lines];
+                                lines[idx] = {
+                                  ...lines[idx],
+                                  product_id: e.target.value,
+                                  lot_id: '',
+                                  serial_numbers: []
+                                };
+                                setTransferForm({ ...transferForm, lines });
+                              }}
+                              required
+                            >
+                              {products.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.name}
+                                  {p.track_serial ? ' · serial' : ''}
+                                  {p.track_batch || p.track_expiry ? ' · lot' : ''}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td>
+                            <input
+                              type="number"
+                              min={trackSerial ? 1 : 0.0001}
+                              step={trackSerial ? 1 : 'any'}
+                              className="qty-input"
+                              style={{ textAlign: 'right' }}
+                              value={line.quantity}
+                              onChange={(e) => {
+                                const lines = [...transferForm.lines];
+                                lines[idx] = {
+                                  ...lines[idx],
+                                  quantity: e.target.value,
+                                  serial_numbers: []
+                                };
+                                setTransferForm({ ...transferForm, lines });
+                              }}
+                              required
+                            />
+                          </td>
+                          <td>
+                            <StockIssuePickers
+                              compact
+                              trackBatch={!!product?.track_batch}
+                              trackExpiry={!!product?.track_expiry}
+                              trackSerial={trackSerial}
+                              serialsNeeded={trackSerial ? qty : 0}
+                              productId={line.product_id}
+                              warehouseId={transferForm.from_warehouse_id}
+                              lotId={line.lot_id}
+                              onLotId={(lot_id) => {
+                                const lines = [...transferForm.lines];
+                                lines[idx] = { ...lines[idx], lot_id, serial_numbers: [] };
+                                setTransferForm({ ...transferForm, lines });
+                              }}
+                              serialNumbers={line.serial_numbers}
+                              onSerialNumbers={(serial_numbers) => {
+                                const lines = [...transferForm.lines];
+                                lines[idx] = { ...lines[idx], serial_numbers };
+                                setTransferForm({ ...transferForm, lines });
+                              }}
+                            />
+                          </td>
+                          <td>
+                            <button
+                              type="button"
+                              className="btn btn-ghost"
+                              disabled={transferForm.lines.length <= 1}
+                              onClick={() =>
+                                setTransferForm({
+                                  ...transferForm,
+                                  lines: transferForm.lines.filter((_, i) => i !== idx)
+                                })
+                              }
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -634,7 +701,12 @@ export const InventoryPage: React.FC = () => {
                       ...transferForm,
                       lines: [
                         ...transferForm.lines,
-                        { product_id: products[0]?.id || '', quantity: '1' }
+                        {
+                          product_id: products[0]?.id || '',
+                          quantity: '1',
+                          lot_id: '',
+                          serial_numbers: []
+                        }
                       ]
                     })
                   }
@@ -861,21 +933,66 @@ export const InventoryPage: React.FC = () => {
                       <thead>
                         <tr>
                           <th>Product</th>
-                          <th>Batch</th>
+                          <th>Batch / expiry</th>
+                          <th>Serials</th>
                           <th className="num">Qty</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {(viewTransfer.items || []).map((it: any) => (
-                          <tr key={it.id}>
-                            <td>{it.product?.name || it.product_id}</td>
-                            <td>{it.batch_number || '—'}</td>
-                            <td className="num">{it.quantity}</td>
-                          </tr>
-                        ))}
+                        {(viewTransfer.items || []).map((it: any) => {
+                          const serials: string[] =
+                            it.serial_numbers ||
+                            it.tracking?.serial_numbers ||
+                            [];
+                          const showLot =
+                            it.product?.track_batch ||
+                            it.product?.track_expiry ||
+                            it.batch_number ||
+                            it.expiry_date;
+                          const showSerial =
+                            it.product?.track_serial || serials.length > 0;
+                          const batchBits = [
+                            it.batch_number || null,
+                            it.expiry_date
+                              ? `exp ${String(it.expiry_date).slice(0, 10)}`
+                              : null
+                          ].filter(Boolean);
+                          return (
+                            <tr key={it.id}>
+                              <td>
+                                <div>{it.product?.name || it.product_id}</div>
+                                {it.variant?.name ? (
+                                  <div
+                                    style={{
+                                      color: 'var(--ink-muted)',
+                                      fontSize: '0.75rem'
+                                    }}
+                                  >
+                                    {it.variant.name}
+                                  </div>
+                                ) : null}
+                              </td>
+                              <td>
+                                {showLot
+                                  ? batchBits.length
+                                    ? batchBits.join(' · ')
+                                    : '—'
+                                  : '—'}
+                              </td>
+                              <td style={{ fontSize: '0.85rem' }}>
+                                {showSerial
+                                  ? serials.length
+                                    ? serials.join(', ')
+                                    : '—'
+                                  : '—'}
+                              </td>
+                              <td className="num">{it.quantity}</td>
+                            </tr>
+                          );
+                        })}
                         {!viewTransfer.items?.length ? (
                           <tr>
-                            <td colSpan={3} style={{ color: 'var(--ink-muted)' }}>
+                            <td colSpan={4} style={{ color: 'var(--ink-muted)' }}>
                               No lines.
                             </td>
                           </tr>
