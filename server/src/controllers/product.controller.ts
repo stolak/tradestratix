@@ -56,7 +56,8 @@ export async function addVariant(req: Request, res: Response, next: NextFunction
 
 export async function listCategories(req: Request, res: Response, next: NextFunction) {
   try {
-    return res.json(await productService.listCategories(req.user!.businessId));
+    const activeOnly = req.query.active_only === '1' || req.query.active_only === 'true';
+    return res.json(await productService.listCategories(req.user!.businessId, { activeOnly }));
   } catch (err) {
     return next(err);
   }
@@ -70,9 +71,26 @@ export async function createCategory(req: Request, res: Response, next: NextFunc
   }
 }
 
+export async function updateCategory(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await productService.updateCategory(req.user!, req.params.id, req.body || {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function deleteCategory(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await productService.deleteCategory(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function listBrands(req: Request, res: Response, next: NextFunction) {
   try {
-    return res.json(await productService.listBrands(req.user!.businessId));
+    const activeOnly = req.query.active_only === '1' || req.query.active_only === 'true';
+    return res.json(await productService.listBrands(req.user!.businessId, { activeOnly }));
   } catch (err) {
     return next(err);
   }
@@ -81,6 +99,55 @@ export async function listBrands(req: Request, res: Response, next: NextFunction
 export async function createBrand(req: Request, res: Response, next: NextFunction) {
   try {
     return res.status(201).json(await productService.createBrand(req.user!, req.body || {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function updateBrand(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await productService.updateBrand(req.user!, req.params.id, req.body || {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function deleteBrand(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await productService.deleteBrand(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listMakes(req: Request, res: Response, next: NextFunction) {
+  try {
+    const activeOnly = req.query.active_only === '1' || req.query.active_only === 'true';
+    return res.json(await productService.listMakes(req.user!.businessId, { activeOnly }));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function createMake(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.status(201).json(await productService.createMake(req.user!, req.body || {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function updateMake(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await productService.updateMake(req.user!, req.params.id, req.body || {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function deleteMake(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await productService.deleteMake(req.user!, req.params.id));
   } catch (err) {
     return next(err);
   }

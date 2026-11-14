@@ -95,6 +95,7 @@ model Business {
   currencies             BusinessCurrency[]
   productCategories      ProductCategory[]
   brands                 Brand[]
+  productMakes           ProductMake[]
   unitsOfMeasure         UnitOfMeasure[]
   products               Product[]
   productVariants        ProductVariant[]
@@ -691,18 +692,38 @@ model ProductCategory {
 }
 
 model Brand {
-  id         String    @id
-  businessId String    @map("business_id")
-  name       String
-  code       String?
-  isActive   Boolean   @default(true) @map("is_active")
-  createdAt  DateTime  @default(now()) @map("created_at")
-  updatedAt  DateTime  @updatedAt @map("updated_at")
-  business   Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  products   Product[]
+  id          String    @id
+  businessId  String    @map("business_id")
+  name        String
+  code        String?
+  description String?   @db.Text
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products    Product[]
 
   @@unique([businessId, name])
+  @@index([businessId])
   @@map("brands")
+}
+
+/// Product make / marque (e.g. appliance line under a brand). Optional on products.
+model ProductMake {
+  id          String    @id
+  businessId  String    @map("business_id")
+  name        String
+  code        String?
+  description String?   @db.Text
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  business    Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  products    Product[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+  @@map("product_makes")
 }
 
 model UnitOfMeasure {
@@ -743,6 +764,7 @@ model Product {
   description         String?  @db.Text
   categoryId          String?  @map("category_id")
   brandId             String?  @map("brand_id")
+  makeId              String?  @map("make_id")
   manufacturer        String?
   imageUrl            String?  @map("image_url") @db.Text
   status              String   @default("active")
@@ -775,6 +797,7 @@ model Product {
   business           Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
   category           ProductCategory?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   brand              Brand?                  @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  make               ProductMake?            @relation(fields: [makeId], references: [id], onDelete: SetNull)
   baseUom            UnitOfMeasure           @relation("ProductBaseUom", fields: [baseUomId], references: [id])
   purchaseUom        UnitOfMeasure?          @relation("ProductPurchaseUom", fields: [purchaseUomId], references: [id])
   sellingUom         UnitOfMeasure?          @relation("ProductSellingUom", fields: [sellingUomId], references: [id])

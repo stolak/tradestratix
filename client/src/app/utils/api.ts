@@ -338,12 +338,42 @@ export const api = {
         `/products/branch-prices/${encodeURIComponent(branchId)}/${encodeURIComponent(sellingPriceId)}`,
         { method: 'DELETE' }
       ),
-    categories: () => request<any[]>('/products/categories'),
+    categories: (opts?: { activeOnly?: boolean }) => {
+      const params = new URLSearchParams();
+      if (opts?.activeOnly) params.set('active_only', '1');
+      const qs = params.toString();
+      return request<any[]>(`/products/categories${qs ? `?${qs}` : ''}`);
+    },
     createCategory: (body: Record<string, unknown>) =>
       request<any>('/products/categories', { method: 'POST', body: JSON.stringify(body) }),
-    brands: () => request<any[]>('/products/brands'),
+    updateCategory: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/products/categories/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    deleteCategory: (id: string) =>
+      request<{ deleted: boolean; id: string }>(`/products/categories/${id}`, { method: 'DELETE' }),
+    brands: (opts?: { activeOnly?: boolean }) => {
+      const params = new URLSearchParams();
+      if (opts?.activeOnly) params.set('active_only', '1');
+      const qs = params.toString();
+      return request<any[]>(`/products/brands${qs ? `?${qs}` : ''}`);
+    },
     createBrand: (body: Record<string, unknown>) =>
       request<any>('/products/brands', { method: 'POST', body: JSON.stringify(body) }),
+    updateBrand: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/products/brands/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    deleteBrand: (id: string) =>
+      request<{ deleted: boolean; id: string }>(`/products/brands/${id}`, { method: 'DELETE' }),
+    makes: (opts?: { activeOnly?: boolean }) => {
+      const params = new URLSearchParams();
+      if (opts?.activeOnly) params.set('active_only', '1');
+      const qs = params.toString();
+      return request<any[]>(`/products/makes${qs ? `?${qs}` : ''}`);
+    },
+    createMake: (body: Record<string, unknown>) =>
+      request<any>('/products/makes', { method: 'POST', body: JSON.stringify(body) }),
+    updateMake: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/products/makes/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    deleteMake: (id: string) =>
+      request<{ deleted: boolean; id: string }>(`/products/makes/${id}`, { method: 'DELETE' }),
     addConversion: (productId: string, body: Record<string, unknown>) =>
       request<any>(`/products/${productId}/conversions`, {
         method: 'POST',

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
+import { ProductCatalogPanel } from '../components/ProductCatalogPanel';
 
 type ConversionRow = { key: string; from_uom_id: string; factor: string };
 type SellingRow = {
@@ -59,6 +60,8 @@ const emptyForm = {
   base_uom_id: '',
   purchase_uom_id: '',
   category_id: '',
+  brand_id: '',
+  make_id: '',
   default_purchase_cost: '0',
   reorder_level: '0',
   track_expiry: false,
@@ -97,9 +100,12 @@ function sectionTitle(step: number, title: string, hint: string) {
 }
 
 export const ProductsPage: React.FC = () => {
+  const [pageTab, setPageTab] = useState<'products' | 'catalog'>('products');
   const [rows, setRows] = useState<any[]>([]);
   const [uoms, setUoms] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
+  const [brands, setBrands] = useState<any[]>([]);
+  const [makes, setMakes] = useState<any[]>([]);
   const [q, setQ] = useState('');
   const [form, setForm] = useState(emptyForm);
   const [conversions, setConversions] = useState<ConversionRow[]>([]);
@@ -107,6 +113,13 @@ export const ProductsPage: React.FC = () => {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [baseUomLocked, setBaseUomLocked] = useState(false);
+
+  const activeCategories = useMemo(
+    () => categories.filter((c) => c.is_active !== false),
+    [categories]
+  );
+  const activeBrands = useMemo(() => brands.filter((b) => b.is_active !== false), [brands]);
+  const activeMakes = useMemo(() => makes.filter((m) => m.is_active !== false), [makes]);
 
   const baseUom = useMemo(
     () => uoms.find((u) => u.id === form.base_uom_id),
@@ -129,14 +142,18 @@ export const ProductsPage: React.FC = () => {
 
   const load = async () => {
     try {
-      const [products, units, cats] = await Promise.all([
+      const [products, units, cats, brds, mks] = await Promise.all([
         api.products.list(q || undefined),
         api.uoms.list(),
-        api.products.categories()
+        api.products.categories(),
+        api.products.brands(),
+        api.products.makes()
       ]);
       setRows(products);
       setUoms(units);
       setCategories(cats);
+      setBrands(brds);
+      setMakes(mks);
       if (!form.base_uom_id && units[0]) {
         const pcs = units.find((u: any) => u.code === 'PCS') || units[0];
         setForm((f) => ({
@@ -295,6 +312,8 @@ export const ProductsPage: React.FC = () => {
       base_uom_id: p.base_uom_id || p.base_uom?.id || '',
       purchase_uom_id: p.purchase_uom_id || p.purchase_uom?.id || p.base_uom_id || '',
       category_id: p.category_id || '',
+      brand_id: p.brand_id || '',
+      make_id: p.make_id || '',
       default_purchase_cost: String(p.default_purchase_cost ?? 0),
       reorder_level: String(p.reorder_level ?? 0),
       track_expiry: Boolean(p.track_expiry),
@@ -440,6 +459,8 @@ export const ProductsPage: React.FC = () => {
       base_uom_id: form.base_uom_id,
       purchase_uom_id: form.purchase_uom_id || form.base_uom_id,
       category_id: form.category_id || undefined,
+      brand_id: form.brand_id || undefined,
+      make_id: form.make_id || undefined,
       default_purchase_cost: Number(form.default_purchase_cost),
       reorder_level: Number(form.reorder_level),
       conversions: parsedConversions,
@@ -469,20 +490,45 @@ export const ProductsPage: React.FC = () => {
             Products
           </h1>
           <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-            Define packaging first, then choose purchase and selling units from those conversions.
+            {pageTab === 'catalog'
+              ? 'Manage categories, brands and makes used on products.'
+              : 'Define packaging first, then choose purchase and selling units from those conversions.'}
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'end' }}>
-          <div className="field">
-            <label>Search</label>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name / SKU" />
+        {pageTab === 'products' ? (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'end' }}>
+            <div className="field">
+              <label>Search</label>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name / SKU" />
+            </div>
+            <button type="button" className="btn btn-ghost" onClick={() => void load()}>
+              Search
+            </button>
           </div>
-          <button type="button" className="btn btn-ghost" onClick={() => void load()}>
-            Search
-          </button>
-        </div>
+        ) : null}
       </header>
 
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className={`btn ${pageTab === 'products' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setPageTab('products')}
+        >
+          Products
+        </button>
+        <button
+          type="button"
+          className={`btn ${pageTab === 'catalog' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setPageTab('catalog')}
+        >
+          Categories / brands / makes
+        </button>
+      </div>
+
+      {pageTab === 'catalog' ? <ProductCatalogPanel /> : null}
+
+      {pageTab === 'products' ? (
+      <>
       <form
         onSubmit={save}
         className="card-surface"
@@ -531,9 +577,37 @@ export const ProductsPage: React.FC = () => {
                 onChange={(e) => setForm({ ...form, category_id: e.target.value })}
               >
                 <option value="">—</option>
-                {categories.map((c) => (
+                {activeCategories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Brand</label>
+              <select
+                value={form.brand_id}
+                onChange={(e) => setForm({ ...form, brand_id: e.target.value })}
+              >
+                <option value="">—</option>
+                {activeBrands.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Make</label>
+              <select
+                value={form.make_id}
+                onChange={(e) => setForm({ ...form, make_id: e.target.value })}
+              >
+                <option value="">—</option>
+                {activeMakes.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name}
                   </option>
                 ))}
               </select>
@@ -953,6 +1027,7 @@ export const ProductsPage: React.FC = () => {
             <tr>
               <th>SKU</th>
               <th>Name</th>
+              <th>Brand / make</th>
               <th>Tracking</th>
               <th>Base</th>
               <th>Purchase</th>
@@ -972,7 +1047,17 @@ export const ProductsPage: React.FC = () => {
                   onClick={() => setExpandedId(expandedId === p.id ? null : p.id)}
                 >
                   <td>{p.sku || '—'}</td>
-                  <td>{p.name}</td>
+                  <td>
+                    <div>{p.name}</div>
+                    {p.category?.name ? (
+                      <div style={{ color: 'var(--ink-muted)', fontSize: '0.75rem' }}>
+                        {p.category.name}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td style={{ fontSize: '0.85rem' }}>
+                    {[p.brand?.name, p.make?.name].filter(Boolean).join(' · ') || '—'}
+                  </td>
                   <td>
                     {[
                       p.track_expiry && 'Expiry',
@@ -1027,7 +1112,7 @@ export const ProductsPage: React.FC = () => {
                 </tr>
                 {expandedId === p.id ? (
                   <tr>
-                    <td colSpan={8} style={{ background: 'rgba(15,92,76,0.03)' }}>
+                    <td colSpan={9} style={{ background: 'rgba(15,92,76,0.03)' }}>
                       <div className="split-2" style={{ padding: '0.75rem 0.85rem' }}>
                         <div>
                           <strong>Packaging</strong>
@@ -1066,6 +1151,8 @@ export const ProductsPage: React.FC = () => {
         </table>
         </div>
       </div>
+      </>
+      ) : null}
     </div>
   );
 };

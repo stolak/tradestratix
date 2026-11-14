@@ -99,6 +99,7 @@ function resolveTrackingFlags(body: Record<string, any>): TrackingFlags {
 const productDetailInclude = {
   category: true,
   brand: true,
+  make: true,
   baseUom: true,
   purchaseUom: true,
   sellingUom: true,
@@ -149,6 +150,7 @@ export async function listProducts(businessId: string, q?: string, branchId?: st
     include: {
       category: true,
       brand: true,
+      make: true,
       baseUom: true,
       purchaseUom: true,
       sellingUom: true,
@@ -270,6 +272,7 @@ export async function createProduct(user: AuthUser, body: Record<string, any>) {
           description: body.description || null,
           categoryId: body.category_id || body.categoryId || null,
           brandId: body.brand_id || body.brandId || null,
+          makeId: body.make_id || body.makeId || null,
           manufacturer: body.manufacturer || null,
           imageUrl: body.image_url || body.imageUrl || null,
           ...tracking,
@@ -379,6 +382,7 @@ export async function createProduct(user: AuthUser, body: Record<string, any>) {
         include: {
           category: true,
           brand: true,
+          make: true,
           baseUom: true,
           purchaseUom: true,
           sellingUom: true,
@@ -491,6 +495,8 @@ export async function updateProduct(user: AuthUser, id: string, body: Record<str
     categoryId: 'categoryId',
     brand_id: 'brandId',
     brandId: 'brandId',
+    make_id: 'makeId',
+    makeId: 'makeId',
     manufacturer: 'manufacturer',
     status: 'status',
     reorder_level: 'reorderLevel',
@@ -674,18 +680,43 @@ export async function addVariant(user: AuthUser, productId: string, body: Record
   return serialize(created);
 }
 
-export async function listCategories(businessId: string) {
+type CatalogListOpts = { activeOnly?: boolean };
+
+function catalogFlags(productCount: number, activeProductCount: number) {
+  return {
+    product_count: productCount,
+    active_product_count: activeProductCount,
+    can_delete: productCount === 0,
+    can_disable: activeProductCount === 0
+  };
+}
+
+export async function listCategories(businessId: string, opts: CatalogListOpts = {}) {
+  const rows = await prisma.productCategory.findMany({
+    where: {
+      businessId,
+      ...(opts.activeOnly ? { isActive: true } : {})
+    },
+    include: {
+      children: true,
+      products: { where: { status: 'active' }, select: { id: true } },
+      _count: { select: { products: true } }
+    },
+    orderBy: { name: 'asc' }
+  });
   return serialize(
-    await prisma.productCategory.findMany({
-      where: { businessId },
-      include: { children: true },
-      orderBy: { name: 'asc' }
+    rows.map((r) => {
+      const { products, ...rest } = r;
+      return {
+        ...rest,
+        ...catalogFlags(r._count.products, products.length)
+      };
     })
   );
 }
 
 export async function createCategory(user: AuthUser, body: Record<string, any>) {
-  const name = requireString(body.name, 'name');
+  const name = requireString(body.name, 'name').trim();
   try {
     const row = await prisma.productCategory.create({
       data: {
@@ -704,14 +735,86 @@ export async function createCategory(user: AuthUser, body: Record<string, any>) 
   }
 }
 
-export async function listBrands(businessId: string) {
+export async function updateCategory(user: AuthUser, id: string, body: Record<string, any>) {
+  const existing = await prisma.productCategory.findFirst({
+    where: { id, businessId: user.businessId }
+  });
+  if (!existing) throw httpError(404, 'Category not found');
+
+  const nextActive =
+    body.is_active !== undefined || body.isActive !== undefined
+      ? Boolean(body.is_active ?? body.isActive)
+      : undefined;
+  if (nextActive === false && existing.isActive) {
+    const activeCount = await prisma.product.count({
+      where: { businessId: user.businessId, categoryId: id, status: 'active' }
+    });
+    if (activeCount > 0) {
+      throw httpError(
+        409,
+        `Cannot disable: ${activeCount} active product(s) still use this category`
+      );
+    }
+  }
+
+  const data: Record<string, unknown> = {};
+  if (body.name != null) data.name = String(body.name).trim();
+  if (body.code !== undefined) data.code = body.code || null;
+  if (body.description !== undefined) data.description = body.description || null;
+  if (body.parent_id !== undefined || body.parentId !== undefined) {
+    data.parentId = body.parent_id ?? body.parentId ?? null;
+  }
+  if (nextActive !== undefined) data.isActive = nextActive;
+
+  try {
+    return serialize(await prisma.productCategory.update({ where: { id }, data: data as any }));
+  } catch (err: any) {
+    if (err?.code === 'P2002') throw httpError(409, 'Category name already exists');
+    throw err;
+  }
+}
+
+export async function deleteCategory(user: AuthUser, id: string) {
+  const existing = await prisma.productCategory.findFirst({
+    where: { id, businessId: user.businessId },
+    include: { _count: { select: { products: true, children: true } } }
+  });
+  if (!existing) throw httpError(404, 'Category not found');
+  if (existing._count.products > 0) {
+    throw httpError(409, 'Cannot delete: products still use this category. Disable it instead.');
+  }
+  if (existing._count.children > 0) {
+    throw httpError(409, 'Cannot delete: this category has child categories');
+  }
+  await prisma.productCategory.delete({ where: { id } });
+  return { deleted: true, id };
+}
+
+export async function listBrands(businessId: string, opts: CatalogListOpts = {}) {
+  const rows = await prisma.brand.findMany({
+    where: {
+      businessId,
+      ...(opts.activeOnly ? { isActive: true } : {})
+    },
+    include: {
+      products: { where: { status: 'active' }, select: { id: true } },
+      _count: { select: { products: true } }
+    },
+    orderBy: { name: 'asc' }
+  });
   return serialize(
-    await prisma.brand.findMany({ where: { businessId }, orderBy: { name: 'asc' } })
+    rows.map((r) => {
+      const { products, ...rest } = r;
+      return {
+        ...rest,
+        ...catalogFlags(r._count.products, products.length)
+      };
+    })
   );
 }
 
 export async function createBrand(user: AuthUser, body: Record<string, any>) {
-  const name = requireString(body.name, 'name');
+  const name = requireString(body.name, 'name').trim();
   try {
     return serialize(
       await prisma.brand.create({
@@ -719,7 +822,8 @@ export async function createBrand(user: AuthUser, body: Record<string, any>) {
           id: shortId('brd'),
           businessId: user.businessId,
           name,
-          code: body.code || null
+          code: body.code || null,
+          description: body.description || null
         }
       })
     );
@@ -727,4 +831,139 @@ export async function createBrand(user: AuthUser, body: Record<string, any>) {
     if (err?.code === 'P2002') throw httpError(409, 'Brand name already exists');
     throw err;
   }
+}
+
+export async function updateBrand(user: AuthUser, id: string, body: Record<string, any>) {
+  const existing = await prisma.brand.findFirst({
+    where: { id, businessId: user.businessId }
+  });
+  if (!existing) throw httpError(404, 'Brand not found');
+
+  const nextActive =
+    body.is_active !== undefined || body.isActive !== undefined
+      ? Boolean(body.is_active ?? body.isActive)
+      : undefined;
+  if (nextActive === false && existing.isActive) {
+    const activeCount = await prisma.product.count({
+      where: { businessId: user.businessId, brandId: id, status: 'active' }
+    });
+    if (activeCount > 0) {
+      throw httpError(409, `Cannot disable: ${activeCount} active product(s) still use this brand`);
+    }
+  }
+
+  const data: Record<string, unknown> = {};
+  if (body.name != null) data.name = String(body.name).trim();
+  if (body.code !== undefined) data.code = body.code || null;
+  if (body.description !== undefined) data.description = body.description || null;
+  if (nextActive !== undefined) data.isActive = nextActive;
+
+  try {
+    return serialize(await prisma.brand.update({ where: { id }, data: data as any }));
+  } catch (err: any) {
+    if (err?.code === 'P2002') throw httpError(409, 'Brand name already exists');
+    throw err;
+  }
+}
+
+export async function deleteBrand(user: AuthUser, id: string) {
+  const existing = await prisma.brand.findFirst({
+    where: { id, businessId: user.businessId },
+    include: { _count: { select: { products: true } } }
+  });
+  if (!existing) throw httpError(404, 'Brand not found');
+  if (existing._count.products > 0) {
+    throw httpError(409, 'Cannot delete: products still use this brand. Disable it instead.');
+  }
+  await prisma.brand.delete({ where: { id } });
+  return { deleted: true, id };
+}
+
+export async function listMakes(businessId: string, opts: CatalogListOpts = {}) {
+  const rows = await prisma.productMake.findMany({
+    where: {
+      businessId,
+      ...(opts.activeOnly ? { isActive: true } : {})
+    },
+    include: {
+      products: { where: { status: 'active' }, select: { id: true } },
+      _count: { select: { products: true } }
+    },
+    orderBy: { name: 'asc' }
+  });
+  return serialize(
+    rows.map((r) => {
+      const { products, ...rest } = r;
+      return {
+        ...rest,
+        ...catalogFlags(r._count.products, products.length)
+      };
+    })
+  );
+}
+
+export async function createMake(user: AuthUser, body: Record<string, any>) {
+  const name = requireString(body.name, 'name').trim();
+  try {
+    return serialize(
+      await prisma.productMake.create({
+        data: {
+          id: shortId('mak'),
+          businessId: user.businessId,
+          name,
+          code: body.code || null,
+          description: body.description || null
+        }
+      })
+    );
+  } catch (err: any) {
+    if (err?.code === 'P2002') throw httpError(409, 'Make name already exists');
+    throw err;
+  }
+}
+
+export async function updateMake(user: AuthUser, id: string, body: Record<string, any>) {
+  const existing = await prisma.productMake.findFirst({
+    where: { id, businessId: user.businessId }
+  });
+  if (!existing) throw httpError(404, 'Make not found');
+
+  const nextActive =
+    body.is_active !== undefined || body.isActive !== undefined
+      ? Boolean(body.is_active ?? body.isActive)
+      : undefined;
+  if (nextActive === false && existing.isActive) {
+    const activeCount = await prisma.product.count({
+      where: { businessId: user.businessId, makeId: id, status: 'active' }
+    });
+    if (activeCount > 0) {
+      throw httpError(409, `Cannot disable: ${activeCount} active product(s) still use this make`);
+    }
+  }
+
+  const data: Record<string, unknown> = {};
+  if (body.name != null) data.name = String(body.name).trim();
+  if (body.code !== undefined) data.code = body.code || null;
+  if (body.description !== undefined) data.description = body.description || null;
+  if (nextActive !== undefined) data.isActive = nextActive;
+
+  try {
+    return serialize(await prisma.productMake.update({ where: { id }, data: data as any }));
+  } catch (err: any) {
+    if (err?.code === 'P2002') throw httpError(409, 'Make name already exists');
+    throw err;
+  }
+}
+
+export async function deleteMake(user: AuthUser, id: string) {
+  const existing = await prisma.productMake.findFirst({
+    where: { id, businessId: user.businessId },
+    include: { _count: { select: { products: true } } }
+  });
+  if (!existing) throw httpError(404, 'Make not found');
+  if (existing._count.products > 0) {
+    throw httpError(409, 'Cannot delete: products still use this make. Disable it instead.');
+  }
+  await prisma.productMake.delete({ where: { id } });
+  return { deleted: true, id };
 }

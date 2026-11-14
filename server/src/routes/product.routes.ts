@@ -10,8 +10,18 @@ router.use(authenticate);
 
 router.get('/categories', requirePermission('products.view'), productController.listCategories);
 router.post('/categories', requirePermission('products.create'), productController.createCategory);
+router.patch('/categories/:id', requirePermission('products.edit'), productController.updateCategory);
+router.delete('/categories/:id', requirePermission('products.delete'), productController.deleteCategory);
+
 router.get('/brands', requirePermission('products.view'), productController.listBrands);
 router.post('/brands', requirePermission('products.create'), productController.createBrand);
+router.patch('/brands/:id', requirePermission('products.edit'), productController.updateBrand);
+router.delete('/brands/:id', requirePermission('products.delete'), productController.deleteBrand);
+
+router.get('/makes', requirePermission('products.view'), productController.listMakes);
+router.post('/makes', requirePermission('products.create'), productController.createMake);
+router.patch('/makes/:id', requirePermission('products.edit'), productController.updateMake);
+router.delete('/makes/:id', requirePermission('products.delete'), productController.deleteMake);
 
 router.get(
   '/branch-prices',
