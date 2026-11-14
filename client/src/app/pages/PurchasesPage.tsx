@@ -111,6 +111,51 @@ export const PurchasesPage: React.FC = () => {
       .map((s) => s.trim())
       .filter(Boolean);
 
+  /** Convert packaging qty → base units (serials are always 1 per base unit). */
+  const qtyToBase = (product: any, fromUomId: string | null | undefined, quantity: number) => {
+    const baseId = product?.base_uom_id || product?.base_uom?.id;
+    if (!fromUomId || !baseId || fromUomId === baseId) return quantity;
+    const conversions: any[] = product?.conversions || [];
+    const direct = conversions.find(
+      (c) =>
+        (c.from_uom_id || c.from_uom?.id) === fromUomId &&
+        (c.to_uom_id || c.to_uom?.id) === baseId
+    );
+    if (direct) return quantity * Number(direct.factor || 0);
+    const reverse = conversions.find(
+      (c) =>
+        (c.from_uom_id || c.from_uom?.id) === baseId &&
+        (c.to_uom_id || c.to_uom?.id) === fromUomId
+    );
+    if (reverse && Number(reverse.factor) !== 0) return quantity / Number(reverse.factor);
+    // One-hop: from → mid → base
+    for (const link of conversions) {
+      const linkFrom = link.from_uom_id || link.from_uom?.id;
+      const linkTo = link.to_uom_id || link.to_uom?.id;
+      if (linkFrom !== fromUomId) continue;
+      if (linkTo === baseId) return quantity * Number(link.factor || 0);
+      const next = conversions.find(
+        (c) =>
+          (c.from_uom_id || c.from_uom?.id) === linkTo &&
+          (c.to_uom_id || c.to_uom?.id) === baseId
+      );
+      if (next) return quantity * Number(link.factor || 0) * Number(next.factor || 0);
+    }
+    return null;
+  };
+
+  /** Prefer products.list() row (has conversions); PO embed may omit them. */
+  const productForLine = (it: any) => productById.get(it.product_id) || it.product;
+
+  const serialsRequiredForLine = (it: any, remaining: number) => {
+    const product = productForLine(it);
+    if (!product?.track_serial) return 0;
+    const uomId = it.uom_id || it.uom?.id;
+    const base = qtyToBase(product, uomId, remaining);
+    if (base == null || !(base > 0)) return null;
+    return Math.round(base);
+  };
+
   const receivableOrders = useMemo(
     () => orders.filter((o) => ['approved', 'partially_received'].includes(o.status)),
     [orders]
@@ -207,7 +252,7 @@ export const PurchasesPage: React.FC = () => {
     for (const it of selectedPo.items) {
       const remaining = Number(it.quantity_ordered) - Number(it.quantity_received);
       if (remaining <= 0) continue;
-      const product = it.product || productById.get(it.product_id);
+      const product = productForLine(it);
       const line = receiveLines[it.id] || {
         batch_number: '',
         expiry_date: '',
@@ -229,10 +274,19 @@ export const PurchasesPage: React.FC = () => {
       }
       if (product?.track_serial) {
         const serials = parseSerialInput(line.serial_numbers);
-        if (serials.length !== Math.round(remaining)) {
+        const needed = serialsRequiredForLine(it, remaining);
+        if (needed == null) {
           await alertError(
             'Serials required',
-            `${product.name || 'Product'} needs exactly ${Math.round(remaining)} serial number(s).`
+            `Cannot convert ${it.uom?.code || 'UoM'} to base units for ${product.name || 'product'}. Check packaging conversions.`
+          );
+          return;
+        }
+        if (serials.length !== needed) {
+          const baseCode = product.base_uom?.code || 'pcs';
+          await alertError(
+            'Serials required',
+            `${product.name || 'Product'}: ${remaining} ${it.uom?.code || ''} = ${needed} ${baseCode} — enter exactly ${needed} serial number(s).`
           );
           return;
         }
@@ -544,10 +598,14 @@ export const PurchasesPage: React.FC = () => {
                       .map((it: any) => {
                         const remaining =
                           Number(it.quantity_ordered) - Number(it.quantity_received);
-                        const product = it.product || productById.get(it.product_id);
+                        const product = productForLine(it);
                         const trackBatch = !!product?.track_batch;
                         const trackExpiry = !!product?.track_expiry;
                         const trackSerial = !!product?.track_serial;
+                        const serialsNeeded = trackSerial
+                          ? serialsRequiredForLine(it, remaining)
+                          : 0;
+                        const baseCode = product?.base_uom?.code || 'pcs';
                         const line = receiveLines[it.id] || {
                           batch_number: '',
                           expiry_date: '',
@@ -569,6 +627,11 @@ export const PurchasesPage: React.FC = () => {
                             </td>
                             <td>
                               {remaining} {it.uom?.code || ''}
+                              {trackSerial && serialsNeeded != null && serialsNeeded !== remaining ? (
+                                <div style={{ color: 'var(--ink-muted)', fontSize: '0.75rem' }}>
+                                  = {serialsNeeded} {baseCode}
+                                </div>
+                              ) : null}
                             </td>
                             <td>{Number(it.unit_cost).toLocaleString()}</td>
                             <td>
@@ -609,9 +672,16 @@ export const PurchasesPage: React.FC = () => {
                               {trackSerial ? (
                                 <textarea
                                   required
-                                  rows={Math.min(4, Math.max(2, Math.round(remaining)))}
+                                  rows={Math.min(
+                                    6,
+                                    Math.max(2, serialsNeeded != null ? serialsNeeded : 2)
+                                  )}
                                   value={line.serial_numbers}
-                                  placeholder={`One serial per line (${Math.round(remaining)} required)`}
+                                  placeholder={
+                                    serialsNeeded != null
+                                      ? `One serial per ${baseCode} (${serialsNeeded} required)`
+                                      : 'One serial per base unit'
+                                  }
                                   onChange={(e) =>
                                     setReceiveLines((prev) => ({
                                       ...prev,
