@@ -99,8 +99,24 @@ function sectionTitle(step: number, title: string, hint: string) {
   );
 }
 
-export const ProductsPage: React.FC = () => {
-  const [pageTab, setPageTab] = useState<'products' | 'catalog'>('products');
+type PageTab = 'products' | 'catalog';
+type CatalogKind = 'categories' | 'brands' | 'makes' | 'units';
+
+type ProductsPageProps = {
+  initialTab?: PageTab;
+  catalogKind?: CatalogKind;
+};
+
+export const ProductsPage: React.FC<ProductsPageProps> = ({
+  initialTab = 'products',
+  catalogKind = 'categories'
+}) => {
+  const [pageTab, setPageTab] = useState<PageTab>(initialTab);
+
+  useEffect(() => {
+    setPageTab(initialTab);
+  }, [initialTab]);
+
   const [rows, setRows] = useState<any[]>([]);
   const [uoms, setUoms] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
@@ -245,7 +261,7 @@ export const ProductsPage: React.FC = () => {
     if (!next) {
       void alertError(
         'No more units',
-        'Add more units under Units, then return here to map packaging.'
+        'Add more units under Catalog → Units, then return here to map packaging.'
       );
       return;
     }
@@ -491,7 +507,7 @@ export const ProductsPage: React.FC = () => {
           </h1>
           <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
             {pageTab === 'catalog'
-              ? 'Manage categories, brands and makes used on products.'
+              ? 'Manage categories, brands, makes, and units of measure used on products.'
               : 'Define packaging first, then choose purchase and selling units from those conversions.'}
           </p>
         </div>
@@ -512,20 +528,26 @@ export const ProductsPage: React.FC = () => {
         <button
           type="button"
           className={`btn ${pageTab === 'products' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => setPageTab('products')}
+          onClick={() => {
+            setPageTab('products');
+            void load();
+          }}
         >
           Products
         </button>
         <button
           type="button"
           className={`btn ${pageTab === 'catalog' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => setPageTab('catalog')}
+          onClick={() => {
+            setPageTab('catalog');
+            void load();
+          }}
         >
-          Categories / brands / makes
+          Catalog
         </button>
       </div>
 
-      {pageTab === 'catalog' ? <ProductCatalogPanel /> : null}
+      {pageTab === 'catalog' ? <ProductCatalogPanel initialKind={catalogKind} /> : null}
 
       {pageTab === 'products' ? (
       <>

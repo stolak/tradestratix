@@ -80,7 +80,6 @@ const NAV = [
       { route: ROUTES.PRODUCTS, label: 'Products', icon: 'Package', perm: 'products.view' },
       { route: ROUTES.BRANCH_PRICING, label: 'Branch pricing', icon: 'Tags', perm: 'products.branch_price' },
       { route: ROUTES.INVENTORY, label: 'Inventory', icon: 'Boxes', perm: 'inventory.view' },
-      { route: 'uoms', label: 'Units', icon: 'Package', perm: 'products.view' },
       { route: ROUTES.WAREHOUSES, label: 'Warehouses', icon: 'Warehouse', perm: 'warehouses.view' }
     ]
   },
