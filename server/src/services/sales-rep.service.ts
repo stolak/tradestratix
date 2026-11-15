@@ -449,7 +449,9 @@ export async function updateSalesRep(user: AuthUser, id: string, body: Record<st
       module: 'sales_reps',
       entityType: 'SalesRep',
       entityId: id,
-      summary: `Updated sales rep ${updated.employee?.fullName || id}`
+      summary: `Updated sales rep ${updated.employee?.fullName || id}`,
+      before: existing as unknown as Record<string, unknown>,
+      after: updated as unknown as Record<string, unknown>
     });
     return serialize(presentRep(updated));
   } catch (err: any) {

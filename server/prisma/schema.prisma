@@ -657,6 +657,8 @@ model AuditLog {
   entityType String?   @map("entity_type")
   entityId   String?   @map("entity_id")
   summary    String?   @db.Text
+  /// Field-level diff for updates: { field: { from, to }, ... }
+  changes    String?   @db.LongText
   metadata   String?   @db.LongText
   ipAddress  String?   @map("ip_address")
   createdAt  DateTime  @default(now()) @map("created_at")

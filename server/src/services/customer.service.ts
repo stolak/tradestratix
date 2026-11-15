@@ -488,7 +488,9 @@ export async function updateCustomer(user: AuthUser, id: string, body: Record<st
       module: 'customers',
       entityType: 'Customer',
       entityId: id,
-      summary: `Updated customer ${updated.name}${changes.length ? ` (${changes.join('; ')})` : ''}`
+      summary: `Updated customer ${updated.name}${changes.length ? ` (${changes.join('; ')})` : ''}`,
+      before: existing as unknown as Record<string, unknown>,
+      after: updated as unknown as Record<string, unknown>
     });
     const exposure = await getCustomerExposure(prisma, user.businessId, id);
     return serialize(withCredit(updated, exposure.receivable, exposure.openOrders));

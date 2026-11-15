@@ -379,13 +379,19 @@ export async function updateUser(actor: AuthUser, id: string, body: Record<strin
     data: data as any
   });
 
+  const updated = await loadUser(actor.businessId, id);
   await writeAudit({
     user: actor,
     action: 'update',
     module: 'users',
     entityType: 'User',
     entityId: id,
-    summary: `Updated user ${existing.username}`
+    summary: `Updated user ${existing.username}`,
+    before: existing as unknown as Record<string, unknown>,
+    after: updated as unknown as Record<string, unknown>,
+    ...(body.password
+      ? { changes: { password: { from: null, to: '(changed)' } } }
+      : {})
   });
-  return serialize(omitPassword(await loadUser(actor.businessId, id)));
+  return serialize(omitPassword(updated));
 }

@@ -135,7 +135,9 @@ export async function updateBranch(user: AuthUser, id: string, body: Record<stri
     module: 'branches',
     entityType: 'Branch',
     entityId: id,
-    summary: `Updated branch ${updated.code}`
+    summary: `Updated branch ${updated.code}`,
+    before: existing as unknown as Record<string, unknown>,
+    after: updated as unknown as Record<string, unknown>
   });
   return serialize(updated);
 }

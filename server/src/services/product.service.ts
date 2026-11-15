@@ -616,7 +616,9 @@ export async function updateProduct(user: AuthUser, id: string, body: Record<str
       module: 'products',
       entityType: 'Product',
       entityId: id,
-      summary: `Updated product ${updated?.name || id}`
+      summary: `Updated product ${updated?.name || id}`,
+      before: existing as unknown as Record<string, unknown>,
+      after: updated as unknown as Record<string, unknown>
     });
     return withDeleteFlag(serialize(updated) as any);
   } catch (err: any) {

@@ -136,7 +136,9 @@ export async function updateVehicle(user: AuthUser, id: string, body: Record<str
     module: 'distribution',
     entityType: 'Vehicle',
     entityId: updated.id,
-    summary: `Updated vehicle ${updated.name}`
+    summary: `Updated vehicle ${updated.name}`,
+    before: existing as unknown as Record<string, unknown>,
+    after: updated as unknown as Record<string, unknown>
   });
 
   return serialize(updated);

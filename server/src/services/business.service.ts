@@ -50,6 +50,9 @@ export async function updateCurrentBusiness(
   }
   if (body.name != null) data.name = requireString(body.name, 'name');
 
+  const existing = await prisma.business.findUnique({ where: { id: user.businessId } });
+  if (!existing) throw httpError(404, 'Business not found');
+
   const updated = await prisma.business.update({
     where: { id: user.businessId },
     data: { ...data, updatedById: user.id } as any
@@ -60,7 +63,9 @@ export async function updateCurrentBusiness(
     module: 'businesses',
     entityType: 'Business',
     entityId: updated.id,
-    summary: 'Updated business profile'
+    summary: 'Updated business profile',
+    before: existing as unknown as Record<string, unknown>,
+    after: updated as unknown as Record<string, unknown>
   });
   return serialize(updated);
 }

@@ -212,7 +212,9 @@ export async function updateWarehouseCategory(
       module: 'warehouses',
       entityType: 'WarehouseCategory',
       entityId: id,
-      summary: `Updated warehouse category ${updated.code}`
+      summary: `Updated warehouse category ${updated.code}`,
+      before: existing as unknown as Record<string, unknown>,
+      after: updated as unknown as Record<string, unknown>
     });
     return serialize(updated);
   } catch (err: any) {

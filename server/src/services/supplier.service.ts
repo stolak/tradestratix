@@ -141,7 +141,9 @@ export async function updateSupplier(user: AuthUser, id: string, body: Record<st
       module: 'suppliers',
       entityType: 'Supplier',
       entityId: id,
-      summary: `Updated supplier ${updated.name}`
+      summary: `Updated supplier ${updated.name}`,
+      before: existing as unknown as Record<string, unknown>,
+      after: updated as unknown as Record<string, unknown>
     });
     return serialize(updated);
   } catch (err: any) {

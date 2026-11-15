@@ -343,7 +343,9 @@ export async function updateWarehouse(user: AuthUser, id: string, body: Record<s
     module: 'warehouses',
     entityType: 'Warehouse',
     entityId: id,
-    summary: `Updated warehouse ${updated.code}`
+    summary: `Updated warehouse ${updated.code}`,
+    before: existing as unknown as Record<string, unknown>,
+    after: updated as unknown as Record<string, unknown>
   });
   return serialize(updated);
 }

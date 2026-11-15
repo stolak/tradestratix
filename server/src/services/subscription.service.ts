@@ -83,7 +83,9 @@ export async function updateSubscriptionStatus(
     module: 'subscriptions',
     entityType: 'BusinessSubscription',
     entityId: updated.id,
-    summary: `Subscription status set to ${status}`
+    summary: `Subscription status set to ${status}`,
+    before: existing as unknown as Record<string, unknown>,
+    after: updated as unknown as Record<string, unknown>
   });
 
   return serialize(updated);
