@@ -27,7 +27,6 @@ import { AssetsPage } from './pages/AssetsPage';
 import { HrPage } from './pages/HrPage';
 import { PayrollPage } from './pages/PayrollPage';
 import { DistributionPage } from './pages/DistributionPage';
-import { InsightsPage } from './pages/InsightsPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { SubscriptionsPage } from './pages/SubscriptionsPage';
 import { BranchSwitcher } from './components/BranchSwitcher';
@@ -76,7 +75,7 @@ export const App: React.FC = () => {
   let content: React.ReactNode;
   switch (route) {
     case ROUTES.DASHBOARD:
-      content = <DashboardPage />;
+      content = <DashboardPage initialTab="overview" />;
       break;
     case ROUTES.BRANCHES:
       content = <BranchesPage />;
@@ -154,7 +153,7 @@ export const App: React.FC = () => {
       content = <DistributionPage />;
       break;
     case ROUTES.INSIGHTS:
-      content = <InsightsPage />;
+      content = <DashboardPage initialTab="insights" />;
       break;
     case ROUTES.NOTIFICATIONS:
       content = <NotificationsPage />;

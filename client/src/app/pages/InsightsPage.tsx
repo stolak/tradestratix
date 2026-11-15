@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError } from '../utils/alerts';
 
-export const InsightsPage: React.FC = () => {
+/** Insights content — used as a tab panel under Dashboard. */
+export const InsightsPanel: React.FC = () => {
   const [data, setData] = useState<any>(null);
 
   const load = async () => {
@@ -37,16 +38,7 @@ export const InsightsPage: React.FC = () => {
   const deliveryRows = Object.entries(data?.deliveries_by_status || {});
 
   return (
-    <div className="page-stack">
-      <header>
-        <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
-          Insights
-        </h1>
-        <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Business intelligence KPIs across sales, purchases, expenses, stock and logistics.
-        </p>
-      </header>
-
+    <>
       <div style={{ display: 'flex', gap: 8 }}>
         <button type="button" className="btn btn-ghost" onClick={() => void load()}>
           Refresh
@@ -78,25 +70,25 @@ export const InsightsPage: React.FC = () => {
           <h3 style={{ marginTop: 0 }}>Deliveries by status</h3>
           <div className="table-wrap">
             <table className="table">
-            <thead>
-              <tr>
-                <th>Status</th>
-                <th>Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              {deliveryRows.map(([status, count]) => (
-                <tr key={status}>
-                  <td>{status}</td>
-                  <td>{Number(count).toLocaleString()}</td>
-                </tr>
-              ))}
-              {!deliveryRows.length ? (
+              <thead>
                 <tr>
-                  <td colSpan={2}>No deliveries yet</td>
+                  <th>Status</th>
+                  <th>Count</th>
                 </tr>
-              ) : null}
-            </tbody>
+              </thead>
+              <tbody>
+                {deliveryRows.map(([status, count]) => (
+                  <tr key={status}>
+                    <td>{status}</td>
+                    <td>{Number(count).toLocaleString()}</td>
+                  </tr>
+                ))}
+                {!deliveryRows.length ? (
+                  <tr>
+                    <td colSpan={2}>No deliveries yet</td>
+                  </tr>
+                ) : null}
+              </tbody>
             </table>
           </div>
         </div>
@@ -106,27 +98,27 @@ export const InsightsPage: React.FC = () => {
           {data?.payroll_last_run ? (
             <div className="table-wrap">
               <table className="table">
-              <tbody>
-                <tr>
-                  <th>Run #</th>
-                  <td>{data.payroll_last_run.run_number}</td>
-                </tr>
-                <tr>
-                  <th>Status</th>
-                  <td>{data.payroll_last_run.status}</td>
-                </tr>
-                <tr>
-                  <th>Net</th>
-                  <td>{Number(data.payroll_last_run.total_net).toLocaleString()}</td>
-                </tr>
-                <tr>
-                  <th>Period</th>
-                  <td>
-                    {String(data.payroll_last_run.period_start).slice(0, 10)} →{' '}
-                    {String(data.payroll_last_run.period_end).slice(0, 10)}
-                  </td>
-                </tr>
-              </tbody>
+                <tbody>
+                  <tr>
+                    <th>Run #</th>
+                    <td>{data.payroll_last_run.run_number}</td>
+                  </tr>
+                  <tr>
+                    <th>Status</th>
+                    <td>{data.payroll_last_run.status}</td>
+                  </tr>
+                  <tr>
+                    <th>Net</th>
+                    <td>{Number(data.payroll_last_run.total_net).toLocaleString()}</td>
+                  </tr>
+                  <tr>
+                    <th>Period</th>
+                    <td>
+                      {String(data.payroll_last_run.period_start).slice(0, 10)} →{' '}
+                      {String(data.payroll_last_run.period_end).slice(0, 10)}
+                    </td>
+                  </tr>
+                </tbody>
               </table>
             </div>
           ) : (
@@ -137,6 +129,9 @@ export const InsightsPage: React.FC = () => {
           </p>
         </div>
       </div>
-    </div>
+    </>
   );
 };
+
+/** @deprecated Prefer DashboardPage with initialTab="insights". */
+export const InsightsPage = InsightsPanel;

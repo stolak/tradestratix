@@ -64,7 +64,17 @@ const ICONS: Record<string, React.ComponentType<{ size?: number }>> = {
 };
 
 const NAV = [
-  { section: 'Overview', items: [{ route: ROUTES.DASHBOARD, label: 'Dashboard', icon: 'LayoutDashboard', perm: 'dashboard.view' }] },
+  {
+    section: 'Overview',
+    items: [
+      {
+        route: ROUTES.DASHBOARD,
+        label: 'Dashboard',
+        icon: 'LayoutDashboard',
+        perm: ['dashboard.view', 'reports.view']
+      }
+    ]
+  },
   {
     section: 'Commerce',
     items: [
@@ -115,7 +125,6 @@ const NAV = [
   {
     section: 'Insights',
     items: [
-      { route: ROUTES.INSIGHTS, label: 'Insights', icon: 'BarChart3', perm: 'reports.view' },
       { route: ROUTES.NOTIFICATIONS, label: 'Notifications', icon: 'Bell', perm: 'dashboard.view' }
     ]
   },
@@ -191,7 +200,8 @@ export const Sidebar: React.FC<Props> = ({ current, onNavigate, can, businessNam
                   const Icon = ICONS[item.icon] || LayoutDashboard;
                   const active =
                     current === item.route ||
-                    (item.route === ROUTES.USERS && current === ROUTES.ROLES);
+                    (item.route === ROUTES.USERS && current === ROUTES.ROLES) ||
+                    (item.route === ROUTES.DASHBOARD && current === ROUTES.INSIGHTS);
                   return (
                     <button
                       key={item.route}
