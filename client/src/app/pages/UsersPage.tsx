@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
+import { useAuth } from '../context/AuthContext';
+import { ROUTES, setRouteInLocation } from '../routes';
+import { RolesPanel } from './RolesPage';
+
+type PageTab = 'users' | 'roles';
 
 const emptyForm = {
   username: '',
@@ -13,7 +18,7 @@ const emptyForm = {
   default_branch_id: ''
 };
 
-export const UsersPage: React.FC = () => {
+const UsersPanel: React.FC = () => {
   const [rows, setRows] = useState<any[]>([]);
   const [roles, setRoles] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
@@ -154,16 +159,7 @@ export const UsersPage: React.FC = () => {
   };
 
   return (
-    <div className="page-stack">
-      <header>
-        <h1 className="display" style={{ margin: 0 }}>
-          Users
-        </h1>
-        <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Assign branch and warehouse access for each user.
-        </p>
-      </header>
-
+    <>
       <form onSubmit={save} className="card-surface" style={{ padding: '1rem', display: 'grid', gap: 12 }}>
         {editingId ? (
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -383,6 +379,85 @@ export const UsersPage: React.FC = () => {
           </table>
         </div>
       </div>
+    </>
+  );
+};
+
+type UsersPageProps = {
+  initialTab?: PageTab;
+};
+
+/** Users and roles access — one page with tabs. */
+export const UsersPage: React.FC<UsersPageProps> = ({ initialTab = 'users' }) => {
+  const { can } = useAuth();
+  const canUsers = can('users.view');
+  const canRoles = can('roles.view');
+  const availableTabs = useMemo(() => {
+    const tabs: PageTab[] = [];
+    if (canUsers) tabs.push('users');
+    if (canRoles) tabs.push('roles');
+    return tabs;
+  }, [canUsers, canRoles]);
+
+  const [tab, setTab] = useState<PageTab>(() =>
+    availableTabs.includes(initialTab) ? initialTab : availableTabs[0] || 'users'
+  );
+
+  useEffect(() => {
+    const next = availableTabs.includes(initialTab) ? initialTab : availableTabs[0];
+    if (next) setTab(next);
+  }, [initialTab, availableTabs]);
+
+  const selectTab = (next: PageTab) => {
+    setTab(next);
+    setRouteInLocation(next === 'roles' ? ROUTES.ROLES : ROUTES.USERS);
+  };
+
+  return (
+    <div className="page-stack">
+      <header>
+        <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
+          Users &amp; roles
+        </h1>
+        <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
+          {tab === 'roles'
+            ? 'Choose a role, then grant API permissions and navigation menus.'
+            : 'Create users and assign branch, warehouse, and role access.'}
+        </p>
+      </header>
+
+      {availableTabs.length > 1 ? (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {canUsers ? (
+            <button
+              type="button"
+              className={`btn ${tab === 'users' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => selectTab('users')}
+            >
+              Users
+            </button>
+          ) : null}
+          {canRoles ? (
+            <button
+              type="button"
+              className={`btn ${tab === 'roles' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => selectTab('roles')}
+            >
+              Roles &amp; access
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!availableTabs.length ? (
+        <div className="card-surface" style={{ padding: '1rem', color: 'var(--ink-muted)' }}>
+          You do not have permission to manage users or roles.
+        </div>
+      ) : tab === 'roles' ? (
+        <RolesPanel />
+      ) : (
+        <UsersPanel />
+      )}
     </div>
   );
 };

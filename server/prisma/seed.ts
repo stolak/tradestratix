@@ -99,8 +99,8 @@ const MENUS = [
   { code: 'payroll', name: 'Payroll', route: 'payroll', section: 'People', sortOrder: 61, icon: 'Wallet' },
   { code: 'reports', name: 'Reports', route: 'reports', section: 'Insights', sortOrder: 70, icon: 'BarChart3' },
   { code: 'branches', name: 'Branches', route: 'branches', section: 'Settings', sortOrder: 80, icon: 'MapPin' },
-  { code: 'users', name: 'Users', route: 'users', section: 'Settings', sortOrder: 81, icon: 'UserCog' },
-  { code: 'roles', name: 'Roles', route: 'roles', section: 'Settings', sortOrder: 82, icon: 'Shield' },
+  { code: 'users', name: 'Users & roles', route: 'users', section: 'Settings', sortOrder: 81, icon: 'UserCog' },
+  { code: 'roles', name: 'Users & roles', route: 'users', section: 'Settings', sortOrder: 82, icon: 'Shield' },
   { code: 'settings', name: 'Business Settings', route: 'settings', section: 'Settings', sortOrder: 83, icon: 'Settings' },
   { code: 'audit', name: 'Audit Log', route: 'audit', section: 'Settings', sortOrder: 84, icon: 'ScrollText' }
 ];

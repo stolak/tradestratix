@@ -124,8 +124,12 @@ const NAV = [
     section: 'Organisation',
     items: [
       { route: ROUTES.BRANCHES, label: 'Branches', icon: 'MapPin', perm: 'branches.view' },
-      { route: ROUTES.USERS, label: 'Users', icon: 'UserCog', perm: 'users.view' },
-      { route: ROUTES.ROLES, label: 'Roles', icon: 'Shield', perm: 'roles.view' },
+      {
+        route: ROUTES.USERS,
+        label: 'Users & roles',
+        icon: 'UserCog',
+        perm: ['users.view', 'roles.view']
+      },
       { route: ROUTES.SUBSCRIPTIONS, label: 'Subscription', icon: 'CreditCard', perm: 'settings.view' },
       { route: ROUTES.SETTINGS, label: 'Settings', icon: 'Settings', perm: 'settings.view' },
       { route: ROUTES.AUDIT, label: 'Audit', icon: 'ScrollText', perm: 'audit.view' }
@@ -165,7 +169,9 @@ export const Sidebar: React.FC<Props> = ({ current, onNavigate, can, businessNam
 
       <nav style={{ display: 'flex', flexDirection: 'column', gap: '1rem', overflow: 'auto' }}>
         {NAV.map((group) => {
-          const items = group.items.filter((i) => can(i.perm));
+          const items = group.items.filter((i) =>
+            Array.isArray(i.perm) ? can(...i.perm) : can(i.perm)
+          );
           if (!items.length) return null;
           return (
             <div key={group.section}>
@@ -184,7 +190,9 @@ export const Sidebar: React.FC<Props> = ({ current, onNavigate, can, businessNam
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                 {items.map((item) => {
                   const Icon = ICONS[item.icon] || LayoutDashboard;
-                  const active = current === item.route;
+                  const active =
+                    current === item.route ||
+                    (item.route === ROUTES.USERS && current === ROUTES.ROLES);
                   return (
                     <button
                       key={item.route}

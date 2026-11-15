@@ -7,7 +7,6 @@ import { DashboardPage } from './pages/DashboardPage';
 import { BranchesPage } from './pages/BranchesPage';
 import { WarehousesPage } from './pages/WarehousesPage';
 import { UsersPage } from './pages/UsersPage';
-import { RolesPage } from './pages/RolesPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AccountingPage } from './pages/AccountingPage';
 import { AuditPage } from './pages/AuditPage';
@@ -87,10 +86,10 @@ export const App: React.FC = () => {
       content = <WarehousesPage />;
       break;
     case ROUTES.USERS:
-      content = <UsersPage />;
+      content = <UsersPage initialTab="users" />;
       break;
     case ROUTES.ROLES:
-      content = <RolesPage />;
+      content = <UsersPage initialTab="roles" />;
       break;
     case ROUTES.SETTINGS:
       content = <SettingsPage />;
