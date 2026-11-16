@@ -5,14 +5,12 @@ import { Sidebar } from './components/Sidebar';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { BranchesPage } from './pages/BranchesPage';
-import { WarehousesPage } from './pages/WarehousesPage';
 import { UsersPage } from './pages/UsersPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { AccountingPage } from './pages/AccountingPage';
 import { AuditPage } from './pages/AuditPage';
 import { ProductsPage } from './pages/ProductsPage';
 import { InventoryPage } from './pages/InventoryPage';
-import { BranchPricingPage } from './pages/BranchPricingPage';
 import { SuppliersPage } from './pages/SuppliersPage';
 import { PurchasesPage } from './pages/PurchasesPage';
 import { CustomersPage } from './pages/CustomersPage';
@@ -78,10 +76,10 @@ export const App: React.FC = () => {
       content = <DashboardPage initialTab="overview" />;
       break;
     case ROUTES.BRANCHES:
-      content = <BranchesPage />;
+      content = <BranchesPage initialTab="branches" />;
       break;
     case ROUTES.WAREHOUSES:
-      content = <WarehousesPage />;
+      content = <BranchesPage initialTab="warehouses" />;
       break;
     case ROUTES.USERS:
       content = <UsersPage initialTab="users" />;
@@ -120,7 +118,7 @@ export const App: React.FC = () => {
       content = <SalesRepsPage />;
       break;
     case ROUTES.PRODUCTS:
-      content = <ProductsPage />;
+      content = <ProductsPage initialTab="products" />;
       break;
     case ROUTES.INVENTORY:
       content = <InventoryPage />;
@@ -129,7 +127,7 @@ export const App: React.FC = () => {
       content = <ProductsPage initialTab="catalog" catalogKind="units" />;
       break;
     case ROUTES.BRANCH_PRICING:
-      content = <BranchPricingPage />;
+      content = <ProductsPage initialTab="pricing" />;
       break;
     case ROUTES.BANKING:
       content = <BankingPage />;

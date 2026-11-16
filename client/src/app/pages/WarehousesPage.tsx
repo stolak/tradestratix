@@ -21,7 +21,8 @@ const emptyCategoryForm = {
 type StatusFilter = 'all' | 'active' | 'disabled';
 type Tab = 'warehouses' | 'categories';
 
-export const WarehousesPage: React.FC = () => {
+/** Warehouses + categories — used as a tab panel under Branches & warehouses. */
+export const WarehousesPanel: React.FC = () => {
   const [tab, setTab] = useState<Tab>('warehouses');
   const [rows, setRows] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
@@ -281,16 +282,7 @@ export const WarehousesPage: React.FC = () => {
   ];
 
   return (
-    <div className="page-stack">
-      <header>
-        <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
-          Warehouses
-        </h1>
-        <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Branch-linked stock locations and categories that control inter-branch moves.
-        </p>
-      </header>
-
+    <>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {tabs.map((t) => (
           <button
@@ -718,6 +710,9 @@ export const WarehousesPage: React.FC = () => {
           </div>
         </>
       ) : null}
-    </div>
+    </>
   );
 };
+
+/** @deprecated Prefer BranchesPage with initialTab="warehouses". */
+export const WarehousesPage = WarehousesPanel;

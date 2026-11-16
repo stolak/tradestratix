@@ -1,12 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
+import { useAuth } from '../context/AuthContext';
+import { ROUTES, setRouteInLocation } from '../routes';
+import { WarehousesPanel } from './WarehousesPage';
 
 const emptyForm = { name: '', code: '', city: '' };
 
 type StatusFilter = 'all' | 'active' | 'disabled';
+type PageTab = 'branches' | 'warehouses';
 
-export const BranchesPage: React.FC = () => {
+export const BranchesPanel: React.FC = () => {
   const [rows, setRows] = useState<any[]>([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -115,16 +119,7 @@ export const BranchesPage: React.FC = () => {
   };
 
   return (
-    <div className="page-stack">
-      <header>
-        <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
-          Branches
-        </h1>
-        <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Multi-outlet structure for your business tenant.
-        </p>
-      </header>
-
+    <>
       <form onSubmit={save} className="card-surface" style={{ padding: '1rem', display: 'grid', gap: 12 }}>
         {editingId ? (
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
@@ -265,6 +260,85 @@ export const BranchesPage: React.FC = () => {
           </table>
         </div>
       </div>
+    </>
+  );
+};
+
+type BranchesPageProps = {
+  initialTab?: PageTab;
+};
+
+/** Branches and warehouses — one page with tabs. */
+export const BranchesPage: React.FC<BranchesPageProps> = ({ initialTab = 'branches' }) => {
+  const { can } = useAuth();
+  const canBranches = can('branches.view');
+  const canWarehouses = can('warehouses.view');
+  const availableTabs = useMemo(() => {
+    const tabs: PageTab[] = [];
+    if (canBranches) tabs.push('branches');
+    if (canWarehouses) tabs.push('warehouses');
+    return tabs;
+  }, [canBranches, canWarehouses]);
+
+  const [tab, setTab] = useState<PageTab>(() =>
+    availableTabs.includes(initialTab) ? initialTab : availableTabs[0] || 'branches'
+  );
+
+  useEffect(() => {
+    const next = availableTabs.includes(initialTab) ? initialTab : availableTabs[0];
+    if (next) setTab(next);
+  }, [initialTab, availableTabs]);
+
+  const selectTab = (next: PageTab) => {
+    setTab(next);
+    setRouteInLocation(next === 'warehouses' ? ROUTES.WAREHOUSES : ROUTES.BRANCHES);
+  };
+
+  return (
+    <div className="page-stack">
+      <header>
+        <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
+          Branches &amp; warehouses
+        </h1>
+        <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
+          {tab === 'warehouses'
+            ? 'Branch-linked stock locations and categories that control inter-branch moves.'
+            : 'Multi-outlet structure for your business tenant.'}
+        </p>
+      </header>
+
+      {availableTabs.length > 1 ? (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {canBranches ? (
+            <button
+              type="button"
+              className={`btn ${tab === 'branches' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => selectTab('branches')}
+            >
+              Branches
+            </button>
+          ) : null}
+          {canWarehouses ? (
+            <button
+              type="button"
+              className={`btn ${tab === 'warehouses' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => selectTab('warehouses')}
+            >
+              Warehouses
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!availableTabs.length ? (
+        <div className="card-surface" style={{ padding: '1rem', color: 'var(--ink-muted)' }}>
+          You do not have permission to manage branches or warehouses.
+        </div>
+      ) : tab === 'warehouses' ? (
+        <WarehousesPanel />
+      ) : (
+        <BranchesPanel />
+      )}
     </div>
   );
 };

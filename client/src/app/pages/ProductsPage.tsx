@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
 import { ProductCatalogPanel } from '../components/ProductCatalogPanel';
+import { BranchPricingPanel } from './BranchPricingPage';
+import { useAuth } from '../context/AuthContext';
+import { ROUTES, setRouteInLocation } from '../routes';
 
 type ConversionRow = { key: string; from_uom_id: string; factor: string };
 type SellingRow = {
@@ -99,7 +102,7 @@ function sectionTitle(step: number, title: string, hint: string) {
   );
 }
 
-type PageTab = 'products' | 'catalog';
+type PageTab = 'products' | 'catalog' | 'pricing';
 type CatalogKind = 'categories' | 'brands' | 'makes' | 'units';
 
 type ProductsPageProps = {
@@ -111,11 +114,26 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
   initialTab = 'products',
   catalogKind = 'categories'
 }) => {
-  const [pageTab, setPageTab] = useState<PageTab>(initialTab);
+  const { can } = useAuth();
+  const canProducts = can('products.view');
+  const canPricing = can('products.branch_price');
+  const availableTabs = useMemo(() => {
+    const tabs: PageTab[] = [];
+    if (canProducts) {
+      tabs.push('products', 'catalog');
+    }
+    if (canPricing) tabs.push('pricing');
+    return tabs;
+  }, [canProducts, canPricing]);
+
+  const [pageTab, setPageTab] = useState<PageTab>(() =>
+    availableTabs.includes(initialTab) ? initialTab : availableTabs[0] || 'products'
+  );
 
   useEffect(() => {
-    setPageTab(initialTab);
-  }, [initialTab]);
+    const next = availableTabs.includes(initialTab) ? initialTab : availableTabs[0];
+    if (next) setPageTab(next);
+  }, [initialTab, availableTabs]);
 
   const [rows, setRows] = useState<any[]>([]);
   const [uoms, setUoms] = useState<any[]>([]);
@@ -196,6 +214,12 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
   useEffect(() => {
     void load();
   }, []);
+
+  const selectTab = (next: PageTab) => {
+    setPageTab(next);
+    setRouteInLocation(next === 'pricing' ? ROUTES.BRANCH_PRICING : ROUTES.PRODUCTS);
+    if (next === 'products') void load();
+  };
 
   /** Keep purchase/selling selections inside configured units when conversions change */
   useEffect(() => {
@@ -503,12 +527,14 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
       <header style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
-            Products
+            Products &amp; pricing
           </h1>
           <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
             {pageTab === 'catalog'
               ? 'Manage categories, brands, makes, and units of measure used on products.'
-              : 'Define packaging first, then choose purchase and selling units from those conversions.'}
+              : pageTab === 'pricing'
+                ? "Override a product's selling price or discount in one branch. Without an override the global price applies."
+                : 'Define packaging first, then choose purchase and selling units from those conversions.'}
           </p>
         </div>
         {pageTab === 'products' ? (
@@ -524,30 +550,46 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
         ) : null}
       </header>
 
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          className={`btn ${pageTab === 'products' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => {
-            setPageTab('products');
-            void load();
-          }}
-        >
-          Products
-        </button>
-        <button
-          type="button"
-          className={`btn ${pageTab === 'catalog' ? 'btn-primary' : 'btn-ghost'}`}
-          onClick={() => {
-            setPageTab('catalog');
-            void load();
-          }}
-        >
-          Catalog
-        </button>
-      </div>
+      {availableTabs.length ? (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {canProducts ? (
+            <>
+              <button
+                type="button"
+                className={`btn ${pageTab === 'products' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => selectTab('products')}
+              >
+                Products
+              </button>
+              <button
+                type="button"
+                className={`btn ${pageTab === 'catalog' ? 'btn-primary' : 'btn-ghost'}`}
+                onClick={() => selectTab('catalog')}
+              >
+                Catalog
+              </button>
+            </>
+          ) : null}
+          {canPricing ? (
+            <button
+              type="button"
+              className={`btn ${pageTab === 'pricing' ? 'btn-primary' : 'btn-ghost'}`}
+              onClick={() => selectTab('pricing')}
+            >
+              Branch pricing
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {!availableTabs.length ? (
+        <div className="card-surface" style={{ padding: '1rem', color: 'var(--ink-muted)' }}>
+          You do not have permission to manage products or pricing.
+        </div>
+      ) : null}
 
       {pageTab === 'catalog' ? <ProductCatalogPanel initialKind={catalogKind} /> : null}
+      {pageTab === 'pricing' ? <BranchPricingPanel /> : null}
 
       {pageTab === 'products' ? (
       <>

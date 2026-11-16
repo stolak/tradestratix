@@ -29,7 +29,8 @@ type Filter = 'all' | 'overridden';
 const money = (n: number) =>
   Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export const BranchPricingPage: React.FC = () => {
+/** Branch price overrides — used as a tab panel under Products & pricing. */
+export const BranchPricingPanel: React.FC = () => {
   const { branches, activeBranchId, can } = useAuth();
   const canEdit = can('products.branch_price');
   const [branchId, setBranchId] = useState(activeBranchId || branches[0]?.id || '');
@@ -194,19 +195,7 @@ export const BranchPricingPage: React.FC = () => {
   };
 
   return (
-    <div className="page-stack">
-      <header>
-        <h1 className="display" style={{ margin: 0, fontSize: '2.2rem' }}>
-          Branch pricing
-        </h1>
-        <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Override a product's selling price or give it a % discount in one branch. Without an
-          override the global selling price applies; a discount applies on top of whichever price
-          the branch uses.
-        </p>
-      </header>
-
-      <div className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 14 }}>
+    <div className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 14 }}>
         <div className="form-grid">
           <div className="field">
             <label>Branch</label>
@@ -430,7 +419,9 @@ export const BranchPricingPage: React.FC = () => {
             </table>
           </div>
         </div>
-      </div>
     </div>
   );
 };
+
+/** @deprecated Prefer ProductsPage with initialTab="pricing". */
+export const BranchPricingPage = BranchPricingPanel;

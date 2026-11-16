@@ -87,10 +87,13 @@ const NAV = [
   {
     section: 'Inventory',
     items: [
-      { route: ROUTES.PRODUCTS, label: 'Products', icon: 'Package', perm: 'products.view' },
-      { route: ROUTES.BRANCH_PRICING, label: 'Branch pricing', icon: 'Tags', perm: 'products.branch_price' },
-      { route: ROUTES.INVENTORY, label: 'Inventory', icon: 'Boxes', perm: 'inventory.view' },
-      { route: ROUTES.WAREHOUSES, label: 'Warehouses', icon: 'Warehouse', perm: 'warehouses.view' }
+      {
+        route: ROUTES.PRODUCTS,
+        label: 'Products & pricing',
+        icon: 'Package',
+        perm: ['products.view', 'products.branch_price']
+      },
+      { route: ROUTES.INVENTORY, label: 'Inventory', icon: 'Boxes', perm: 'inventory.view' }
     ]
   },
   {
@@ -131,7 +134,12 @@ const NAV = [
   {
     section: 'Organisation',
     items: [
-      { route: ROUTES.BRANCHES, label: 'Branches', icon: 'MapPin', perm: 'branches.view' },
+      {
+        route: ROUTES.BRANCHES,
+        label: 'Branches & warehouses',
+        icon: 'MapPin',
+        perm: ['branches.view', 'warehouses.view']
+      },
       {
         route: ROUTES.USERS,
         label: 'Users & roles',
@@ -201,7 +209,9 @@ export const Sidebar: React.FC<Props> = ({ current, onNavigate, can, businessNam
                   const active =
                     current === item.route ||
                     (item.route === ROUTES.USERS && current === ROUTES.ROLES) ||
-                    (item.route === ROUTES.DASHBOARD && current === ROUTES.INSIGHTS);
+                    (item.route === ROUTES.DASHBOARD && current === ROUTES.INSIGHTS) ||
+                    (item.route === ROUTES.BRANCHES && current === ROUTES.WAREHOUSES) ||
+                    (item.route === ROUTES.PRODUCTS && current === ROUTES.BRANCH_PRICING);
                   return (
                     <button
                       key={item.route}
