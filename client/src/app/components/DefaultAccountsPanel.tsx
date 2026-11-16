@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
+import { DefaultParentAccountsPanel } from './DefaultParentAccountsPanel';
 
 type DefaultRow = {
   key: string;
@@ -62,9 +63,12 @@ function statusTone(status?: string): string {
   return 'invoice-chip--void';
 }
 
+type DefaultsSubTab = 'posting' | 'filters';
+
 export const DefaultAccountsPanel: React.FC = () => {
   const { can } = useAuth();
   const canEdit = can('accounting.edit', 'settings.edit');
+  const [subTab, setSubTab] = useState<DefaultsSubTab>('posting');
 
   const [rows, setRows] = useState<DefaultRow[]>([]);
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
@@ -146,6 +150,27 @@ export const DefaultAccountsPanel: React.FC = () => {
 
   return (
     <div style={{ display: 'grid', gap: '1rem' }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className={`btn ${subTab === 'posting' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setSubTab('posting')}
+        >
+          Posting maps
+        </button>
+        <button
+          type="button"
+          className={`btn ${subTab === 'filters' ? 'btn-primary' : 'btn-ghost'}`}
+          onClick={() => setSubTab('filters')}
+        >
+          Ledger filters
+        </button>
+      </div>
+
+      {subTab === 'filters' ? <DefaultParentAccountsPanel /> : null}
+
+      {subTab === 'posting' ? (
+      <>
       <div
         style={{
           display: 'grid',
@@ -332,6 +357,8 @@ export const DefaultAccountsPanel: React.FC = () => {
           </table>
         </div>
       </div>
+      </>
+      ) : null}
     </div>
   );
 };

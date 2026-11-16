@@ -564,53 +564,234 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
   }
 };
 
-const COA: { code: string; name: string; accountType: string; key?: string }[] = [
-  { code: '1000', name: 'Assets', accountType: 'asset' },
-  { code: '1100', name: 'Current Assets', accountType: 'asset' },
-  { code: '1110', name: 'Cash on Hand', accountType: 'asset', key: 'cash' },
-  { code: '1115', name: 'Petty Cash', accountType: 'asset', key: 'petty_cash' },
-  { code: '1120', name: 'Bank Account', accountType: 'asset', key: 'bank' },
-  { code: '1125', name: 'Cash in Transit', accountType: 'asset', key: 'cash_in_transit' },
-  { code: '1128', name: 'Payment Clearing', accountType: 'asset', key: 'payment_clearing' },
-  { code: '1130', name: 'Accounts Receivable', accountType: 'asset', key: 'accounts_receivable' },
-  { code: '1132', name: 'Sales Rep Cash Custody', accountType: 'asset', key: 'cash_in_custody_sales_rep' },
-  { code: '1134', name: 'Sales Rep Recoveries', accountType: 'asset', key: 'sales_rep_receivable' },
-  { code: '1135', name: 'Supplier Advances', accountType: 'asset', key: 'supplier_advances' },
-  { code: '1136', name: 'Supplier Deposits', accountType: 'asset', key: 'supplier_deposits' },
-  { code: '1140', name: 'Inventory Asset', accountType: 'asset', key: 'inventory' },
-  { code: '1145', name: 'Goods in Transit', accountType: 'asset', key: 'goods_in_transit' },
-  { code: '1150', name: 'Inter-branch Clearing', accountType: 'asset', key: 'inter_branch_clearing' },
-  { code: '1200', name: 'Fixed Assets', accountType: 'asset' },
-  { code: '1210', name: 'Property, Plant & Equipment', accountType: 'asset', key: 'fixed_assets' },
-  { code: '1220', name: 'Accumulated Depreciation', accountType: 'asset', key: 'accumulated_depreciation' },
-  { code: '2000', name: 'Liabilities', accountType: 'liability' },
-  { code: '2100', name: 'Accounts Payable', accountType: 'liability', key: 'accounts_payable' },
-  { code: '2110', name: 'Goods Received Not Invoiced', accountType: 'liability', key: 'grni' },
-  { code: '2120', name: 'Customer Advances', accountType: 'liability', key: 'customer_advances' },
-  { code: '2125', name: 'Customer Deposits', accountType: 'liability', key: 'customer_deposits' },
-  { code: '2130', name: 'Unapplied Customer Receipts', accountType: 'liability', key: 'unapplied_customer_receipts' },
-  { code: '2140', name: 'Sales Rep Commission Payable', accountType: 'liability', key: 'sales_rep_commission_payable' },
-  { code: '2200', name: 'VAT Payable', accountType: 'liability', key: 'tax_payable' },
-  { code: '2300', name: 'Salary Payable', accountType: 'liability', key: 'salary_payable' },
-  { code: '2400', name: 'PAYE Payable', accountType: 'liability', key: 'paye_payable' },
-  { code: '2500', name: 'Pension Payable', accountType: 'liability', key: 'pension_payable' },
-  { code: '3000', name: 'Equity', accountType: 'equity' },
-  { code: '3100', name: 'Owner Equity', accountType: 'equity', key: 'equity' },
-  { code: '3200', name: 'Retained Earnings', accountType: 'equity', key: 'retained_earnings' },
-  { code: '4000', name: 'Revenue', accountType: 'revenue' },
-  { code: '4100', name: 'Sales Revenue', accountType: 'revenue', key: 'sales_revenue' },
-  { code: '4200', name: 'Sales Returns', accountType: 'revenue', key: 'sales_returns' },
-  { code: '4300', name: 'Sales Discounts', accountType: 'revenue', key: 'sales_discounts' },
-  { code: '5000', name: 'Cost of Goods Sold', accountType: 'cogs', key: 'cogs' },
-  { code: '6000', name: 'Operating Expenses', accountType: 'expense' },
-  { code: '6100', name: 'Salaries Expense', accountType: 'expense', key: 'salary_expense' },
-  { code: '6150', name: 'Sales Rep Commission Expense', accountType: 'expense', key: 'sales_rep_commission_expense' },
-  { code: '6200', name: 'Rent Expense', accountType: 'expense', key: 'rent_expense' },
-  { code: '6300', name: 'Depreciation Expense', accountType: 'expense', key: 'depreciation_expense' },
-  { code: '6400', name: 'General Expenses', accountType: 'expense', key: 'expense' },
-  { code: '6500', name: 'Inventory Adjustment', accountType: 'expense', key: 'inventory_adjustment' },
-  { code: '6510', name: 'Inventory Write-off', accountType: 'expense', key: 'inventory_write_off' },
-  { code: '6520', name: 'Purchase Returns', accountType: 'expense', key: 'purchase_returns' }
+/** Optional parentCode pins hierarchy for ledger-filter subtrees (overrides code heuristics). */
+const COA: {
+  code: string;
+  name: string;
+  accountType: string;
+  key?: string;
+  parentCode?: string | null;
+}[] = [
+  { code: '1000', name: 'Assets', accountType: 'asset', parentCode: null },
+  { code: '1100', name: 'Current Assets', accountType: 'asset', parentCode: '1000' },
+  // Cash & bank subtree — cash_ledgers / bank_ledgers
+  { code: '1105', name: 'Cash & Bank', accountType: 'asset', parentCode: '1100' },
+  { code: '1110', name: 'Cash on Hand', accountType: 'asset', key: 'cash', parentCode: '1105' },
+  { code: '1115', name: 'Petty Cash', accountType: 'asset', key: 'petty_cash', parentCode: '1105' },
+  { code: '1120', name: 'Bank Account', accountType: 'asset', key: 'bank', parentCode: '1105' },
+  { code: '1125', name: 'Cash in Transit', accountType: 'asset', key: 'cash_in_transit', parentCode: '1105' },
+  { code: '1128', name: 'Payment Clearing', accountType: 'asset', key: 'payment_clearing', parentCode: '1105' },
+  // Receivables subtree — receivable_ledgers
+  { code: '1129', name: 'Receivables & Advances', accountType: 'asset', parentCode: '1100' },
+  {
+    code: '1130',
+    name: 'Accounts Receivable',
+    accountType: 'asset',
+    key: 'accounts_receivable',
+    parentCode: '1129'
+  },
+  {
+    code: '1132',
+    name: 'Sales Rep Cash Custody',
+    accountType: 'asset',
+    key: 'cash_in_custody_sales_rep',
+    parentCode: '1129'
+  },
+  {
+    code: '1134',
+    name: 'Sales Rep Recoveries',
+    accountType: 'asset',
+    key: 'sales_rep_receivable',
+    parentCode: '1129'
+  },
+  {
+    code: '1135',
+    name: 'Supplier Advances',
+    accountType: 'asset',
+    key: 'supplier_advances',
+    parentCode: '1129'
+  },
+  {
+    code: '1136',
+    name: 'Supplier Deposits',
+    accountType: 'asset',
+    key: 'supplier_deposits',
+    parentCode: '1129'
+  },
+  // Inventory subtree — inventory_ledgers
+  { code: '1138', name: 'Inventory', accountType: 'asset', parentCode: '1100' },
+  { code: '1140', name: 'Inventory Asset', accountType: 'asset', key: 'inventory', parentCode: '1138' },
+  {
+    code: '1145',
+    name: 'Goods in Transit',
+    accountType: 'asset',
+    key: 'goods_in_transit',
+    parentCode: '1138'
+  },
+  {
+    code: '1150',
+    name: 'Inter-branch Clearing',
+    accountType: 'asset',
+    key: 'inter_branch_clearing',
+    parentCode: '1100'
+  },
+  { code: '1200', name: 'Fixed Assets', accountType: 'asset', parentCode: '1000' },
+  {
+    code: '1210',
+    name: 'Property, Plant & Equipment',
+    accountType: 'asset',
+    key: 'fixed_assets',
+    parentCode: '1200'
+  },
+  {
+    code: '1220',
+    name: 'Accumulated Depreciation',
+    accountType: 'asset',
+    key: 'accumulated_depreciation',
+    parentCode: '1200'
+  },
+  { code: '2000', name: 'Liabilities', accountType: 'liability', parentCode: null },
+  // Trade payables — payable_ledgers
+  { code: '2090', name: 'Trade Payables', accountType: 'liability', parentCode: '2000' },
+  {
+    code: '2100',
+    name: 'Accounts Payable',
+    accountType: 'liability',
+    key: 'accounts_payable',
+    parentCode: '2090'
+  },
+  {
+    code: '2110',
+    name: 'Goods Received Not Invoiced',
+    accountType: 'liability',
+    key: 'grni',
+    parentCode: '2090'
+  },
+  {
+    code: '2120',
+    name: 'Customer Advances',
+    accountType: 'liability',
+    key: 'customer_advances',
+    parentCode: '2090'
+  },
+  {
+    code: '2125',
+    name: 'Customer Deposits',
+    accountType: 'liability',
+    key: 'customer_deposits',
+    parentCode: '2090'
+  },
+  {
+    code: '2130',
+    name: 'Unapplied Customer Receipts',
+    accountType: 'liability',
+    key: 'unapplied_customer_receipts',
+    parentCode: '2090'
+  },
+  {
+    code: '2140',
+    name: 'Sales Rep Commission Payable',
+    accountType: 'liability',
+    key: 'sales_rep_commission_payable',
+    parentCode: '2090'
+  },
+  { code: '2200', name: 'VAT Payable', accountType: 'liability', key: 'tax_payable', parentCode: '2000' },
+  // Payroll liabilities — payroll_liability_ledgers
+  { code: '2050', name: 'Payroll Liabilities', accountType: 'liability', parentCode: '2000' },
+  {
+    code: '2300',
+    name: 'Salary Payable',
+    accountType: 'liability',
+    key: 'salary_payable',
+    parentCode: '2050'
+  },
+  { code: '2400', name: 'PAYE Payable', accountType: 'liability', key: 'paye_payable', parentCode: '2050' },
+  {
+    code: '2500',
+    name: 'Pension Payable',
+    accountType: 'liability',
+    key: 'pension_payable',
+    parentCode: '2050'
+  },
+  { code: '3000', name: 'Equity', accountType: 'equity', parentCode: null },
+  { code: '3100', name: 'Owner Equity', accountType: 'equity', key: 'equity', parentCode: '3000' },
+  {
+    code: '3200',
+    name: 'Retained Earnings',
+    accountType: 'equity',
+    key: 'retained_earnings',
+    parentCode: '3000'
+  },
+  { code: '4000', name: 'Revenue', accountType: 'revenue', parentCode: null },
+  {
+    code: '4100',
+    name: 'Sales Revenue',
+    accountType: 'revenue',
+    key: 'sales_revenue',
+    parentCode: '4000'
+  },
+  {
+    code: '4200',
+    name: 'Sales Returns',
+    accountType: 'revenue',
+    key: 'sales_returns',
+    parentCode: '4000'
+  },
+  {
+    code: '4300',
+    name: 'Sales Discounts',
+    accountType: 'revenue',
+    key: 'sales_discounts',
+    parentCode: '4000'
+  },
+  { code: '5000', name: 'Cost of Goods Sold', accountType: 'cogs', key: 'cogs', parentCode: null },
+  { code: '6000', name: 'Operating Expenses', accountType: 'expense', parentCode: null },
+  // Payroll expenses — payroll_expense_ledgers
+  { code: '6050', name: 'Payroll Expenses', accountType: 'expense', parentCode: '6000' },
+  {
+    code: '6100',
+    name: 'Salaries Expense',
+    accountType: 'expense',
+    key: 'salary_expense',
+    parentCode: '6050'
+  },
+  {
+    code: '6150',
+    name: 'Sales Rep Commission Expense',
+    accountType: 'expense',
+    key: 'sales_rep_commission_expense',
+    parentCode: '6050'
+  },
+  { code: '6200', name: 'Rent Expense', accountType: 'expense', key: 'rent_expense', parentCode: '6000' },
+  {
+    code: '6300',
+    name: 'Depreciation Expense',
+    accountType: 'expense',
+    key: 'depreciation_expense',
+    parentCode: '6000'
+  },
+  { code: '6400', name: 'General Expenses', accountType: 'expense', key: 'expense', parentCode: '6000' },
+  {
+    code: '6500',
+    name: 'Inventory Adjustment',
+    accountType: 'expense',
+    key: 'inventory_adjustment',
+    parentCode: '6000'
+  },
+  {
+    code: '6510',
+    name: 'Inventory Write-off',
+    accountType: 'expense',
+    key: 'inventory_write_off',
+    parentCode: '6000'
+  },
+  {
+    code: '6520',
+    name: 'Purchase Returns',
+    accountType: 'expense',
+    key: 'purchase_returns',
+    parentCode: '6000'
+  }
 ];
 
 async function main() {
@@ -1330,6 +1511,44 @@ async function main() {
         update: { accountId: acc.id }
       });
     }
+  }
+
+  // Parent-account filters — scope ledger pickers to CoA subtrees
+  const parentFilterSeeds: { key: string; code: string; description: string }[] = [
+    { key: 'cash_ledgers', code: '1100', description: 'Current assets subtree for cash pickers' },
+    { key: 'bank_ledgers', code: '1100', description: 'Current assets subtree for bank pickers' },
+    { key: 'receivable_ledgers', code: '1100', description: 'Current assets subtree for AR pickers' },
+    { key: 'payable_ledgers', code: '2000', description: 'Liabilities subtree for AP pickers' },
+    { key: 'inventory_ledgers', code: '1100', description: 'Current assets subtree for inventory' },
+    { key: 'fixed_asset_ledgers', code: '1200', description: 'Fixed assets group' },
+    { key: 'revenue_ledgers', code: '4000', description: 'Revenue root' },
+    { key: 'cogs_ledgers', code: '5000', description: 'COGS root' },
+    { key: 'expense_ledgers', code: '6000', description: 'Operating expenses root' },
+    { key: 'liability_ledgers', code: '2000', description: 'Liabilities root' },
+    { key: 'equity_ledgers', code: '3000', description: 'Equity root' },
+    { key: 'payroll_expense_ledgers', code: '6000', description: 'Expense root for payroll costs' },
+    {
+      key: 'payroll_liability_ledgers',
+      code: '2000',
+      description: 'Liability root for payroll payables'
+    }
+  ];
+  for (const pf of parentFilterSeeds) {
+    const parentId = accountByCode[pf.code];
+    if (!parentId) continue;
+    await prisma.defaultParentAccountSetting.upsert({
+      where: {
+        businessId_settingKey: { businessId: business.id, settingKey: pf.key }
+      },
+      create: {
+        id: id('dpas'),
+        businessId: business.id,
+        settingKey: pf.key,
+        parentAccountId: parentId,
+        description: pf.description
+      },
+      update: { parentAccountId: parentId, description: pf.description }
+    });
   }
 
   // Financial year

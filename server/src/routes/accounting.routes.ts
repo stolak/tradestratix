@@ -46,6 +46,31 @@ router.put(
   requirePermission('accounting.edit', 'settings.edit'),
   accountingController.upsertDefault
 );
+router.get(
+  '/default-parent-accounts',
+  requirePermission('accounting.defaults'),
+  accountingController.listParentDefaults
+);
+router.get(
+  '/default-parent-accounts/catalog',
+  requirePermission('accounting.defaults'),
+  accountingController.listParentDefaultCatalog
+);
+router.get(
+  '/default-parent-accounts/status',
+  requirePermission('accounting.defaults', 'settings.view'),
+  accountingController.listParentDefaultStatus
+);
+router.put(
+  '/default-parent-accounts',
+  requirePermission('accounting.edit', 'settings.edit'),
+  accountingController.upsertParentDefault
+);
+router.delete(
+  '/default-parent-accounts/:key',
+  requirePermission('accounting.edit', 'settings.edit'),
+  accountingController.clearParentDefault
+);
 router.get('/journals', requirePermission('accounting.journals'), accountingController.listJournals);
 router.get(
   '/ledger-statement',

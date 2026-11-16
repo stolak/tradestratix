@@ -106,8 +106,9 @@ export const PaySupplierPayment: React.FC<Props> = ({
     let cancelled = false;
     (async () => {
       try {
-        const [gl, defaults] = await Promise.all([
-          api.accounting.accounts(),
+        const [cashGl, bankGl, defaults] = await Promise.all([
+          api.accounting.accounts({ parent_setting_key: 'cash_ledgers' }).catch(() => []),
+          api.accounting.accounts({ parent_setting_key: 'bank_ledgers' }).catch(() => []),
           api.accounting.defaultAccounts().catch(() => [])
         ]);
         if (cancelled) return;
@@ -119,8 +120,12 @@ export const PaySupplierPayment: React.FC<Props> = ({
         setDefaultBankId(bankId);
 
         const preferred = new Set([cashId, bankId].filter(Boolean) as string[]);
-        const assets = (gl || [])
-          .filter((a: any) => a.is_active !== false && String(a.account_type || a.accountType) === 'asset')
+        const byId = new Map<string, any>();
+        for (const a of [...(cashGl || []), ...(bankGl || [])]) {
+          if (a?.id) byId.set(a.id, a);
+        }
+        const assets = [...byId.values()]
+          .filter((a: any) => a.is_active !== false)
           .map((a: any) => ({
             id: a.id,
             code: a.code,

@@ -24,7 +24,7 @@ export const ACCOUNTING_TAB_PERMISSIONS: Record<AccountingTabId, string> = {
 
 export const ACCOUNTING_TABS: { id: AccountingTabId; label: string; perm: string }[] = [
   { id: 'coa', label: 'Chart of accounts', perm: ACCOUNTING_TAB_PERMISSIONS.coa },
-  { id: 'defaults', label: 'Default accounts', perm: ACCOUNTING_TAB_PERMISSIONS.defaults },
+  { id: 'defaults', label: 'Defaults & filters', perm: ACCOUNTING_TAB_PERMISSIONS.defaults },
   { id: 'journals', label: 'Journals', perm: ACCOUNTING_TAB_PERMISSIONS.journals },
   { id: 'trial', label: 'Trial balance', perm: ACCOUNTING_TAB_PERMISSIONS.trial },
   { id: 'pl', label: 'Profit & loss', perm: ACCOUNTING_TAB_PERMISSIONS.pl },

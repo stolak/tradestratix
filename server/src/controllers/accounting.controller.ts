@@ -10,7 +10,25 @@ function branchListOpts(req: Request) {
 
 export async function listAccounts(req: Request, res: Response, next: NextFunction) {
   try {
-    return res.json(await accountingService.listAccounts(req.user!.businessId));
+    const parentSettingKey =
+      typeof req.query.parent_setting_key === 'string'
+        ? req.query.parent_setting_key
+        : typeof req.query.parentSettingKey === 'string'
+          ? req.query.parentSettingKey
+          : undefined;
+    const includeInactive =
+      req.query.include_inactive === '1' || req.query.include_inactive === 'true';
+    const postableOnly =
+      req.query.postable_only === undefined
+        ? undefined
+        : !(req.query.postable_only === '0' || req.query.postable_only === 'false');
+    return res.json(
+      await accountingService.listAccounts(req.user!.businessId, {
+        parentSettingKey,
+        includeInactive,
+        postableOnly
+      })
+    );
   } catch (err) {
     return next(err);
   }
@@ -65,6 +83,60 @@ export async function upsertDefault(req: Request, res: Response, next: NextFunct
   try {
     return res.json(
       await accountingService.upsertDefaultAccountSetting(req.user!, req.body || {})
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listParentDefaults(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await accountingService.listDefaultParentAccountSettings(req.user!.businessId)
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listParentDefaultCatalog(_req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(accountingService.listDefaultParentAccountCatalog());
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listParentDefaultStatus(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await accountingService.listDefaultParentAccountSettingsStatus(req.user!.businessId)
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function upsertParentDefault(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await accountingService.upsertDefaultParentAccountSetting(req.user!, req.body || {})
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function clearParentDefault(req: Request, res: Response, next: NextFunction) {
+  try {
+    const key =
+      typeof req.params.key === 'string'
+        ? req.params.key
+        : typeof req.body?.setting_key === 'string'
+          ? req.body.setting_key
+          : '';
+    return res.json(
+      await accountingService.clearDefaultParentAccountSetting(req.user!, key)
     );
   } catch (err) {
     return next(err);

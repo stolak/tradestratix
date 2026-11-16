@@ -155,7 +155,18 @@ export const api = {
       })
   },
   accounting: {
-    accounts: () => request<any[]>('/accounting/accounts'),
+    accounts: (opts?: {
+      parent_setting_key?: string;
+      include_inactive?: boolean;
+      postable_only?: boolean;
+    }) => {
+      const params = new URLSearchParams();
+      if (opts?.parent_setting_key) params.set('parent_setting_key', opts.parent_setting_key);
+      if (opts?.include_inactive) params.set('include_inactive', '1');
+      if (opts?.postable_only === false) params.set('postable_only', '0');
+      const qs = params.toString();
+      return request<any[]>(`/accounting/accounts${qs ? `?${qs}` : ''}`);
+    },
     createAccount: (body: Record<string, unknown>) =>
       request<any>('/accounting/accounts', { method: 'POST', body: JSON.stringify(body) }),
     updateAccount: (id: string, body: Record<string, unknown>) =>
@@ -189,6 +200,20 @@ export const api = {
       request<any>('/accounting/default-accounts', {
         method: 'PUT',
         body: JSON.stringify(body)
+      }),
+    defaultParentAccounts: () => request<any[]>('/accounting/default-parent-accounts'),
+    defaultParentAccountStatus: () =>
+      request<any[]>('/accounting/default-parent-accounts/status'),
+    defaultParentAccountCatalog: () =>
+      request<any[]>('/accounting/default-parent-accounts/catalog'),
+    upsertDefaultParentAccount: (body: Record<string, unknown>) =>
+      request<any>('/accounting/default-parent-accounts', {
+        method: 'PUT',
+        body: JSON.stringify(body)
+      }),
+    clearDefaultParentAccount: (key: string) =>
+      request<any>(`/accounting/default-parent-accounts/${encodeURIComponent(key)}`, {
+        method: 'DELETE'
       }),
     trialBalance: (asAt?: string) =>
       request<any>(

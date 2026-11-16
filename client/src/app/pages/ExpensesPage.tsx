@@ -20,19 +20,13 @@ export const ExpensesPage: React.FC = () => {
     try {
       const [e, gl, b] = await Promise.all([
         api.expenses.list(),
-        api.accounting.accounts(),
+        api.accounting.accounts({ parent_setting_key: 'expense_ledgers' }),
         api.banking.accounts()
       ]);
       setRows(e);
-      const expenseGl = gl.filter(
-        (a: any) => a.account_type === 'expense' || a.code?.startsWith('6')
-      );
-      setGlAccounts(expenseGl.length ? expenseGl : gl);
+      setGlAccounts(gl);
       setBanks(b);
-      const def =
-        expenseGl.find((a: any) => a.code === '6400') ||
-        expenseGl[0] ||
-        gl.find((a: any) => a.code === '6400');
+      const def = gl.find((a: any) => a.code === '6400') || gl[0];
       setForm((f) => ({
         ...f,
         account_id: f.account_id || def?.id || '',

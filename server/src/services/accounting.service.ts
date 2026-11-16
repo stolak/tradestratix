@@ -20,13 +20,27 @@ import {
   upsertDefaultAccountSetting,
   listDefaultAccountCatalog
 } from './default-account.service.js';
+import {
+  clearDefaultParentAccountSetting,
+  listAccountsForParentSetting,
+  listDefaultParentAccountCatalog,
+  listDefaultParentAccountSettings,
+  listDefaultParentAccountSettingsStatus,
+  upsertDefaultParentAccountSetting
+} from './default-parent-account.service.js';
 
 export {
   requireDefaultAccountIds,
   resolveDefaultAccounts,
   listDefaultAccountSettingsStatus,
   upsertDefaultAccountSetting,
-  listDefaultAccountCatalog
+  listDefaultAccountCatalog,
+  clearDefaultParentAccountSetting,
+  listAccountsForParentSetting,
+  listDefaultParentAccountCatalog,
+  listDefaultParentAccountSettings,
+  listDefaultParentAccountSettingsStatus,
+  upsertDefaultParentAccountSetting
 };
 
 type BranchListOpts = {
@@ -36,9 +50,22 @@ type BranchListOpts = {
 
 const ACCOUNT_TYPES = new Set(['asset', 'liability', 'equity', 'revenue', 'expense', 'cogs']);
 
-export async function listAccounts(businessId: string) {
+export async function listAccounts(
+  businessId: string,
+  opts?: { parentSettingKey?: string | null; includeInactive?: boolean; postableOnly?: boolean }
+) {
+  const parentSettingKey = opts?.parentSettingKey?.trim();
+  if (parentSettingKey) {
+    return listAccountsForParentSetting(businessId, parentSettingKey, {
+      includeInactive: opts?.includeInactive,
+      postableOnly: opts?.postableOnly
+    });
+  }
   const accounts = await prisma.account.findMany({
-    where: { businessId },
+    where: {
+      businessId,
+      ...(opts?.includeInactive ? {} : {})
+    },
     orderBy: { code: 'asc' }
   });
   return serialize(accounts);
