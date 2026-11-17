@@ -37,5 +37,10 @@ router.get(
   requirePermission('purchases.view'),
   procurementController.supplierCredit
 );
+router.post(
+  '/suppliers/:id/apply-prepaid',
+  requirePermission('purchases.post'),
+  procurementController.applySupplierPrepaid
+);
 
 export default router;

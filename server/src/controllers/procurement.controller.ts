@@ -128,3 +128,13 @@ export async function supplierCredit(req: Request, res: Response, next: NextFunc
     return next(err);
   }
 }
+
+export async function applySupplierPrepaid(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await procurementService.applySupplierPrepaid(req.user!, req.params.id, req.body || {})
+    );
+  } catch (err) {
+    return next(err);
+  }
+}

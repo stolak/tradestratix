@@ -273,8 +273,8 @@ export async function autoAllocateBills(businessId: string, supplierId: string, 
 }
 
 /**
- * When a new AP bill opens, apply free supplier prepaid (unappliedAmount) to the bill balance
- * with no GL — cash already sits on AP.
+ * Apply free supplier prepaid (unappliedAmount) to a bill balance with no GL —
+ * cash already sits on AP.
  */
 export async function consumePrepaidAgainstBillBalance(
   tx: Tx,
@@ -326,6 +326,53 @@ export async function consumePrepaidAgainstBillBalance(
     }
   });
   return applied;
+}
+
+/**
+ * Apply available prepaid to open bills (FIFO by bill date, or the given bill ids).
+ * No new cash / journal — allocations only.
+ */
+export async function applyPrepaidToOpenBills(
+  tx: Tx,
+  businessId: string,
+  supplierId: string,
+  billIds?: string[] | null
+) {
+  const where: Prisma.SupplierBillWhereInput = {
+    businessId,
+    supplierId,
+    status: { in: ['open', 'partial'] },
+    balance: { gt: 0 }
+  };
+  if (billIds?.length) {
+    where.id = { in: billIds };
+  }
+
+  const bills = await tx.supplierBill.findMany({
+    where,
+    orderBy: [{ billDate: 'asc' }, { createdAt: 'asc' }],
+    select: { id: true, billNumber: true, balance: true }
+  });
+
+  if (billIds?.length && bills.length !== billIds.length) {
+    throw httpError(400, 'One or more bills are not open for this supplier');
+  }
+
+  const details: { billId: string; billNumber: string; applied: number }[] = [];
+  let totalApplied = 0;
+  for (const bill of bills) {
+    const applied = await consumePrepaidAgainstBillBalance(
+      tx,
+      businessId,
+      supplierId,
+      bill.id
+    );
+    if (applied > 0.01) {
+      details.push({ billId: bill.id, billNumber: bill.billNumber, applied });
+      totalApplied = roundMoney(totalApplied + applied);
+    }
+  }
+  return { applied: totalApplied, bills: details };
 }
 
 /** Sum of supplier prepaid still available to apply to bills (advances / overpays on AP). */

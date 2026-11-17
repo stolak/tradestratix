@@ -478,7 +478,17 @@ export const api = {
     supplierCredit: (supplierId: string) =>
       request<{ total: number; payments: any[]; balance: number }>(
         `/purchases/suppliers/${encodeURIComponent(supplierId)}/credit`
-      )
+      ),
+    applyPrepaid: (supplierId: string, body: Record<string, unknown> = {}) =>
+      request<{
+        applied: number;
+        bills: { bill_id: string; bill_number: string; applied: number }[];
+        prepaid_before: number;
+        prepaid_after: number;
+      }>(`/purchases/suppliers/${encodeURIComponent(supplierId)}/apply-prepaid`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      })
   },
   customers: {
     list: (q?: string, status?: 'active' | 'inactive', opts?: { includeWalkIn?: boolean }) => {

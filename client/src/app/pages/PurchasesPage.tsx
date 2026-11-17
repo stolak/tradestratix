@@ -6,6 +6,42 @@ import { SearchSelect } from '../components/SearchSelect';
 
 type Tab = 'orders' | 'receive' | 'bills' | 'payments';
 
+const PO_DRAFT_CACHE_KEY = 'tradestratix.purchases.poDraft';
+
+type PoDraftCache = {
+  supplier_id?: string;
+  warehouse_id?: string;
+  product_id?: string;
+};
+
+function readPoDraftCache(): PoDraftCache {
+  try {
+    const raw = sessionStorage.getItem(PO_DRAFT_CACHE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as PoDraftCache;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePoDraftCache(draft: PoDraftCache) {
+  const next: PoDraftCache = {
+    supplier_id: draft.supplier_id || undefined,
+    warehouse_id: draft.warehouse_id || undefined,
+    product_id: draft.product_id || undefined
+  };
+  if (!next.supplier_id && !next.warehouse_id && !next.product_id) {
+    sessionStorage.removeItem(PO_DRAFT_CACHE_KEY);
+    return;
+  }
+  sessionStorage.setItem(PO_DRAFT_CACHE_KEY, JSON.stringify(next));
+}
+
+function clearPoDraftCache() {
+  sessionStorage.removeItem(PO_DRAFT_CACHE_KEY);
+}
+
 export const PurchasesPage: React.FC = () => {
   const [tab, setTab] = useState<Tab>('orders');
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -15,14 +51,17 @@ export const PurchasesPage: React.FC = () => {
   const [receipts, setReceipts] = useState<any[]>([]);
   const [bills, setBills] = useState<any[]>([]);
 
-  const [poForm, setPoForm] = useState({
-    supplier_id: '',
-    warehouse_id: '',
-    notes: '',
-    product_id: '',
-    uom_id: '',
-    quantity: '24',
-    unit_cost: ''
+  const [poForm, setPoForm] = useState(() => {
+    const cached = readPoDraftCache();
+    return {
+      supplier_id: cached.supplier_id || '',
+      warehouse_id: cached.warehouse_id || '',
+      notes: '',
+      product_id: cached.product_id || '',
+      uom_id: '',
+      quantity: '24',
+      unit_cost: ''
+    };
   });
 
   /** Base + purchase + packaging conversion UoMs for a product. */
@@ -177,17 +216,29 @@ export const PurchasesPage: React.FC = () => {
       setOrders(o);
       setReceipts(r);
       setBills(b);
+      // Keep manual / cached supplier·warehouse·product — never auto-pick first rows.
       setPoForm((f) => {
-        const product = p.find((x: any) => x.id === f.product_id) || p[0];
+        const supplier_id =
+          f.supplier_id && s.some((x: any) => x.id === f.supplier_id) ? f.supplier_id : '';
+        const warehouse_id =
+          f.warehouse_id && w.some((x: any) => x.id === f.warehouse_id) ? f.warehouse_id : '';
+        const product = f.product_id ? p.find((x: any) => x.id === f.product_id) : null;
+        if (!product) {
+          return {
+            ...f,
+            supplier_id,
+            warehouse_id,
+            product_id: '',
+            uom_id: '',
+            unit_cost: ''
+          };
+        }
         return {
           ...f,
-          supplier_id: f.supplier_id || s[0]?.id || '',
-          warehouse_id: f.warehouse_id || w[0]?.id || '',
-          product_id: f.product_id || product?.id || '',
+          supplier_id,
+          warehouse_id,
           uom_id: f.uom_id || defaultPurchaseUomId(product),
-          unit_cost:
-            f.unit_cost ||
-            (product ? String(product.default_purchase_cost ?? 0) : '')
+          unit_cost: f.unit_cost || String(product.default_purchase_cost ?? 0)
         };
       });
     } catch (e: any) {
@@ -199,8 +250,27 @@ export const PurchasesPage: React.FC = () => {
     void load();
   }, []);
 
+  // Persist supplier / warehouse / product while still on Purchases (no successful Create PO yet).
   useEffect(() => {
-    if (!selectedProduct) return;
+    writePoDraftCache({
+      supplier_id: poForm.supplier_id,
+      warehouse_id: poForm.warehouse_id,
+      product_id: poForm.product_id
+    });
+  }, [poForm.supplier_id, poForm.warehouse_id, poForm.product_id]);
+
+  // Leaving Purchases (other menu) clears the draft cache.
+  useEffect(() => {
+    return () => {
+      clearPoDraftCache();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedProduct) {
+      if (poForm.uom_id) setPoForm((f) => ({ ...f, uom_id: '' }));
+      return;
+    }
     const allowed = new Set(purchaseUoms.map((u) => u.id));
     if (!poForm.uom_id || !allowed.has(poForm.uom_id)) {
       setPoForm((f) => ({ ...f, uom_id: defaultPurchaseUomId(selectedProduct) }));
@@ -209,6 +279,10 @@ export const PurchasesPage: React.FC = () => {
 
   const createPo = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!poForm.supplier_id || !poForm.warehouse_id || !poForm.product_id) {
+      await alertError('Create PO failed', 'Select supplier, warehouse, and product.');
+      return;
+    }
     try {
       await api.purchases.createOrder({
         supplier_id: poForm.supplier_id,
@@ -224,7 +298,16 @@ export const PurchasesPage: React.FC = () => {
         ]
       });
       await alertSuccess('Purchase order created');
-      setPoForm((f) => ({ ...f, notes: '', quantity: '24' }));
+      clearPoDraftCache();
+      setPoForm({
+        supplier_id: '',
+        warehouse_id: '',
+        notes: '',
+        product_id: '',
+        uom_id: '',
+        quantity: '24',
+        unit_cost: ''
+      });
       await load();
     } catch (err: any) {
       await alertError('Create PO failed', err.message);
@@ -418,7 +501,11 @@ export const PurchasesPage: React.FC = () => {
                   value={poForm.uom_id}
                   onChange={(e) => setPoForm({ ...poForm, uom_id: e.target.value })}
                   required
+                  disabled={!poForm.product_id}
                 >
+                  {!poForm.product_id ? (
+                    <option value="">Select a product first…</option>
+                  ) : null}
                   {purchaseUoms.map((u) => (
                     <option key={u.id} value={u.id}>
                       {u.code} — {u.name}

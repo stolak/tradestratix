@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
-import { alertError, alertSuccess } from '../utils/alerts';
+import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
 import { SearchSelect } from './SearchSelect';
 
@@ -77,7 +77,6 @@ export const PaySupplierPayment: React.FC<Props> = ({
   const [payableBills, setPayableBills] = useState<PayableBill[]>([]);
   const [openPos, setOpenPos] = useState<OpenPo[]>([]);
   const [selectedBills, setSelectedBills] = useState<Record<string, boolean>>({});
-  const [selectedPos, setSelectedPos] = useState<Record<string, boolean>>({});
   const [prepaid, setPrepaid] = useState(0);
   const [ledgerBalance, setLedgerBalance] = useState(0);
   const [payments, setPayments] = useState<any[]>([]);
@@ -167,6 +166,19 @@ export const PaySupplierPayment: React.FC<Props> = ({
 
   const outstanding = Math.max(0, ledgerBalance);
   const prepaidOnAccount = Math.max(0, -ledgerBalance, prepaid);
+  const openBillDue = useMemo(
+    () => roundMoneySafe(payableBills.reduce((s, b) => s + Number(b.balance || 0), 0)),
+    [payableBills]
+  );
+  const openPoValue = useMemo(
+    () => roundMoneySafe(openPos.reduce((s, p) => s + Number(p.remaining_value || 0), 0)),
+    [openPos]
+  );
+  /** Prepaid that still covers open POs after first applying to open bills. */
+  const prepaidAfterBills = Math.max(0, roundMoneySafe(prepaidOnAccount - openBillDue));
+  const poCoveredByPrepaid = openPoValue > 0.005 && prepaidAfterBills + 0.005 >= openPoValue;
+  const uncoveredPoAdvance = Math.max(0, roundMoneySafe(openPoValue - prepaidAfterBills));
+  const canApplyPrepaid = prepaidOnAccount > 0.005 && openBillDue > 0.005;
 
   const billTickSum = useMemo(() => {
     return payableBills.reduce(
@@ -175,25 +187,17 @@ export const PaySupplierPayment: React.FC<Props> = ({
     );
   }, [payableBills, selectedBills]);
 
-  const poTickSum = useMemo(() => {
-    return openPos.reduce(
-      (s, p) => (selectedPos[p.id] ? s + Number(p.remaining_value || 0) : s),
-      0
-    );
-  }, [openPos, selectedPos]);
-
-  const depositSum = roundMoneySafe(billTickSum + poTickSum);
+  // POs are not payable invoices — payment cannot allocate to a PO. Only bills are ticked.
+  const depositSum = roundMoneySafe(billTickSum);
   const payAmount = Number(amount) || 0;
   const surplus = mode === 'clear' ? Math.max(0, payAmount - outstanding) : 0;
-  const hasTicks =
-    Object.values(selectedBills).some(Boolean) || Object.values(selectedPos).some(Boolean);
+  const hasTicks = Object.values(selectedBills).some(Boolean);
 
   const refreshSupplierMeta = async (id: string) => {
     if (!id) {
       setPayableBills([]);
       setOpenPos([]);
       setSelectedBills({});
-      setSelectedPos({});
       setPrepaid(0);
       setLedgerBalance(0);
       if (!hideHistory) setPayments([]);
@@ -265,9 +269,6 @@ export const PaySupplierPayment: React.FC<Props> = ({
         })
         .filter((p: OpenPo) => p.remaining_value > 0.005);
       setOpenPos(pos);
-      const nextPos: Record<string, boolean> = {};
-      for (const p of pos) nextPos[p.id] = false;
-      setSelectedPos(nextPos);
 
       const owes = Math.max(0, balance);
       if (pinnedBillId && payable.some((b) => b.id === pinnedBillId)) {
@@ -310,32 +311,59 @@ export const PaySupplierPayment: React.FC<Props> = ({
     setSelectedBills((s) => ({ ...s, [id]: !s[id] }));
   };
 
-  const togglePo = (id: string) => {
-    setSelectedPos((s) => ({ ...s, [id]: !s[id] }));
-  };
-
   const selectAllTargets = () => {
     const nextB: Record<string, boolean> = {};
     for (const b of payableBills) nextB[b.id] = true;
     setSelectedBills(nextB);
-    const nextP: Record<string, boolean> = {};
-    for (const p of openPos) nextP[p.id] = true;
-    setSelectedPos(nextP);
   };
 
   const clearSelection = () => {
     const nextB: Record<string, boolean> = {};
     for (const b of payableBills) nextB[b.id] = false;
     setSelectedBills(nextB);
-    const nextP: Record<string, boolean> = {};
-    for (const p of openPos) nextP[p.id] = false;
-    setSelectedPos(nextP);
+  };
+
+  const fillUncoveredPoAdvance = () => {
+    if (uncoveredPoAdvance > 0.005) {
+      setMode('advance');
+      setAmount(String(Number(uncoveredPoAdvance.toFixed(2))));
+    }
   };
 
   const methodForAccount = (id: string) => {
     if (defaultBankId && id === defaultBankId) return 'bank';
     if (defaultCashId && id === defaultCashId) return 'cash';
     return 'transfer';
+  };
+
+  const applyPrepaid = async (billIds?: string[]) => {
+    if (!canPost || !supplierId || !canApplyPrepaid) return;
+    const tickedOnly = Boolean(billIds?.length);
+    const ok = await confirmAction(
+      'Apply prepaid?',
+      tickedOnly
+        ? `Allocate prepaid on account to the ${billIds!.length} ticked bill(s)? No new cash leaves the ledger.`
+        : `Allocate up to ${money(prepaidOnAccount)} prepaid against open bills (FIFO)? No new cash leaves the ledger.`
+    );
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const result = await api.purchases.applyPrepaid(
+        supplierId,
+        billIds?.length ? { bill_ids: billIds } : {}
+      );
+      const applied = Number(result.applied || 0);
+      await alertSuccess(
+        'Prepaid applied',
+        `${money(applied)} allocated to ${(result.bills || []).length} bill(s). Remaining prepaid: ${money(result.prepaid_after)}.`
+      );
+      await refreshSupplierMeta(supplierId);
+      await onDone?.();
+    } catch (err: any) {
+      await alertError('Apply prepaid failed', err.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const submitPayment = async (e: React.FormEvent) => {
@@ -365,10 +393,23 @@ export const PaySupplierPayment: React.FC<Props> = ({
       if (Math.abs(depositSum - payAmount) > 0.01) {
         await alertError(
           'Amount mismatch',
-          `Ticked bills/POs total ${money(depositSum)}. Adjust the amount or your selection.`
+          `Ticked bills total ${money(depositSum)}. Adjust the amount or your selection.`
         );
         return;
       }
+    }
+
+    if (
+      mode === 'advance' &&
+      !allocations.length &&
+      poCoveredByPrepaid &&
+      openBillDue <= 0.005
+    ) {
+      const ok = await confirmAction(
+        'PO already covered by prepaid',
+        `This supplier already has ${money(prepaidOnAccount)} prepaid, which covers open PO value (${money(openPoValue)}). Posting again will take more cash without clearing the PO. Receive goods to create the bill — prepaid applies automatically. Continue anyway?`
+      );
+      if (!ok) return;
     }
 
     setBusy(true);
@@ -422,7 +463,21 @@ export const PaySupplierPayment: React.FC<Props> = ({
   }
 
   const amountLockedToTicks = mode === 'advance' && hasTicks;
-  const showAdvanceTargets = mode === 'advance' && (payableBills.length > 0 || openPos.length > 0);
+  const showAdvanceBills = mode === 'advance' && payableBills.length > 0;
+  const poCoverage = useMemo(() => {
+    let cursor = prepaidAfterBills;
+    const map: Record<string, { covered: number; shortfall: number }> = {};
+    for (const p of openPos) {
+      const rem = Number(p.remaining_value || 0);
+      const covered = Math.min(cursor, rem);
+      cursor = roundMoneySafe(cursor - covered);
+      map[p.id] = {
+        covered: roundMoneySafe(covered),
+        shortfall: roundMoneySafe(Math.max(0, rem - covered))
+      };
+    }
+    return map;
+  }, [openPos, prepaidAfterBills]);
 
   return (
     <div className="recv-pay">
@@ -431,7 +486,8 @@ export const PaySupplierPayment: React.FC<Props> = ({
           <div>
             <div className="recv-pay__title">Pay supplier</div>
             <p className="recv-pay__hint">
-              Clear open AP bills, or pay in advance. All money debits the supplier account.
+              Clear open AP bills, or pay advances (prepaid). Purchase orders are not invoices —
+              prepaid applies when goods are received and billed.
             </p>
           </div>
           {supplierId ? (
@@ -441,20 +497,53 @@ export const PaySupplierPayment: React.FC<Props> = ({
                   <span className="recv-pay__stat-label">Balance</span>
                   <span className="recv-pay__stat-value">…</span>
                 </div>
-              ) : outstanding > 0.005 ? (
-                <div>
-                  <span className="recv-pay__stat-label">Outstanding</span>
-                  <span className="recv-pay__stat-value">{money(outstanding)}</span>
-                </div>
               ) : (
-                <div>
-                  <span className="recv-pay__stat-label">Prepaid on account</span>
-                  <span className="recv-pay__stat-value">{money(prepaidOnAccount)}</span>
-                </div>
+                <>
+                  {openBillDue > 0.005 ? (
+                    <div>
+                      <span className="recv-pay__stat-label">Open bills due</span>
+                      <span className="recv-pay__stat-value">{money(openBillDue)}</span>
+                    </div>
+                  ) : outstanding > 0.005 ? (
+                    <div>
+                      <span className="recv-pay__stat-label">Outstanding</span>
+                      <span className="recv-pay__stat-value">{money(outstanding)}</span>
+                    </div>
+                  ) : null}
+                  {prepaidOnAccount > 0.005 ? (
+                    <div>
+                      <span className="recv-pay__stat-label">Prepaid on account</span>
+                      <span className="recv-pay__stat-value">{money(prepaidOnAccount)}</span>
+                    </div>
+                  ) : null}
+                  {!openBillDue && !outstanding && prepaidOnAccount <= 0.005 ? (
+                    <div>
+                      <span className="recv-pay__stat-label">Balance</span>
+                      <span className="recv-pay__stat-value">{money(0)}</span>
+                    </div>
+                  ) : null}
+                </>
               )}
             </div>
           ) : null}
         </div>
+
+        {canApplyPrepaid ? (
+          <div className="recv-pay__actions-row" style={{ marginBottom: 8 }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={() => void applyPrepaid()}
+            >
+              Apply prepaid to open bills
+            </button>
+            <span className="recv-pay__note">
+              {money(Math.min(prepaidOnAccount, openBillDue))} can clear bill(s) with no new cash
+              payment.
+            </span>
+          </div>
+        ) : null}
 
         <div className="form-grid">
           {!lockedSupplierId ? (
@@ -542,7 +631,7 @@ export const PaySupplierPayment: React.FC<Props> = ({
             />
             <span>
               <strong>Advance / prepaid</strong>
-              <small>Credit the supplier, or tick open bills / POs</small>
+              <small>Credit the supplier account, or tick open AP bills</small>
             </span>
           </label>
         </div>
@@ -561,14 +650,80 @@ export const PaySupplierPayment: React.FC<Props> = ({
           </div>
         ) : null}
 
-        {showAdvanceTargets ? (
+        {openPos.length > 0 && !loadingMeta ? (
+          <div className="line-items" style={{ marginTop: 8 }}>
+            <div style={{ padding: '0.5rem 0.25rem', fontWeight: 600 }}>
+              Open purchase orders (not invoices)
+            </div>
+            <div className="recv-pay__note" style={{ padding: '0 0.25rem 0.5rem' }}>
+              Paying here does not reduce PO value. Prepaid clears the AP bill automatically when
+              goods are received. Receive stock on Purchases → Receipts.
+            </div>
+            <div className="line-items__scroll">
+              <table className="line-items__table" style={{ minWidth: 640, width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th>PO</th>
+                    <th>Status</th>
+                    <th>Coverage</th>
+                    <th className="num">Remaining value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {openPos.map((p) => {
+                    const cov = poCoverage[p.id] || { covered: 0, shortfall: p.remaining_value };
+                    const fullyCovered = cov.shortfall <= 0.005;
+                    return (
+                      <tr key={p.id} style={{ opacity: fullyCovered ? 0.85 : 1 }}>
+                        <td>
+                          <div style={{ fontWeight: 600 }}>{p.po_number}</div>
+                          <div className="invoice-view__sub">Awaiting receipt / bill</div>
+                        </td>
+                        <td>{p.status || '—'}</td>
+                        <td>
+                          {fullyCovered ? (
+                            <span className="invoice-chip invoice-chip--fulfilled">
+                              Covered by prepaid
+                            </span>
+                          ) : cov.covered > 0.005 ? (
+                            <span className="recv-pay__note">
+                              {money(cov.covered)} prepaid · {money(cov.shortfall)} still needed
+                            </span>
+                          ) : (
+                            <span className="recv-pay__note">Not covered yet</span>
+                          )}
+                        </td>
+                        <td className="num">{money(p.remaining_value)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="recv-pay__actions-row" style={{ padding: '0.5rem 0.25rem' }}>
+              {poCoveredByPrepaid ? (
+                <span className="recv-pay__note">
+                  Prepaid ({money(prepaidOnAccount)}) already covers open PO value (
+                  {money(openPoValue)}). Do not post another payment for this PO.
+                </span>
+              ) : uncoveredPoAdvance > 0.005 ? (
+                <button type="button" className="btn btn-ghost" onClick={fillUncoveredPoAdvance}>
+                  Fill uncovered PO advance ({money(uncoveredPoAdvance)})
+                </button>
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+
+        {showAdvanceBills ? (
           <div className="line-items">
+            <div style={{ padding: '0.5rem 0.25rem', fontWeight: 600 }}>Open AP bills</div>
             <div className="line-items__scroll">
               <table className="line-items__table" style={{ minWidth: 640, width: '100%' }}>
                 <thead>
                   <tr>
                     <th style={{ width: 44 }} />
-                    <th>Bill / PO</th>
+                    <th>Bill</th>
                     <th>Status</th>
                     <th>Branch</th>
                     <th className="num">Amount due</th>
@@ -594,25 +749,6 @@ export const PaySupplierPayment: React.FC<Props> = ({
                       <td className="num">{money(b.balance)}</td>
                     </tr>
                   ))}
-                  {openPos.map((p) => (
-                    <tr key={p.id}>
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={!!selectedPos[p.id]}
-                          onChange={() => togglePo(p.id)}
-                          aria-label={`Select ${p.po_number}`}
-                        />
-                      </td>
-                      <td>
-                        <div style={{ fontWeight: 600 }}>{p.po_number}</div>
-                        <div className="invoice-view__sub">Open purchase order (prepaid)</div>
-                      </td>
-                      <td>{p.status || '—'}</td>
-                      <td>—</td>
-                      <td className="num">{money(p.remaining_value)}</td>
-                    </tr>
-                  ))}
                 </tbody>
               </table>
             </div>
@@ -629,6 +765,20 @@ export const PaySupplierPayment: React.FC<Props> = ({
                 >
                   Clear ticks
                 </button>
+                {canApplyPrepaid && Object.values(selectedBills).some(Boolean) ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={busy}
+                    onClick={() =>
+                      void applyPrepaid(
+                        payableBills.filter((b) => selectedBills[b.id]).map((b) => b.id)
+                      )
+                    }
+                  >
+                    Apply prepaid to ticked
+                  </button>
+                ) : null}
               </div>
               <div className="line-items__totals">
                 <div className="line-items__total line-items__total--muted">

@@ -14,6 +14,7 @@ import { convertToBaseQty, createStockMovement } from './inventory.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import * as branchAccess from './branch-access.service.js';
 import {
+  applyPrepaidToOpenBills,
   applySupplierPaymentInTx,
   autoAllocateBills,
   consumePrepaidAgainstBillBalance,
@@ -714,6 +715,56 @@ export async function getSupplierCredit(user: AuthUser, supplierId: string) {
   if (!supplier) throw httpError(404, 'Supplier not found');
   const credit = await supplierPrepaidCredit(user.businessId, supplierId);
   return serialize(credit);
+}
+
+/**
+ * Allocate existing supplier prepaid onto open bills (no new cash payment / journal).
+ */
+export async function applySupplierPrepaid(
+  user: AuthUser,
+  supplierId: string,
+  body: Record<string, any> = {}
+) {
+  const supplier = await prisma.supplier.findFirst({
+    where: { id: supplierId, businessId: user.businessId },
+    select: { id: true, name: true }
+  });
+  if (!supplier) throw httpError(404, 'Supplier not found');
+
+  const rawIds = body.bill_ids || body.billIds;
+  const billIds = Array.isArray(rawIds)
+    ? rawIds.map((id: unknown) => String(id)).filter(Boolean)
+    : undefined;
+
+  const creditBefore = await supplierPrepaidCredit(user.businessId, supplierId);
+  if (creditBefore.total <= 0.01) {
+    throw httpError(400, 'No supplier prepaid available to apply');
+  }
+
+  const result = await prisma.$transaction(
+    (tx) => applyPrepaidToOpenBills(tx, user.businessId, supplierId, billIds),
+    { timeout: 30000, maxWait: 10000 }
+  );
+
+  if (result.applied <= 0.01) {
+    throw httpError(400, 'No open bill balance to apply prepaid against');
+  }
+
+  await writeAudit({
+    user,
+    action: 'post',
+    module: 'purchases',
+    entityType: 'SupplierPayment',
+    entityId: supplierId,
+    summary: `Applied ${result.applied} prepaid to ${result.bills.length} bill(s) for ${supplier.name}`
+  });
+
+  const creditAfter = await supplierPrepaidCredit(user.businessId, supplierId);
+  return serialize({
+    ...result,
+    prepaid_before: creditBefore.total,
+    prepaid_after: creditAfter.total
+  });
 }
 
 export async function recordSupplierPayment(user: AuthUser, body: Record<string, any>) {
