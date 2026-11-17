@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as expenseService from '../services/expense.service.js';
+import * as expenseCategoryService from '../services/expense-category.service.js';
 
 function branchListOpts(req: Request) {
   return {
@@ -39,7 +40,8 @@ export async function post(req: Request, res: Response, next: NextFunction) {
       await expenseService.postExpense(req.user!, req.params.id, {
         pay_now: Boolean(req.body?.pay_now ?? req.body?.payNow),
         pay_method: req.body?.pay_method || req.body?.payMethod,
-        bank_account_id: req.body?.bank_account_id || req.body?.bankAccountId
+        bank_account_id: req.body?.bank_account_id || req.body?.bankAccountId,
+        funding_account_id: req.body?.funding_account_id || req.body?.fundingAccountId
       })
     );
   } catch (err) {
@@ -50,6 +52,67 @@ export async function post(req: Request, res: Response, next: NextFunction) {
 export async function pay(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(await expenseService.payExpense(req.user!, req.params.id, req.body || {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function remove(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await expenseService.deleteExpense(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listCategories(req: Request, res: Response, next: NextFunction) {
+  try {
+    const activeOnly =
+      req.query.active_only === '1' ||
+      req.query.active_only === 'true' ||
+      req.query.activeOnly === '1' ||
+      req.query.activeOnly === 'true';
+    return res.json(
+      await expenseCategoryService.listCategories(req.user!.businessId, { activeOnly })
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function getCategory(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await expenseCategoryService.getCategory(req.user!.businessId, req.params.id)
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function createCategory(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res
+      .status(201)
+      .json(await expenseCategoryService.createCategory(req.user!, req.body || {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function updateCategory(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await expenseCategoryService.updateCategory(req.user!, req.params.id, req.body || {})
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function deleteCategory(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await expenseCategoryService.deleteCategory(req.user!, req.params.id));
   } catch (err) {
     return next(err);
   }

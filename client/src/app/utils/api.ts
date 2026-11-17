@@ -282,7 +282,27 @@ export const api = {
     post: (id: string, body: Record<string, unknown> = {}) =>
       request<any>(`/expenses/${id}/post`, { method: 'POST', body: JSON.stringify(body) }),
     pay: (id: string, body: Record<string, unknown> = {}) =>
-      request<any>(`/expenses/${id}/pay`, { method: 'POST', body: JSON.stringify(body) })
+      request<any>(`/expenses/${id}/pay`, { method: 'POST', body: JSON.stringify(body) }),
+    remove: (id: string) =>
+      request<{ deleted: boolean; id: string }>(`/expenses/${id}`, { method: 'DELETE' }),
+    categories: (opts?: { activeOnly?: boolean }) => {
+      const params = new URLSearchParams();
+      if (opts?.activeOnly) params.set('active_only', '1');
+      const qs = params.toString();
+      return request<any[]>(`/expenses/categories${qs ? `?${qs}` : ''}`);
+    },
+    getCategory: (id: string) => request<any>(`/expenses/categories/${id}`),
+    createCategory: (body: Record<string, unknown>) =>
+      request<any>('/expenses/categories', { method: 'POST', body: JSON.stringify(body) }),
+    updateCategory: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/expenses/categories/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body)
+      }),
+    deleteCategory: (id: string) =>
+      request<{ deleted: boolean; id: string }>(`/expenses/categories/${id}`, {
+        method: 'DELETE'
+      })
   },
   reports: {
     arAging: (asOf?: string) =>

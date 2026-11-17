@@ -1544,6 +1544,90 @@ async function main() {
     });
   }
 
+  // Expense categories — friendly names bound to CoA for expense pickers
+  const expenseCategorySeeds: {
+    name: string;
+    code: string;
+    accountCode: string;
+    sortOrder: number;
+    description?: string;
+  }[] = [
+    {
+      name: 'Rent',
+      code: 'RENT',
+      accountCode: '6200',
+      sortOrder: 10,
+      description: 'Facility rent and leases'
+    },
+    {
+      name: 'Payroll',
+      code: 'PAY',
+      accountCode: '6100',
+      sortOrder: 20,
+      description: 'Salaries and wages'
+    },
+    {
+      name: 'Commissions',
+      code: 'COMM',
+      accountCode: '6150',
+      sortOrder: 30,
+      description: 'Sales rep commissions'
+    },
+    {
+      name: 'Depreciation',
+      code: 'DEP',
+      accountCode: '6300',
+      sortOrder: 40,
+      description: 'Asset depreciation'
+    },
+    {
+      name: 'General',
+      code: 'GEN',
+      accountCode: '6400',
+      sortOrder: 50,
+      description: 'General operating expenses'
+    },
+    {
+      name: 'Inventory adjustment',
+      code: 'INVADJ',
+      accountCode: '6500',
+      sortOrder: 60,
+      description: 'Inventory count adjustments'
+    }
+  ];
+  for (const ec of expenseCategorySeeds) {
+    const accountId = accountByCode[ec.accountCode];
+    if (!accountId) continue;
+    const existingCat = await prisma.expenseCategory.findFirst({
+      where: { businessId: business.id, name: ec.name }
+    });
+    if (existingCat) {
+      await prisma.expenseCategory.update({
+        where: { id: existingCat.id },
+        data: {
+          code: ec.code,
+          accountId,
+          sortOrder: ec.sortOrder,
+          description: ec.description || null,
+          isActive: true
+        }
+      });
+    } else {
+      await prisma.expenseCategory.create({
+        data: {
+          id: id('exc'),
+          businessId: business.id,
+          name: ec.name,
+          code: ec.code,
+          accountId,
+          sortOrder: ec.sortOrder,
+          description: ec.description || null,
+          isActive: true
+        }
+      });
+    }
+  }
+
   // Financial year
   const year = new Date().getFullYear();
   let fy = await prisma.financialYear.findFirst({

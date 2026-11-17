@@ -126,6 +126,7 @@ model Business {
   bankAccounts                      BankAccount[]
   bankTransactions                  BankTransaction[]
   expenseBills                      ExpenseBill[]
+  expenseCategories                 ExpenseCategory[]
   fixedAssets                       FixedAsset[]
   depreciationEntries               DepreciationEntry[]
   budgets                           Budget[]
@@ -516,6 +517,8 @@ model Account {
   bankAccounts                   BankAccount[]
   bankTxnOffsets                 BankTransaction[]            @relation("BankTxnOffsetAccount")
   expenseLines                   ExpenseBillLine[]
+  expenseCategories              ExpenseCategory[]
+  expenseFundingBills            ExpenseBill[]               @relation("ExpenseFundingAccount")
   budgetLines                    BudgetLine[]
 
   @@unique([businessId, code])
@@ -2038,6 +2041,8 @@ model ExpenseBill {
   /// cash | bank | ap
   payMethod             String?   @map("pay_method")
   bankAccountId         String?   @map("bank_account_id")
+  /// Asset GL credited when posting (cash/bank/petty cash, etc.)
+  fundingAccountId      String?   @map("funding_account_id")
   journalEntryId        String?   @map("journal_entry_id")
   paymentJournalEntryId String?   @map("payment_journal_entry_id")
   notes                 String?   @db.Text
@@ -2045,30 +2050,58 @@ model ExpenseBill {
   createdAt             DateTime  @default(now()) @map("created_at")
   updatedAt             DateTime  @updatedAt @map("updated_at")
 
-  business    Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  branch      Branch?           @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  supplier    Supplier?         @relation(fields: [supplierId], references: [id], onDelete: SetNull)
-  bankAccount BankAccount?      @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
-  lines       ExpenseBillLine[]
+  business       Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch         Branch?           @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  supplier       Supplier?         @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  bankAccount    BankAccount?      @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  fundingAccount Account?          @relation("ExpenseFundingAccount", fields: [fundingAccountId], references: [id], onDelete: SetNull)
+  lines          ExpenseBillLine[]
 
   @@unique([businessId, expenseNumber])
   @@index([businessId, status])
   @@index([branchId])
+  @@index([fundingAccountId])
   @@map("expense_bills")
 }
 
 model ExpenseBillLine {
-  id          String  @id
-  expenseId   String  @map("expense_id")
-  accountId   String  @map("account_id")
-  description String?
-  amount      Decimal @db.Decimal(18, 4)
+  id                String  @id
+  expenseId         String  @map("expense_id")
+  accountId         String  @map("account_id")
+  expenseCategoryId String? @map("expense_category_id")
+  description       String?
+  amount            Decimal @db.Decimal(18, 4)
 
-  expense ExpenseBill @relation(fields: [expenseId], references: [id], onDelete: Cascade)
-  account Account     @relation(fields: [accountId], references: [id])
+  expense         ExpenseBill      @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+  account         Account          @relation(fields: [accountId], references: [id])
+  expenseCategory ExpenseCategory? @relation(fields: [expenseCategoryId], references: [id], onDelete: SetNull)
 
   @@index([expenseId])
+  @@index([expenseCategoryId])
   @@map("expense_bill_lines")
+}
+
+/// Named expense type bound to a GL account — drives expense pickers without a parallel posting model.
+model ExpenseCategory {
+  id          String   @id
+  businessId  String   @map("business_id")
+  name        String
+  code        String?
+  accountId   String   @map("account_id")
+  isActive    Boolean  @default(true) @map("is_active")
+  description String?  @db.Text
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  business Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  account  Account           @relation(fields: [accountId], references: [id])
+  lines    ExpenseBillLine[]
+
+  @@unique([businessId, name])
+  @@index([businessId, isActive])
+  @@index([accountId])
+  @@map("expense_categories")
 }
 
 // --- Phase 6: Assets / Depreciation / Budgeting ------------------------------
