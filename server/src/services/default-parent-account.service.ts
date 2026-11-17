@@ -138,19 +138,19 @@ const CATALOG_BY_KEY = new Map(DEFAULT_PARENT_ACCOUNT_CATALOG.map((k) => [k.key,
 
 /** Suggested CoA codes used when seeding parent filters for a fresh business. */
 export const DEFAULT_PARENT_SEED_CODES: Record<string, string> = {
-  cash_ledgers: '1100',
-  bank_ledgers: '1100',
-  receivable_ledgers: '1100',
-  payable_ledgers: '2000',
-  inventory_ledgers: '1100',
+  cash_ledgers: '1105',
+  bank_ledgers: '1105',
+  receivable_ledgers: '1129',
+  payable_ledgers: '2090',
+  inventory_ledgers: '1138',
   fixed_asset_ledgers: '1200',
   revenue_ledgers: '4000',
   cogs_ledgers: '5000',
   expense_ledgers: '6000',
   liability_ledgers: '2000',
   equity_ledgers: '3000',
-  payroll_expense_ledgers: '6000',
-  payroll_liability_ledgers: '2000'
+  payroll_expense_ledgers: '6050',
+  payroll_liability_ledgers: '2050'
 };
 
 export function listDefaultParentAccountCatalog() {

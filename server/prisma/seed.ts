@@ -633,7 +633,7 @@ const COA: {
     name: 'Inter-branch Clearing',
     accountType: 'asset',
     key: 'inter_branch_clearing',
-    parentCode: '1100'
+    parentCode: '1138'
   },
   { code: '1200', name: 'Fixed Assets', accountType: 'asset', parentCode: '1000' },
   {
@@ -1454,33 +1454,11 @@ async function main() {
 
   // Chart of accounts for business
   const accountByCode: Record<string, string> = {};
-  const parentByType: Record<string, string | null> = {};
   for (const a of COA) {
     let acc = await prisma.account.findFirst({
       where: { businessId: business.id, code: a.code }
     });
     if (!acc) {
-      const parentId =
-        a.code.length === 4 && a.code.endsWith('000')
-          ? null
-          : a.code.endsWith('00')
-            ? parentByType[`${a.accountType}-root`] || null
-            : parentByType[`${a.accountType}-group`] || parentByType[`${a.accountType}-root`] || null;
-
-      // Simple hierarchy: x000 root, x?00 group under root
-      let resolvedParent: string | null = null;
-      if (a.code === '1000' || a.code === '2000' || a.code === '3000' || a.code === '4000' || a.code === '5000' || a.code === '6000') {
-        resolvedParent = null;
-        parentByType[`${a.accountType}-root`] = undefined as any;
-      } else if (a.code.endsWith('00')) {
-        const rootCode = a.code[0] + '000';
-        resolvedParent = accountByCode[rootCode] || null;
-        parentByType[`${a.accountType}-group`] = undefined as any;
-      } else {
-        const groupCode = a.code.slice(0, 2) + '00';
-        resolvedParent = accountByCode[groupCode] || accountByCode[a.code[0] + '000'] || null;
-      }
-
       acc = await prisma.account.create({
         data: {
           id: id('acc'),
@@ -1488,14 +1466,17 @@ async function main() {
           code: a.code,
           name: a.name,
           accountType: a.accountType,
-          parentId: resolvedParent,
+          parentId: null,
           isSystem: true
         }
       });
+    } else if (acc.name !== a.name) {
+      acc = await prisma.account.update({
+        where: { id: acc.id },
+        data: { name: a.name }
+      });
     }
     accountByCode[a.code] = acc.id;
-    if (a.code.endsWith('000')) parentByType[`${a.accountType}-root`] = acc.id;
-    if (a.code.endsWith('00') && !a.code.endsWith('000')) parentByType[`${a.accountType}-group`] = acc.id;
 
     if (a.key) {
       await prisma.defaultAccountSetting.upsert({
@@ -1513,25 +1494,37 @@ async function main() {
     }
   }
 
+  // Apply parentCode hierarchy (second pass so all codes exist)
+  for (const a of COA) {
+    const accId = accountByCode[a.code];
+    if (!accId) continue;
+    const parentId =
+      a.parentCode === null
+        ? null
+        : a.parentCode
+          ? accountByCode[a.parentCode] || null
+          : null;
+    await prisma.account.update({
+      where: { id: accId },
+      data: { parentId }
+    });
+  }
+
   // Parent-account filters — scope ledger pickers to CoA subtrees
   const parentFilterSeeds: { key: string; code: string; description: string }[] = [
-    { key: 'cash_ledgers', code: '1100', description: 'Current assets subtree for cash pickers' },
-    { key: 'bank_ledgers', code: '1100', description: 'Current assets subtree for bank pickers' },
-    { key: 'receivable_ledgers', code: '1100', description: 'Current assets subtree for AR pickers' },
-    { key: 'payable_ledgers', code: '2000', description: 'Liabilities subtree for AP pickers' },
-    { key: 'inventory_ledgers', code: '1100', description: 'Current assets subtree for inventory' },
+    { key: 'cash_ledgers', code: '1105', description: 'Cash & bank subtree for cash pickers' },
+    { key: 'bank_ledgers', code: '1105', description: 'Cash & bank subtree for bank pickers' },
+    { key: 'receivable_ledgers', code: '1129', description: 'Receivables & advances subtree' },
+    { key: 'payable_ledgers', code: '2090', description: 'Trade payables subtree' },
+    { key: 'inventory_ledgers', code: '1138', description: 'Inventory subtree' },
     { key: 'fixed_asset_ledgers', code: '1200', description: 'Fixed assets group' },
     { key: 'revenue_ledgers', code: '4000', description: 'Revenue root' },
     { key: 'cogs_ledgers', code: '5000', description: 'COGS root' },
     { key: 'expense_ledgers', code: '6000', description: 'Operating expenses root' },
     { key: 'liability_ledgers', code: '2000', description: 'Liabilities root' },
     { key: 'equity_ledgers', code: '3000', description: 'Equity root' },
-    { key: 'payroll_expense_ledgers', code: '6000', description: 'Expense root for payroll costs' },
-    {
-      key: 'payroll_liability_ledgers',
-      code: '2000',
-      description: 'Liability root for payroll payables'
-    }
+    { key: 'payroll_expense_ledgers', code: '6050', description: 'Payroll expense subgroup' },
+    { key: 'payroll_liability_ledgers', code: '2050', description: 'Payroll liability subgroup' }
   ];
   for (const pf of parentFilterSeeds) {
     const parentId = accountByCode[pf.code];
