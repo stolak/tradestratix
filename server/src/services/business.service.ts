@@ -70,9 +70,40 @@ export async function updateCurrentBusiness(
   return serialize(updated);
 }
 
+export const VAT_RATE_SETTING_KEY = 'vat_rate_percent';
+export const DEFAULT_VAT_RATE_PERCENT = 7.5;
+
+export async function getSettingValue(
+  businessId: string,
+  key: string
+): Promise<string | null> {
+  const row = await prisma.businessSetting.findUnique({
+    where: { businessId_settingKey: { businessId, settingKey: key } }
+  });
+  return row?.value ?? null;
+}
+
+/** Nigeria default output VAT % for the business (falls back to 7.5). */
+export async function getDefaultVatRatePercent(businessId: string): Promise<number> {
+  const raw = await getSettingValue(businessId, VAT_RATE_SETTING_KEY);
+  if (raw == null || raw === '') return DEFAULT_VAT_RATE_PERCENT;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return DEFAULT_VAT_RATE_PERCENT;
+  return n;
+}
+
 export async function upsertSetting(user: AuthUser, key: string, value: string) {
+  const settingKey = requireString(key, 'key').trim();
+  if (settingKey === VAT_RATE_SETTING_KEY) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0 || n > 100) {
+      throw httpError(400, 'vat_rate_percent must be a number between 0 and 100');
+    }
+    value = String(n);
+  }
+
   const existing = await prisma.businessSetting.findUnique({
-    where: { businessId_settingKey: { businessId: user.businessId, settingKey: key } }
+    where: { businessId_settingKey: { businessId: user.businessId, settingKey } }
   });
   const row = existing
     ? await prisma.businessSetting.update({
@@ -83,10 +114,20 @@ export async function upsertSetting(user: AuthUser, key: string, value: string) 
         data: {
           id: shortId('bst'),
           businessId: user.businessId,
-          settingKey: key,
+          settingKey,
           value,
           updatedBy: user.id
         }
       });
+
+  await writeAudit({
+    user,
+    action: existing ? 'update' : 'create',
+    module: 'settings',
+    entityType: 'BusinessSetting',
+    entityId: row.id,
+    summary: `Set ${settingKey}=${value}`
+  });
+
   return serialize(row);
 }

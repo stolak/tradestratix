@@ -12,5 +12,10 @@ router.patch(
   requirePermission('settings.edit'),
   businessController.updateCurrent
 );
+router.put(
+  '/current/settings/:key',
+  requirePermission('settings.edit'),
+  businessController.upsertSetting
+);
 
 export default router;

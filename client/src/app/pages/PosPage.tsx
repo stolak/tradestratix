@@ -100,6 +100,9 @@ export const PosPage: React.FC = () => {
   const [unitPrice, setUnitPrice] = useState('');
   const [cart, setCart] = useState<CartLine[]>([]);
   const [busy, setBusy] = useState(false);
+  const [specialDiscountType, setSpecialDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [specialDiscountValue, setSpecialDiscountValue] = useState('');
+  const [specialDiscountTouched, setSpecialDiscountTouched] = useState(false);
 
   const selectableCustomers = useMemo(
     () =>
@@ -157,10 +160,46 @@ export const PosPage: React.FC = () => {
     [cart]
   );
   const customerDiscountPct = Number(selectedCustomer?.discount_percent || 0);
-  const tender =
-    customerDiscountPct > 0
-      ? total - Math.round(total * customerDiscountPct) / 100
-      : total;
+
+  useEffect(() => {
+    if (specialDiscountTouched) return;
+    const pct = Number(selectedCustomer?.discount_percent || 0);
+    setSpecialDiscountType('percentage');
+    setSpecialDiscountValue(pct > 0 ? String(pct) : '');
+  }, [selectedCustomer?.id, selectedCustomer?.discount_percent, specialDiscountTouched]);
+
+  const specialDiscountAmount = useMemo(() => {
+    const raw = Number(specialDiscountValue || 0);
+    if (!(raw > 0) || !(total > 0)) return 0;
+    if (specialDiscountType === 'percentage') {
+      return Math.round(((total * Math.min(raw, 100)) / 100) * 100) / 100;
+    }
+    return Math.round(Math.min(raw, total) * 100) / 100;
+  }, [specialDiscountType, specialDiscountValue, total]);
+
+  const vatAmount = useMemo(() => {
+    const netSum = total;
+    let allocated = 0;
+    let tax = 0;
+    for (let i = 0; i < cart.length; i++) {
+      const l = cart[i];
+      const lineNet = Number(l.quantity || 0) * Number(l.unit_price || 0);
+      let share = 0;
+      if (specialDiscountAmount > 0.009 && netSum > 0.009) {
+        if (i === cart.length - 1) {
+          share = Math.round((specialDiscountAmount - allocated) * 100) / 100;
+        } else {
+          share = Math.round(((lineNet / netSum) * specialDiscountAmount) * 100) / 100;
+          allocated = Math.round((allocated + share) * 100) / 100;
+        }
+      }
+      const product = products.find((p) => p.id === l.product_id);
+      const rate = Number(product?.vat_rate || 0);
+      tax += (Math.max(0, lineNet - share) * rate) / 100;
+    }
+    return Math.round(tax * 100) / 100;
+  }, [cart, products, total, specialDiscountAmount]);
+  const tender = total - specialDiscountAmount + vatAmount;
 
   const filteredMySales = useMemo(() => {
     return mySales.filter((s) => {
@@ -306,11 +345,16 @@ export const PosPage: React.FC = () => {
     }
     setBusy(true);
     try {
+      const specialRate = Number(specialDiscountValue || 0);
       const sale = await api.sales.posSale({
         customer_id: customerId,
         warehouse_id: warehouseId,
         sales_rep_id: salesRepId || undefined,
         payment_method: method,
+        special_discount_type: specialDiscountType,
+        ...(specialDiscountType === 'fixed'
+          ? { special_discount_amount: specialRate }
+          : { special_discount_rate: specialRate }),
         items: cart.map((l) => ({
           product_id: l.product_id,
           uom_id: l.uom_id,
@@ -395,6 +439,10 @@ export const PosPage: React.FC = () => {
                   onChange={(e) => {
                     const nextId = e.target.value;
                     const next = selectableCustomers.find((c) => c.id === nextId);
+                    setSpecialDiscountTouched(false);
+                    const pct = Number(next?.discount_percent || 0);
+                    setSpecialDiscountType('percentage');
+                    setSpecialDiscountValue(pct > 0 ? String(pct) : '');
                     setCustomerId(nextId);
                     if (isWalkInCustomer(next) && isSalesRep && mySalesRepId) {
                       setSalesRepId(mySalesRepId);
@@ -589,10 +637,46 @@ export const PosPage: React.FC = () => {
             <div style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
               Tender
             </div>
-            {customerDiscountPct > 0 && total > 0 ? (
-              <div style={{ fontSize: '0.85rem', color: 'var(--accent)', fontWeight: 600 }}>
-                Subtotal {total.toLocaleString(undefined, { minimumFractionDigits: 2 })} · −
-                {customerDiscountPct}% customer discount
+            {total > 0 ? (
+              <div style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', display: 'grid', gap: 6 }}>
+                <div>
+                  Subtotal (ex-VAT) {total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                </div>
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span>Special discount</span>
+                  <select
+                    value={specialDiscountType}
+                    onChange={(e) => {
+                      setSpecialDiscountTouched(true);
+                      setSpecialDiscountType(e.target.value as 'percentage' | 'fixed');
+                    }}
+                    style={{ minWidth: 64 }}
+                  >
+                    <option value="percentage">%</option>
+                    <option value="fixed">₦</option>
+                  </select>
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    max={specialDiscountType === 'percentage' ? 100 : undefined}
+                    value={specialDiscountValue}
+                    onChange={(e) => {
+                      setSpecialDiscountTouched(true);
+                      setSpecialDiscountValue(e.target.value);
+                    }}
+                    placeholder="0"
+                    style={{ width: 80, textAlign: 'right' }}
+                  />
+                  {specialDiscountAmount > 0 ? (
+                    <span>−{money(specialDiscountAmount)}</span>
+                  ) : customerDiscountPct > 0 && !specialDiscountTouched ? (
+                    <span style={{ opacity: 0.8 }}>default −{customerDiscountPct}%</span>
+                  ) : null}
+                </div>
+                {vatAmount > 0.005 ? (
+                  <div>VAT {vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</div>
+                ) : null}
               </div>
             ) : null}
             <div className="display" style={{ fontSize: '2.5rem', margin: 0 }}>

@@ -1128,6 +1128,19 @@ async function main() {
     update: { isDefault: true }
   });
 
+  // Default Nigeria output VAT % (new products inherit this)
+  await prisma.businessSetting.upsert({
+    where: {
+      businessId_settingKey: { businessId: business.id, settingKey: 'vat_rate_percent' }
+    },
+    create: {
+      id: id('bst'),
+      businessId: business.id,
+      settingKey: 'vat_rate_percent',
+      value: '7.5'
+    },
+    update: {}
+  });
   await prisma.businessSubscription.create({
     data: {
       id: id('sub'),
@@ -1735,6 +1748,7 @@ async function main() {
         defaultSellingPrice: 250,
         wholesalePrice: 220,
         retailPrice: 250,
+        vatRate: 7.5,
         expiryAlertDaysJson: JSON.stringify([180, 90, 60, 30, 7]),
         variants: {
           create: [
@@ -1793,6 +1807,7 @@ async function main() {
         defaultPurchaseCost: 4500,
         defaultSellingPrice: 7500,
         retailPrice: 7500,
+        vatRate: 7.5,
         variants: {
           create: [
             {

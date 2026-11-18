@@ -198,6 +198,9 @@ export const SalesPage: React.FC = () => {
     notes: ''
   });
   const [lines, setLines] = useState<LineItem[]>([makeLine()]);
+  const [specialDiscountType, setSpecialDiscountType] = useState<'percentage' | 'fixed'>('percentage');
+  const [specialDiscountValue, setSpecialDiscountValue] = useState('');
+  const [specialDiscountTouched, setSpecialDiscountTouched] = useState(false);
 
   const selectableCustomers = useMemo(
     () =>
@@ -267,9 +270,58 @@ export const SalesPage: React.FC = () => {
     [lines]
   );
   const customerDiscountPct = Number(selectedCustomer?.discount_percent || 0);
-  const customerDiscountAmount =
-    customerDiscountPct > 0 ? Math.round(invoiceSubtotal * customerDiscountPct) / 100 : 0;
-  const invoiceTotal = invoiceSubtotal - customerDiscountAmount;
+
+  useEffect(() => {
+    if (specialDiscountTouched) return;
+    const pct = Number(selectedCustomer?.discount_percent || 0);
+    setSpecialDiscountType('percentage');
+    setSpecialDiscountValue(pct > 0 ? String(pct) : '');
+  }, [selectedCustomer?.id, selectedCustomer?.discount_percent, specialDiscountTouched]);
+
+  const specialDiscountAmount = useMemo(() => {
+    const raw = Number(specialDiscountValue || 0);
+    if (!(raw > 0) || !(invoiceSubtotal > 0)) return 0;
+    if (specialDiscountType === 'percentage') {
+      return Math.round(((invoiceSubtotal * Math.min(raw, 100)) / 100) * 100) / 100;
+    }
+    return Math.round(Math.min(raw, invoiceSubtotal) * 100) / 100;
+  }, [specialDiscountType, specialDiscountValue, invoiceSubtotal]);
+
+  const lineAmounts = useMemo(() => {
+    const netSum = invoiceSubtotal;
+    let allocated = 0;
+    const priced = lines.map((line) => ({
+      key: line.key,
+      net: lineSubtotal(line),
+      rate: Number(products.find((p) => p.id === line.product_id)?.vat_rate ?? 0) || 0
+    }));
+    const out: Record<string, { discount: number; vat: number; subtotal: number }> = {};
+    for (let i = 0; i < priced.length; i++) {
+      const row = priced[i];
+      let discount = 0;
+      if (specialDiscountAmount > 0.009 && netSum > 0.009) {
+        if (i === priced.length - 1) {
+          discount = Math.round((specialDiscountAmount - allocated) * 100) / 100;
+        } else {
+          discount = Math.round(((row.net / netSum) * specialDiscountAmount) * 100) / 100;
+          allocated = Math.round((allocated + discount) * 100) / 100;
+        }
+      }
+      const taxable = Math.max(0, row.net - discount);
+      const vat = Math.round(((taxable * row.rate) / 100) * 100) / 100;
+      const subtotal = Math.round((taxable + vat) * 100) / 100;
+      out[row.key] = { discount, vat, subtotal };
+    }
+    return out;
+  }, [lines, products, invoiceSubtotal, specialDiscountAmount]);
+  const invoiceVat = useMemo(
+    () =>
+      Math.round(
+        Object.values(lineAmounts).reduce((sum, row) => sum + row.vat, 0) * 100
+      ) / 100,
+    [lineAmounts]
+  );
+  const invoiceTotal = invoiceSubtotal - specialDiscountAmount + invoiceVat;
   const customerCreditLimit =
     selectedCustomer?.credit_limit != null ? Number(selectedCustomer.credit_limit) : null;
   const customerAvailableCredit =
@@ -578,12 +630,17 @@ export const SalesPage: React.FC = () => {
 
     setBusy(true);
     try {
+      const specialRate = Number(specialDiscountValue || 0);
       await api.sales.createInvoice({
         customer_id: form.customer_id,
         warehouse_id: form.warehouse_id || undefined,
         sales_rep_id: form.sales_rep_id || undefined,
         notes: form.notes || undefined,
         fulfilment_mode: fulfilmentMode,
+        special_discount_type: specialDiscountType,
+        ...(specialDiscountType === 'fixed'
+          ? { special_discount_amount: specialRate }
+          : { special_discount_rate: specialRate }),
         ...(fulfilmentMode === 'delivery'
           ? {
               delivery_address: delivery.address || undefined,
@@ -788,6 +845,10 @@ export const SalesPage: React.FC = () => {
                   onChange={(nextId) => {
                     const next = selectableCustomers.find((c) => c.id === nextId);
                     const lockRep = isWalkInCustomer(next) && isSalesRep && mySalesRepId;
+                    setSpecialDiscountTouched(false);
+                    const pct = Number(next?.discount_percent || 0);
+                    setSpecialDiscountType('percentage');
+                    setSpecialDiscountValue(pct > 0 ? String(pct) : '');
                     setForm({
                       ...form,
                       customer_id: nextId,
@@ -800,7 +861,7 @@ export const SalesPage: React.FC = () => {
                   <div className="customer-terms">
                     {customerDiscountPct > 0 ? (
                       <span className="branch-pricing__badge branch-pricing__badge--discount">
-                        −{customerDiscountPct}% customer discount
+                        −{customerDiscountPct}% default special discount
                       </span>
                     ) : null}
                     {customerAvailableCredit != null ? (
@@ -963,6 +1024,8 @@ export const SalesPage: React.FC = () => {
                       Qty
                     </th>
                     <th className="num line-items__col-price">Unit price</th>
+                    <th className="num line-items__col-discount">Discount</th>
+                    <th className="num line-items__col-vat">VAT</th>
                     <th className="num line-items__col-subtotal">Subtotal</th>
                     {deferred ? <th className="line-items__col-pickup">Pickup from</th> : null}
                     <th className="line-items__col-actions" />
@@ -972,6 +1035,11 @@ export const SalesPage: React.FC = () => {
                   {lines.map((line, index) => {
                     const product = products.find((p) => p.id === line.product_id);
                     const sellOptions = sellPriceOptionsForProduct(product);
+                    const amounts = lineAmounts[line.key] || {
+                      discount: 0,
+                      vat: 0,
+                      subtotal: lineSubtotal(line)
+                    };
                     return (
                       <tr key={line.key}>
                         <td className="line-items__index">{index + 1}</td>
@@ -1049,11 +1117,24 @@ export const SalesPage: React.FC = () => {
                             );
                           })()}
                         </td>
+                        <td className="num line-items__col-discount">
+                          <div className="line-items__rate-note">
+                            {specialDiscountType === 'percentage'
+                              ? `−${Number(specialDiscountValue || 0) || 0}%`
+                              : amounts.discount > 0
+                                ? 'fixed'
+                                : '0%'}
+                          </div>
+                          <div>{fmtMoney(amounts.discount || 0)}</div>
+                        </td>
+                        <td className="num line-items__col-vat">
+                          <div className="line-items__rate-note">
+                            {Number(product?.vat_rate ?? 0) || 0}%
+                          </div>
+                          <div>{fmtMoney(amounts.vat || 0)}</div>
+                        </td>
                         <td className="num line-items__subtotal">
-                          {lineSubtotal(line).toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2
-                          })}
+                          {fmtMoney(amounts.subtotal)}
                         </td>
                         {deferred ? (
                           <td>
@@ -1113,26 +1194,50 @@ export const SalesPage: React.FC = () => {
                   Add line
                 </button>
                 <div className="line-items__totals">
-                  {customerDiscountPct > 0 ? (
-                    <>
-                      <div className="line-items__total line-items__total--muted">
-                        <span className="line-items__total-label">Subtotal</span>
-                        <span className="line-items__total-value">{fmtMoney(invoiceSubtotal)}</span>
-                      </div>
-                      <div className="line-items__total line-items__total--muted">
-                        <span className="line-items__total-label">
-                          Customer discount −{customerDiscountPct}%
-                        </span>
-                        <span className="line-items__total-value">
-                          −{fmtMoney(customerDiscountAmount)}
-                        </span>
-                      </div>
-                    </>
+                  <div className="line-items__total line-items__total--muted">
+                    <span className="line-items__total-label">Subtotal (ex-VAT)</span>
+                    <span className="line-items__total-value">{fmtMoney(invoiceSubtotal)}</span>
+                  </div>
+                  <div className="line-items__total line-items__total--muted" style={{ alignItems: 'center', gap: 8 }}>
+                    <span className="line-items__total-label">Special discount</span>
+                    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+                      <select
+                        value={specialDiscountType}
+                        onChange={(e) => {
+                          setSpecialDiscountTouched(true);
+                          setSpecialDiscountType(e.target.value as 'percentage' | 'fixed');
+                        }}
+                        style={{ minWidth: 72 }}
+                      >
+                        <option value="percentage">%</option>
+                        <option value="fixed">₦</option>
+                      </select>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        max={specialDiscountType === 'percentage' ? 100 : undefined}
+                        value={specialDiscountValue}
+                        onChange={(e) => {
+                          setSpecialDiscountTouched(true);
+                          setSpecialDiscountValue(e.target.value);
+                        }}
+                        placeholder={specialDiscountType === 'percentage' ? '0' : '0.00'}
+                        style={{ width: 88, textAlign: 'right' }}
+                      />
+                      {specialDiscountAmount > 0 ? (
+                        <span className="line-items__total-value">−{fmtMoney(specialDiscountAmount)}</span>
+                      ) : null}
+                    </span>
+                  </div>
+                  {invoiceVat > 0.005 ? (
+                    <div className="line-items__total line-items__total--muted">
+                      <span className="line-items__total-label">Total VAT</span>
+                      <span className="line-items__total-value">{fmtMoney(invoiceVat)}</span>
+                    </div>
                   ) : null}
                   <div className="line-items__total">
-                    <span className="line-items__total-label">
-                      {customerDiscountPct > 0 ? 'Invoice total' : 'Invoice subtotal'}
-                    </span>
+                    <span className="line-items__total-label">Invoice total</span>
                     <span className="line-items__total-value">{fmtMoney(invoiceTotal)}</span>
                   </div>
                 </div>

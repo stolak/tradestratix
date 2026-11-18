@@ -411,9 +411,11 @@ a {
 }
 
 .line-items__col-price,
+.line-items__col-discount,
+.line-items__col-vat,
 .line-items__col-subtotal {
-  width: 120px;
-  min-width: 120px;
+  width: 110px;
+  min-width: 96px;
 }
 
 .line-items__col-pickup {
@@ -598,6 +600,20 @@ a {
   color: var(--accent);
   text-align: right;
   white-space: nowrap;
+}
+
+.line-items__rate-note {
+  margin-bottom: 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-muted);
+  text-align: right;
+  white-space: nowrap;
+  line-height: 1.2;
+}
+
+.line-items__col-discount .line-items__rate-note {
+  color: var(--accent);
 }
 
 .branch-pricing__badge--discount {

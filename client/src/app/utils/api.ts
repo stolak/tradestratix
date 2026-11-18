@@ -76,7 +76,12 @@ export const api = {
   businesses: {
     current: () => request<any>('/businesses/current'),
     update: (body: Record<string, unknown>) =>
-      request<any>('/businesses/current', { method: 'PATCH', body: JSON.stringify(body) })
+      request<any>('/businesses/current', { method: 'PATCH', body: JSON.stringify(body) }),
+    upsertSetting: (key: string, value: string) =>
+      request<any>(`/businesses/current/settings/${encodeURIComponent(key)}`, {
+        method: 'PUT',
+        body: JSON.stringify({ value })
+      })
   },
   branches: {
     list: () => request<any[]>('/branches'),

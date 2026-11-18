@@ -809,6 +809,8 @@ model Product {
   wholesalePrice      Decimal? @map("wholesale_price") @db.Decimal(18, 4)
   retailPrice         Decimal? @map("retail_price") @db.Decimal(18, 4)
   taxCategory         String?  @map("tax_category")
+  /// Output VAT percent for sales (e.g. 7.5). Snapshotted onto invoice lines at sale time.
+  vatRate             Decimal  @default(0) @map("vat_rate") @db.Decimal(8, 4)
   expiryAlertDaysJson String?  @map("expiry_alert_days_json") @db.Text
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
@@ -1499,8 +1501,13 @@ model SalesInvoice {
   dueDate              DateTime? @map("due_date")
   notes                String?   @db.Text
   subtotal             Decimal   @default(0) @db.Decimal(18, 4)
-  /// Customer discount % captured when the invoice was created
+  /// Sum of item-level discounts (list − net before special discount)
+  itemDiscountTotal    Decimal   @default(0) @map("item_discount_total") @db.Decimal(18, 4)
+  /// percentage | fixed — invoice-level / special discount (after item discounts, before VAT)
+  discountType         String?   @map("discount_type")
+  /// Special discount % when discountType = percentage
   discountPercent      Decimal?  @map("discount_percent") @db.Decimal(8, 4)
+  /// Special discount amount (computed or fixed), allocated across lines before VAT
   discountAmount       Decimal   @default(0) @map("discount_amount") @db.Decimal(18, 4)
   taxAmount            Decimal   @default(0) @map("tax_amount") @db.Decimal(18, 4)
   totalAmount          Decimal   @default(0) @map("total_amount") @db.Decimal(18, 4)
@@ -1566,7 +1573,18 @@ model SalesInvoiceItem {
   /// List price before the branch discount (null when no discount applied)
   grossUnitPrice        Decimal? @map("gross_unit_price") @db.Decimal(18, 4)
   discountPercent       Decimal? @map("discount_percent") @db.Decimal(8, 4)
+  /// Item-level discount money (qty × (gross − net unit)), 0 when none
+  itemDiscountAmount    Decimal  @default(0) @map("item_discount_amount") @db.Decimal(18, 4)
+  /// Net after item discount, before invoice special discount (qty × unit_price)
   lineTotal             Decimal  @map("line_total") @db.Decimal(18, 4)
+  /// Share of invoice special discount allocated to this line
+  allocatedDiscount     Decimal  @default(0) @map("allocated_discount") @db.Decimal(18, 4)
+  /// Taxable consideration after special discount (ex-VAT)
+  taxableAmount         Decimal  @default(0) @map("taxable_amount") @db.Decimal(18, 4)
+  /// VAT % snapshotted from the product at sale time
+  taxRate               Decimal  @default(0) @map("tax_rate") @db.Decimal(8, 4)
+  /// VAT amount for this line (tax-exclusive on taxableAmount)
+  taxAmount             Decimal  @default(0) @map("tax_amount") @db.Decimal(18, 4)
   priceLevel            String?  @map("price_level")
   stockMovementId       String?  @map("stock_movement_id")
   cogsAmount            Decimal  @default(0) @map("cogs_amount") @db.Decimal(18, 4)

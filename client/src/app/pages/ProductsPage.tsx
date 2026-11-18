@@ -67,6 +67,7 @@ const emptyForm = {
   make_id: '',
   default_purchase_cost: '0',
   reorder_level: '0',
+  vat_rate: '7.5',
   track_expiry: false,
   track_batch: false,
   track_serial: false,
@@ -147,6 +148,7 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [baseUomLocked, setBaseUomLocked] = useState(false);
+  const [defaultVatRate, setDefaultVatRate] = useState('7.5');
 
   const activeCategories = useMemo(
     () => categories.filter((c) => c.is_active !== false),
@@ -176,24 +178,31 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
 
   const load = async () => {
     try {
-      const [products, units, cats, brds, mks] = await Promise.all([
+      const [products, units, cats, brds, mks, biz] = await Promise.all([
         api.products.list(q || undefined),
         api.uoms.list(),
         api.products.categories(),
         api.products.brands(),
-        api.products.makes()
+        api.products.makes(),
+        api.businesses.current().catch(() => null)
       ]);
       setRows(products);
       setUoms(units);
       setCategories(cats);
       setBrands(brds);
       setMakes(mks);
+      const vatSetting = (biz?.settings || []).find(
+        (s: any) => s.setting_key === 'vat_rate_percent' || s.settingKey === 'vat_rate_percent'
+      );
+      const vatDefault = vatSetting?.value != null ? String(vatSetting.value) : '7.5';
+      setDefaultVatRate(vatDefault);
       if (!form.base_uom_id && units[0]) {
         const pcs = units.find((u: any) => u.code === 'PCS') || units[0];
         setForm((f) => ({
           ...f,
           base_uom_id: pcs.id,
-          purchase_uom_id: pcs.id
+          purchase_uom_id: pcs.id,
+          vat_rate: f.vat_rate || vatDefault
         }));
         setSellingRows([
           {
@@ -205,6 +214,8 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
             is_default: true
           }
         ]);
+      } else if (!editingId) {
+        setForm((f) => ({ ...f, vat_rate: f.vat_rate || vatDefault }));
       }
     } catch (e: any) {
       await alertError('Products', e.message);
@@ -323,7 +334,8 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
     setForm({
       ...emptyForm,
       base_uom_id: base,
-      purchase_uom_id: base
+      purchase_uom_id: base,
+      vat_rate: defaultVatRate
     });
     setConversions([]);
     setSellingRows(
@@ -356,6 +368,7 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
       make_id: p.make_id || '',
       default_purchase_cost: String(p.default_purchase_cost ?? 0),
       reorder_level: String(p.reorder_level ?? 0),
+      vat_rate: String(p.vat_rate ?? defaultVatRate),
       track_expiry: Boolean(p.track_expiry),
       track_batch: Boolean(p.track_batch),
       track_serial: Boolean(p.track_serial),
@@ -503,6 +516,7 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
       make_id: form.make_id || undefined,
       default_purchase_cost: Number(form.default_purchase_cost),
       reorder_level: Number(form.reorder_level),
+      vat_rate: Number(form.vat_rate),
       conversions: parsedConversions,
       selling_prices
     };
@@ -683,6 +697,21 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
                 value={form.reorder_level}
                 onChange={(e) => setForm({ ...form, reorder_level: e.target.value })}
               />
+            </div>
+            <div className="field">
+              <label>VAT %</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="0.01"
+                value={form.vat_rate}
+                onChange={(e) => setForm({ ...form, vat_rate: e.target.value })}
+                required
+              />
+              <div style={{ color: 'var(--ink-muted)', fontSize: '0.82rem', marginTop: 4 }}>
+                Defaults from business VAT ({defaultVatRate}%). Use 0 for exempt / zero-rated.
+              </div>
             </div>
           </div>
 

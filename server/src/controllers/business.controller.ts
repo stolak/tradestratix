@@ -18,3 +18,13 @@ export async function updateCurrent(req: Request, res: Response, next: NextFunct
     return next(err);
   }
 }
+
+export async function upsertSetting(req: Request, res: Response, next: NextFunction) {
+  try {
+    const key = String(req.params.key || '');
+    const value = String(req.body?.value ?? '');
+    return res.json(await businessService.upsertSetting(req.user!, key, value));
+  } catch (err) {
+    return next(err);
+  }
+}

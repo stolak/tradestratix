@@ -2,13 +2,23 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
 
+function settingValue(biz: any, key: string, fallback = '') {
+  const rows: any[] = biz?.settings || [];
+  const hit = rows.find((s) => s.setting_key === key || s.settingKey === key);
+  return hit?.value != null ? String(hit.value) : fallback;
+}
+
 export const SettingsPage: React.FC = () => {
   const [form, setForm] = useState<any>(null);
+  const [vatRate, setVatRate] = useState('7.5');
 
   useEffect(() => {
     api.businesses
       .current()
-      .then(setForm)
+      .then((biz) => {
+        setForm(biz);
+        setVatRate(settingValue(biz, 'vat_rate_percent', '7.5'));
+      })
       .catch((e) => alertError('Settings', e.message));
   }, []);
 
@@ -17,6 +27,11 @@ export const SettingsPage: React.FC = () => {
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const rate = Number(vatRate);
+      if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+        await alertError('Invalid VAT %', 'Enter a VAT percentage between 0 and 100.');
+        return;
+      }
       const updated = await api.businesses.update({
         name: form.name,
         legal_name: form.legal_name,
@@ -29,7 +44,10 @@ export const SettingsPage: React.FC = () => {
         state: form.state,
         address_line1: form.address_line1
       });
-      setForm(updated);
+      await api.businesses.upsertSetting('vat_rate_percent', String(rate));
+      const refreshed = await api.businesses.current();
+      setForm(refreshed);
+      setVatRate(settingValue(refreshed, 'vat_rate_percent', String(rate)));
       await alertSuccess('Business updated');
     } catch (err: any) {
       await alertError('Update failed', err.message);
@@ -94,6 +112,20 @@ export const SettingsPage: React.FC = () => {
               <option value="weighted_average">Weighted average</option>
               <option value="specific_identification">Specific identification</option>
             </select>
+          </div>
+          <div className="field">
+            <label>Default VAT %</label>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={vatRate}
+              onChange={(e) => setVatRate(e.target.value)}
+            />
+            <div style={{ color: 'var(--ink-muted)', fontSize: '0.82rem', marginTop: 4 }}>
+              Applied to new products (Nigeria standard 7.5%). Existing products keep their own rate.
+            </div>
           </div>
           <div className="field">
             <label>City</label>

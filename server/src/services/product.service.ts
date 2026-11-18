@@ -2,6 +2,7 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, serialize, shortId } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import { getDefaultVatRatePercent } from './business.service.js';
 import { applyBranchPricing } from './branch-pricing.service.js';
 
 type TrackingFlags = {
@@ -259,6 +260,16 @@ export async function createProduct(user: AuthUser, body: Record<string, any>) {
   const defaultSellUom = defaultSell.uom_id || defaultSell.uomId || baseUomId;
   const defaultSellPrice = Number(defaultSell.unit_price ?? defaultSell.unitPrice ?? 0);
 
+  const globalVat = await getDefaultVatRatePercent(user.businessId);
+  const vatRaw = body.vat_rate ?? body.vatRate;
+  let vatRate = globalVat;
+  if (vatRaw !== undefined && vatRaw !== null && vatRaw !== '') {
+    vatRate = Number(vatRaw);
+    if (!Number.isFinite(vatRate) || vatRate < 0 || vatRate > 100) {
+      throw httpError(400, 'vat_rate must be a number between 0 and 100');
+    }
+  }
+
   try {
     const created = await prisma.$transaction(async (tx) => {
       const product = await tx.product.create({
@@ -288,6 +299,7 @@ export async function createProduct(user: AuthUser, body: Record<string, any>) {
           wholesalePrice: body.wholesale_price ?? body.wholesalePrice ?? null,
           retailPrice: body.retail_price ?? body.retailPrice ?? defaultSellPrice,
           taxCategory: body.tax_category || body.taxCategory || null,
+          vatRate,
           expiryAlertDaysJson: body.expiry_alert_days
             ? JSON.stringify(body.expiry_alert_days)
             : JSON.stringify([180, 90, 60, 30, 7]),
@@ -511,10 +523,19 @@ export async function updateProduct(user: AuthUser, id: string, body: Record<str
     defaultSellingPrice: 'defaultSellingPrice',
     distributor_price: 'distributorPrice',
     wholesale_price: 'wholesalePrice',
-    retail_price: 'retailPrice'
+    retail_price: 'retailPrice',
+    tax_category: 'taxCategory',
+    taxCategory: 'taxCategory'
   };
   for (const [k, field] of Object.entries(map)) {
     if (body[k] !== undefined) data[field] = body[k];
+  }
+  if (body.vat_rate !== undefined || body.vatRate !== undefined) {
+    const vatRate = Number(body.vat_rate ?? body.vatRate);
+    if (!Number.isFinite(vatRate) || vatRate < 0 || vatRate > 100) {
+      throw httpError(400, 'vat_rate must be a number between 0 and 100');
+    }
+    data.vatRate = vatRate;
   }
   if (nextBaseUomId) data.baseUomId = nextBaseUomId;
   if (purchaseUomId) data.purchaseUomId = purchaseUomId;

@@ -197,11 +197,18 @@ export async function createReturn(user: AuthUser, body: Record<string, any>) {
       (line as any).returnedQuantity = toDec(n(line.returnedQuantity) + qty);
     }
 
+    // Prefer line VAT snapshots (special discount already allocated); fall back to invoice share
+    let lineTaxSum = 0;
+    for (const it of itemsData) {
+      const invLine = invoice.items.find((i) => i.id === it.invoiceItemId)!;
+      const share = n(invLine.quantity) > 0 ? n(it.quantity) / n(invLine.quantity) : 0;
+      lineTaxSum = roundMoney(lineTaxSum + n(invLine.taxAmount) * share);
+    }
     const taxShare =
       n(invoice.subtotal) > 0
         ? roundMoney((subtotal * n(invoice.taxAmount)) / n(invoice.subtotal))
         : 0;
-    // Customer discount already baked into lineTotal via invoice totals — use value share for recognition
+    // Special/customer discount already reflected in invoice totals — use value share for recognition
     let recognised = 0;
     for (const it of itemsData) {
       const invLine = invoice.items.find((i) => i.id === it.invoiceItemId)!;
@@ -212,9 +219,11 @@ export async function createReturn(user: AuthUser, body: Record<string, any>) {
     recognised = roundMoney(recognised);
     const total = recognised; // already includes tax share via lineValue
     const taxAmount =
-      n(invoice.totalAmount) > 0
-        ? roundMoney((recognised * n(invoice.taxAmount)) / n(invoice.totalAmount))
-        : taxShare;
+      n(invoice.taxAmount) > 0.009
+        ? lineTaxSum
+        : n(invoice.totalAmount) > 0
+          ? roundMoney((recognised * n(invoice.taxAmount)) / n(invoice.totalAmount))
+          : taxShare;
 
     const returnNumber = await nextDocNumber(tx.salesReturn, user.businessId, 'returnNumber', 'RET', 5);
     const id = shortId('ret');

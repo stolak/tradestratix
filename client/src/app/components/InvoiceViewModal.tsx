@@ -141,9 +141,61 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
   const soldElsewhere =
     invoice?.selling_branch_id && invoice?.branch_id && invoice.selling_branch_id !== invoice.branch_id;
   const discountTotal = items.reduce((sum, it) => {
+    if (it.item_discount_amount != null) return sum + Number(it.item_discount_amount);
     if (it.gross_unit_price == null) return sum;
     return sum + (Number(it.gross_unit_price) - Number(it.unit_price)) * Number(it.quantity);
   }, 0);
+  const itemDiscountTotal =
+    invoice?.item_discount_total != null ? Number(invoice.item_discount_total) : discountTotal;
+  const specialDiscountType = String(invoice?.discount_type || '').toLowerCase();
+  const specialDiscountPct = Number(invoice?.discount_percent || 0);
+  const specialIsFixed =
+    specialDiscountType === 'fixed' ||
+    (!specialDiscountType && Number(invoice?.discount_amount) > 0 && !(specialDiscountPct > 0));
+  const specialDiscountLabel = (() => {
+    if (specialIsFixed) return 'Special discount (fixed)';
+    if (specialDiscountPct > 0) return `Special discount −${specialDiscountPct}%`;
+    return 'Special discount';
+  })();
+  const specialRateNote = specialIsFixed
+    ? 'fixed'
+    : `−${specialDiscountPct || 0}%`;
+
+  const invoiceSpecialAmount = Number(invoice?.discount_amount || 0) || 0;
+  const invoiceNetSum = items.reduce((s, it) => s + Number(it.line_total || 0), 0);
+  const hasStoredAllocation = items.some((row) => Number(row.allocated_discount || 0) > 0.009);
+  const lineReceiptAmounts = (it: any, index: number) => {
+    let discount = Number(it.allocated_discount ?? 0) || 0;
+    if (!hasStoredAllocation && invoiceSpecialAmount > 0.009 && invoiceNetSum > 0.009) {
+      if (index === items.length - 1) {
+        const prior = items.slice(0, -1).reduce((s, row) => {
+          return (
+            s +
+            Math.round(((Number(row.line_total || 0) / invoiceNetSum) * invoiceSpecialAmount) * 100) / 100
+          );
+        }, 0);
+        discount = Math.round((invoiceSpecialAmount - prior) * 100) / 100;
+      } else {
+        discount =
+          Math.round(((Number(it.line_total || 0) / invoiceNetSum) * invoiceSpecialAmount) * 100) / 100;
+      }
+    }
+    const vatRate = Number(it.tax_rate ?? 0) || 0;
+    const taxable =
+      hasStoredAllocation && it.taxable_amount != null
+        ? Number(it.taxable_amount)
+        : Math.max(0, Number(it.line_total || 0) - discount);
+    const vat =
+      hasStoredAllocation && it.tax_amount != null
+        ? Number(it.tax_amount) || 0
+        : Math.round(((taxable * vatRate) / 100) * 100) / 100;
+    return {
+      discount,
+      vat,
+      vatRate,
+      subtotal: Math.round((taxable + vat) * 100) / 100
+    };
+  };
 
   const handlePost = async () => {
     if (!onPost || !invoice) return;
@@ -646,11 +698,15 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                       <th className="num">Qty</th>
                       {isPickup ? <th className="num">{isDelivery ? 'Delivered' : 'Collected'}</th> : null}
                       <th className="num">Unit price</th>
+                      <th className="num">Discount</th>
+                      <th className="num">VAT</th>
                       <th className="num">Subtotal</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {items.map((it, idx) => (
+                    {items.map((it, idx) => {
+                      const amounts = lineReceiptAmounts(it, idx);
+                      return (
                       <tr key={it.id}>
                         <td className="line-items__index">{idx + 1}</td>
                         <td>
@@ -750,9 +806,18 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                             </div>
                           ) : null}
                         </td>
-                        <td className="num line-items__subtotal">{money(it.line_total)}</td>
+                        <td className="num line-items__col-discount">
+                          <div className="line-items__rate-note">{specialRateNote}</div>
+                          <div>{money(amounts.discount)}</div>
+                        </td>
+                        <td className="num line-items__col-vat">
+                          <div className="line-items__rate-note">{amounts.vatRate}%</div>
+                          <div>{money(amounts.vat)}</div>
+                        </td>
+                        <td className="num line-items__subtotal">{money(amounts.subtotal)}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -964,23 +1029,23 @@ export const InvoiceViewModal: React.FC<Props> = ({ invoiceId, onClose, onPost, 
                 </div>
 
                 <dl className="invoice-view__totals">
-                  {discountTotal > 0 ? (
+                  {itemDiscountTotal > 0 ? (
                     <>
-                      <dt>Branch discount (in prices)</dt>
-                      <dd>−{money(discountTotal)}</dd>
+                      <dt>Item discounts (in prices)</dt>
+                      <dd>−{money(itemDiscountTotal)}</dd>
                     </>
                   ) : null}
-                  <dt>Subtotal</dt>
+                  <dt>Subtotal (ex-VAT)</dt>
                   <dd>{money(invoice.subtotal)}</dd>
                   {Number(invoice.discount_amount) > 0 ? (
                     <>
-                      <dt>Customer discount −{Number(invoice.discount_percent)}%</dt>
+                      <dt>{specialDiscountLabel}</dt>
                       <dd>−{money(invoice.discount_amount)}</dd>
                     </>
                   ) : null}
                   {Number(invoice.tax_amount) ? (
                     <>
-                      <dt>Tax</dt>
+                      <dt>Total VAT</dt>
                       <dd>{money(invoice.tax_amount)}</dd>
                     </>
                   ) : null}

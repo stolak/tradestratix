@@ -177,7 +177,12 @@ async function buildInvoiceLines(user: AuthUser, itemsInput: any[], branchId: st
     unitPrice: number;
     grossUnitPrice: number | null;
     discountPercent: number | null;
+    itemDiscountAmount: number;
     lineTotal: number;
+    allocatedDiscount: number;
+    taxableAmount: number;
+    taxRate: number;
+    taxAmount: number;
     priceLevel: string | null;
   }[] = [];
 
@@ -189,6 +194,8 @@ async function buildInvoiceLines(user: AuthUser, itemsInput: any[], branchId: st
       include: { variants: true, sellingPrices: true, conversions: true }
     });
     if (!product) throw httpError(400, `items[${i}] product not found`);
+
+    const taxRate = Math.max(0, Number(product.vatRate ?? 0) || 0);
 
     let variantId = item.variant_id || item.variantId || null;
     if (!variantId) {
@@ -240,6 +247,10 @@ async function buildInvoiceLines(user: AuthUser, itemsInput: any[], branchId: st
     if (unitPrice < 0) throw httpError(400, `items[${i}].unit_price cannot be negative`);
     const discounted = Boolean(discount) && !manualPrice;
 
+    const lineTotal = roundMoney(qty * unitPrice);
+    const itemDiscountAmount = discounted
+      ? roundMoney(qty * (grossPrice - unitPrice))
+      : 0;
     lines.push({
       productId,
       variantId,
@@ -248,11 +259,148 @@ async function buildInvoiceLines(user: AuthUser, itemsInput: any[], branchId: st
       unitPrice,
       grossUnitPrice: discounted ? grossPrice : null,
       discountPercent: discounted ? discount : null,
-      lineTotal: roundMoney(qty * unitPrice),
+      itemDiscountAmount,
+      lineTotal,
+      allocatedDiscount: 0,
+      taxableAmount: lineTotal,
+      taxRate,
+      taxAmount: 0,
       priceLevel: item.price_level || item.priceLevel || 'retail'
     });
   }
   return lines;
+}
+
+export type SpecialDiscountInput = {
+  type: 'percentage' | 'fixed' | null;
+  rate: number | null;
+  amount: number;
+};
+
+/**
+ * Invoice-level special discount on net-after-item-discount (ex-VAT),
+ * allocated proportionally across lines, then VAT recalculated per line.
+ */
+export function applySpecialDiscountAndVat(
+  lines: {
+    lineTotal: number;
+    allocatedDiscount: number;
+    taxableAmount: number;
+    taxRate: number;
+    taxAmount: number;
+  }[],
+  special: SpecialDiscountInput
+) {
+  const netSum = roundMoney(lines.reduce((s, l) => s + l.lineTotal, 0));
+  let specialAmount = 0;
+  if (netSum > 0.009) {
+    if (special.type === 'percentage' && (special.rate || 0) > 0) {
+      specialAmount = roundMoney((netSum * Number(special.rate)) / 100);
+    } else if (special.type === 'fixed' && special.amount > 0) {
+      specialAmount = roundMoney(Math.min(special.amount, netSum));
+    }
+  }
+  specialAmount = Math.max(0, Math.min(specialAmount, netSum));
+
+  let allocated = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    let share = 0;
+    if (specialAmount > 0.009 && netSum > 0.009) {
+      if (i === lines.length - 1) {
+        share = roundMoney(specialAmount - allocated);
+      } else {
+        share = roundMoney((line.lineTotal / netSum) * specialAmount);
+        allocated = roundMoney(allocated + share);
+      }
+    }
+    line.allocatedDiscount = share;
+    line.taxableAmount = roundMoney(Math.max(0, line.lineTotal - share));
+    line.taxAmount = roundMoney((line.taxableAmount * (Number(line.taxRate) || 0)) / 100);
+  }
+
+  return {
+    discountAmount: specialAmount,
+    taxAmount: roundMoney(lines.reduce((s, l) => s + l.taxAmount, 0)),
+    taxableTotal: roundMoney(lines.reduce((s, l) => s + l.taxableAmount, 0))
+  };
+}
+
+export function resolveSpecialDiscount(
+  body: Record<string, any>,
+  customerDiscountPct: number,
+  netAfterItemDiscount: number
+): SpecialDiscountInput {
+  const rawType = String(
+    body.special_discount_type ?? body.specialDiscountType ?? body.discount_type ?? body.discountType ?? ''
+  )
+    .toLowerCase()
+    .trim();
+
+  const hasExplicitAmount =
+    body.special_discount_amount != null ||
+    body.specialDiscountAmount != null ||
+    (rawType === 'fixed' && (body.discount_amount != null || body.discountAmount != null));
+  const hasExplicitRate =
+    body.special_discount_rate != null ||
+    body.specialDiscountRate != null ||
+    body.discount_percent != null ||
+    body.discountPercent != null;
+
+  if (rawType === 'fixed' || (hasExplicitAmount && rawType !== 'percentage')) {
+    const amount = roundMoney(
+      Number(
+        body.special_discount_amount ??
+          body.specialDiscountAmount ??
+          body.discount_amount ??
+          body.discountAmount ??
+          0
+      )
+    );
+    if (amount < 0) throw httpError(400, 'special discount amount cannot be negative');
+    if (amount > netAfterItemDiscount + 0.01) {
+      throw httpError(400, 'special discount cannot exceed net after item discounts');
+    }
+    return { type: amount > 0 ? 'fixed' : null, rate: null, amount };
+  }
+
+  if (rawType === 'percentage' || hasExplicitRate) {
+    const rate = Number(
+      body.special_discount_rate ??
+        body.specialDiscountRate ??
+        body.discount_percent ??
+        body.discountPercent ??
+        0
+    );
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
+      throw httpError(400, 'special discount percent must be between 0 and 100');
+    }
+    return { type: rate > 0 ? 'percentage' : null, rate: rate > 0 ? rate : null, amount: 0 };
+  }
+
+  // Default: customer standing discount %
+  if (customerDiscountPct > 0) {
+    return { type: 'percentage', rate: customerDiscountPct, amount: 0 };
+  }
+  return { type: null, rate: null, amount: 0 };
+}
+
+/** Rebuild special discount from a persisted invoice (for amendments). */
+export function specialFromInvoice(inv: {
+  discountType?: string | null;
+  discountPercent?: unknown;
+  discountAmount?: unknown;
+}): SpecialDiscountInput {
+  const type = String(inv.discountType || '').toLowerCase();
+  const pct = Number(inv.discountPercent || 0);
+  const amount = Number(inv.discountAmount || 0);
+  if (type === 'fixed' || (!type && amount > 0 && !(pct > 0))) {
+    return { type: amount > 0 ? 'fixed' : null, rate: null, amount: Math.max(0, amount) };
+  }
+  if (type === 'percentage' || pct > 0) {
+    return { type: pct > 0 ? 'percentage' : null, rate: pct > 0 ? pct : null, amount: 0 };
+  }
+  return { type: null, rate: null, amount: 0 };
 }
 
 export async function listInvoices(
@@ -642,10 +790,10 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
 
   const lines = await buildInvoiceLines(user, itemsInput, sellingBranchId);
   const subtotal = roundMoney(lines.reduce((s, l) => s + l.lineTotal, 0));
+  const itemDiscountTotal = roundMoney(lines.reduce((s, l) => s + l.itemDiscountAmount, 0));
   const customerDiscountPct = Number(customer.discountPercent || 0);
-  const discountAmount =
-    customerDiscountPct > 0 ? roundMoney((subtotal * customerDiscountPct) / 100) : 0;
-  const taxAmount = roundMoney(Number(body.tax_amount ?? body.taxAmount ?? 0));
+  const special = resolveSpecialDiscount(body, customerDiscountPct, subtotal);
+  const { discountAmount, taxAmount } = applySpecialDiscountAndVat(lines, special);
   const totalAmount = roundMoney(subtotal - discountAmount + taxAmount);
   const invoiceNumber =
     body.invoice_number || body.invoiceNumber || (await nextInvoiceNumber(user.businessId, channel));
@@ -683,7 +831,9 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
             : null,
       notes: body.notes || null,
       subtotal: toDec(subtotal),
-      discountPercent: customerDiscountPct > 0 ? toDec(customerDiscountPct) : null,
+      itemDiscountTotal: toDec(itemDiscountTotal),
+      discountType: special.type,
+      discountPercent: special.type === 'percentage' && special.rate != null ? toDec(special.rate) : null,
       discountAmount: toDec(discountAmount),
       taxAmount: toDec(taxAmount),
       totalAmount: toDec(totalAmount),
@@ -702,7 +852,12 @@ export async function createInvoice(user: AuthUser, body: Record<string, any>) {
           unitPrice: toDec(l.unitPrice),
           grossUnitPrice: l.grossUnitPrice != null ? toDec(l.grossUnitPrice) : null,
           discountPercent: l.discountPercent != null ? toDec(l.discountPercent) : null,
+          itemDiscountAmount: toDec(l.itemDiscountAmount),
           lineTotal: toDec(l.lineTotal),
+          allocatedDiscount: toDec(l.allocatedDiscount),
+          taxableAmount: toDec(l.taxableAmount),
+          taxRate: toDec(l.taxRate),
+          taxAmount: toDec(l.taxAmount),
           priceLevel: l.priceLevel
         }))
       }

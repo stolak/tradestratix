@@ -25,7 +25,12 @@ import {
 } from './fulfilment.service.js';
 import { lockInvoices, paymentStatusFor } from './customer-payment.service.js';
 import { planAllocation, roundQty } from './stock-allocation.service.js';
-import { getInvoice, reservationDays } from './sales.service.js';
+import {
+  applySpecialDiscountAndVat,
+  getInvoice,
+  reservationDays,
+  specialFromInvoice
+} from './sales.service.js';
 import { cancelTasksInTx, openTaskIds } from './warehouse-fulfilment.service.js';
 import { convertToBaseQty } from './inventory.service.js';
 import { getCustomerExposure } from './customer.service.js';
@@ -628,13 +633,18 @@ export async function amendOrder(user: AuthUser, id: string, body: Record<string
         });
 
         let subtotal = n(inv.subtotal);
+        let itemDiscountTotal = n((inv as any).itemDiscountTotal);
         for (const inc of increases) {
           const line = invoice.items.find((i) => i.id === inc.invoiceItemId)!;
-          const oldQty = n(line.quantity);
           const unit = n(line.unitPrice);
           const newLineTotal = roundMoney(unit * inc.newQty);
           const oldLineTotal = n(line.lineTotal);
+          const gross = n((line as any).grossUnitPrice);
+          const oldItemDisc = n((line as any).itemDiscountAmount);
+          const newItemDisc =
+            gross > 0 ? roundMoney(inc.newQty * Math.max(0, gross - unit)) : 0;
           subtotal = roundMoney(subtotal - oldLineTotal + newLineTotal);
+          itemDiscountTotal = roundMoney(itemDiscountTotal - oldItemDisc + newItemDisc);
           const product = await tx.product.findFirst({
             where: { id: line.productId },
             select: { baseUomId: true }
@@ -652,6 +662,7 @@ export async function amendOrder(user: AuthUser, id: string, body: Record<string
             data: {
               quantity: toDec(inc.newQty),
               lineTotal: toDec(newLineTotal),
+              itemDiscountAmount: toDec(newItemDisc),
               baseQuantity: toDec(baseQuantity),
               ...(inc.warehouseId ? { fulfilmentWarehouseId: inc.warehouseId } : {}),
               ...(plan ? { allocationPlan: plan } : {})
@@ -659,16 +670,38 @@ export async function amendOrder(user: AuthUser, id: string, body: Record<string
           });
           line.quantity = toDec(inc.newQty) as any;
           line.lineTotal = toDec(newLineTotal) as any;
+          (line as any).itemDiscountAmount = toDec(newItemDisc) as any;
           line.baseQuantity = toDec(baseQuantity) as any;
         }
 
-        const discountPct = n(inv.discountPercent);
-        const discountAmount =
-          discountPct > 0 ? roundMoney((subtotal * discountPct) / 100) : n(inv.discountAmount);
-        const taxAmount =
-          n(inv.subtotal) > 0
-            ? roundMoney((n(inv.taxAmount) * subtotal) / n(inv.subtotal))
-            : n(inv.taxAmount);
+        const special = specialFromInvoice(inv);
+        const allLines = await tx.salesInvoiceItem.findMany({ where: { invoiceId: id } });
+        const draftLines = allLines.map((li) => ({
+          id: li.id,
+          lineTotal: n(li.lineTotal),
+          allocatedDiscount: 0,
+          taxableAmount: n(li.lineTotal),
+          taxRate: n(li.taxRate),
+          taxAmount: 0
+        }));
+        const { discountAmount, taxAmount } = applySpecialDiscountAndVat(draftLines, special);
+        for (const d of draftLines) {
+          const li = allLines.find((x) => x.id === d.id)!;
+          if (
+            Math.abs(d.taxAmount - n(li.taxAmount)) > 0.0001 ||
+            Math.abs(d.allocatedDiscount - n((li as any).allocatedDiscount)) > 0.0001 ||
+            Math.abs(d.taxableAmount - n((li as any).taxableAmount)) > 0.0001
+          ) {
+            await tx.salesInvoiceItem.update({
+              where: { id: li.id },
+              data: {
+                allocatedDiscount: toDec(d.allocatedDiscount),
+                taxableAmount: toDec(d.taxableAmount),
+                taxAmount: toDec(d.taxAmount)
+              }
+            });
+          }
+        }
         const totalAmount = roundMoney(subtotal - discountAmount + taxAmount);
 
         // Credit check on the incremental open-order value
@@ -705,6 +738,7 @@ export async function amendOrder(user: AuthUser, id: string, body: Record<string
           where: { id },
           data: {
             subtotal: toDec(subtotal),
+            itemDiscountTotal: toDec(Math.max(0, itemDiscountTotal)),
             discountAmount: toDec(discountAmount),
             taxAmount: toDec(taxAmount),
             totalAmount: toDec(totalAmount),
