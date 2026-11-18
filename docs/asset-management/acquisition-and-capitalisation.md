@@ -2,13 +2,26 @@
 
 ## Sources (Phase 2)
 
-1. Direct purchase (cash/bank) — exists today  
-2. On credit (AP / acquisition payable)  
-3. From PO / GRN / supplier bill (user classifies line as asset)  
-4. Opening balance (migrated NBV + cost + accum)  
+Source **restricts** funding (no PO created from Assets):
+
+| Source | Allowed funding | Extra fields |
+|--------|-----------------|--------------|
+| `direct` | `bank`, `cash`, `credit` | Bank account (required for bank); optional cash/till account; **supplier required for credit** |
+| `opening_balance` | `opening` | Opening accum. dep. if any |
+| `donation` | `donation`, `equity` | — |
+| `other` | `bank`, `cash`, `credit`, `equity` | Same pickers as above |
+
+Procurement path stays in Purchases: PO → GRN → classify line as asset (`from-grn`). Do not spawn PO from Register.
+
+Legacy list for reference:
+
+1. Direct purchase (cash/bank/credit)  
+2. On credit (AP + supplier)  
+3. From PO / GRN / supplier bill (classify line as asset)  
+4. Opening balance  
 5. Donation / capital contribution  
-6. Completed CIP project  
-7. Configurable other  
+6. Completed CIP project (Phase 5)  
+7. Other  
 
 ## Workflow
 

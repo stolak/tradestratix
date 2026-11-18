@@ -2182,6 +2182,7 @@ model AssetCategory {
   cipAccount          Account?     @relation("AssetCategoryCipAccount", fields: [cipAccountId], references: [id], onDelete: SetNull)
   assets              FixedAsset[]
   acquisitions        AssetAcquisition[]
+  budgetLines         BudgetLine[]
 
   @@unique([businessId, code])
   @@index([businessId, isActive])
@@ -2542,18 +2543,23 @@ model Budget {
 }
 
 model BudgetLine {
-  id        String  @id
-  budgetId  String  @map("budget_id")
-  accountId String  @map("account_id")
+  id              String  @id
+  budgetId        String  @map("budget_id")
+  accountId       String  @map("account_id")
+  /// CapEx / asset budgets: tie line to an asset category (actuals = capitalised spend)
+  assetCategoryId String? @map("asset_category_id")
   /// 0 = annual total; 1-12 = month
-  periodNo  Int     @default(0) @map("period_no")
-  amount    Decimal @db.Decimal(18, 4)
+  periodNo        Int     @default(0) @map("period_no")
+  amount          Decimal @db.Decimal(18, 4)
 
-  budget  Budget  @relation(fields: [budgetId], references: [id], onDelete: Cascade)
-  account Account @relation(fields: [accountId], references: [id])
+  budget        Budget         @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  account       Account        @relation(fields: [accountId], references: [id])
+  assetCategory AssetCategory? @relation(fields: [assetCategoryId], references: [id], onDelete: SetNull)
 
-  @@unique([budgetId, accountId, periodNo])
+  /// Include category so CapEx lines can share a cost account across categories
+  @@unique([budgetId, accountId, periodNo, assetCategoryId], map: "budget_lines_cat_uniq")
   @@index([budgetId])
+  @@index([assetCategoryId])
   @@map("budget_lines")
 }
 

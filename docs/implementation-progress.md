@@ -32,6 +32,8 @@ Tests: `npm run test:assets` (14) + `npm run test:assets:phase2` (12) + `npm run
 
 Bulk capitalisation: quantity + unit cost + serial paste → N register lines with auto tags; serial unique per business. Register/Acquire UI merged into one Register tab.
 
+CapEx budgets: `BudgetLine.assetCategoryId`; Assets → Budgets picks category (resolves cost GL); vs-actual = capitalised cost in that category for the FY.
+
 Still for Phase 2 polish: map new default accounts in CoA seed, Purchases UI pickers for GRN lines.
 
 **Outstanding (module):** Phases 3–8

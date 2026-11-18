@@ -13,7 +13,28 @@ export const AssetsPage: React.FC = () => {
   const [deps, setDeps] = useState<any[]>([]);
   const [budgets, setBudgets] = useState<any[]>([]);
   const [glAccounts, setGlAccounts] = useState<any[]>([]);
+  const [bankAccounts, setBankAccounts] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
   const [vsActual, setVsActual] = useState<any | null>(null);
+
+  const FUNDING_BY_SOURCE: Record<string, { value: string; label: string }[]> = {
+    direct: [
+      { value: 'bank', label: 'Bank' },
+      { value: 'cash', label: 'Cash' },
+      { value: 'credit', label: 'Credit / payable' }
+    ],
+    opening_balance: [{ value: 'opening', label: 'Opening equity' }],
+    donation: [
+      { value: 'donation', label: 'Donation / capital contribution' },
+      { value: 'equity', label: 'Equity' }
+    ],
+    other: [
+      { value: 'bank', label: 'Bank' },
+      { value: 'cash', label: 'Cash' },
+      { value: 'credit', label: 'Credit / payable' },
+      { value: 'equity', label: 'Equity' }
+    ]
+  };
   const [nameFilter, setNameFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [selectedId, setSelectedId] = useState('');
@@ -36,6 +57,8 @@ export const AssetsPage: React.FC = () => {
     useful_life_months: '36',
     source: 'direct',
     funding_method: 'bank',
+    bank_account_id: '',
+    supplier_id: '',
     serial_numbers_text: '',
     notes: ''
   });
@@ -56,13 +79,13 @@ export const AssetsPage: React.FC = () => {
   const [budgetForm, setBudgetForm] = useState({
     name: '',
     fiscal_year: String(new Date().getFullYear()),
-    account_id: '',
+    asset_category_id: '',
     amount: ''
   });
 
   const load = async () => {
     try {
-      const [a, acqs, cats, locs, d, b, gl] = await Promise.all([
+      const [a, acqs, cats, locs, d, b, gl, banks, sups] = await Promise.all([
         api.assets.list({
           q: nameFilter || undefined,
           category_id: categoryFilter || undefined
@@ -72,7 +95,9 @@ export const AssetsPage: React.FC = () => {
         api.assets.locations().catch(() => []),
         api.assets.depreciationEntries(),
         api.budgets.list(),
-        api.accounting.accounts()
+        api.accounting.accounts(),
+        api.banking.accounts().catch(() => []),
+        api.suppliers.list().catch(() => [])
       ]);
       setAssets(a);
       setAcquisitions(acqs);
@@ -80,6 +105,9 @@ export const AssetsPage: React.FC = () => {
       setLocations(locs);
       setDeps(d);
       setBudgets(b);
+      const activeBanks = (banks || []).filter((x: any) => x.is_active !== false);
+      setBankAccounts(activeBanks);
+      setSuppliers(sups || []);
       const activeGl = gl.filter((x: any) => x.is_active !== false);
       setGlAccounts(activeGl);
       const expense =
@@ -99,7 +127,9 @@ export const AssetsPage: React.FC = () => {
       }));
       setAcqForm((f) => ({
         ...f,
-        category_id: f.category_id || cats[0]?.id || ''
+        category_id: f.category_id || cats[0]?.id || '',
+        bank_account_id: f.bank_account_id || activeBanks[0]?.id || '',
+        supplier_id: f.supplier_id || (sups || [])[0]?.id || ''
       }));
     } catch (e: any) {
       await alertError('Assets', e.message);
@@ -127,6 +157,12 @@ export const AssetsPage: React.FC = () => {
         useful_life_months: Number(acqForm.useful_life_months),
         source: acqForm.source,
         funding_method: acqForm.funding_method,
+        bank_account_id:
+          acqForm.funding_method === 'bank' || acqForm.funding_method === 'cash'
+            ? acqForm.bank_account_id || undefined
+            : undefined,
+        supplier_id:
+          acqForm.funding_method === 'credit' ? acqForm.supplier_id || undefined : undefined,
         serial_numbers_text: acqForm.serial_numbers_text || undefined,
         notes: acqForm.notes || undefined
       });
@@ -156,6 +192,17 @@ export const AssetsPage: React.FC = () => {
     .split(/[\n,;]+/)
     .map((s) => s.trim())
     .filter(Boolean).length;
+  const fundingOptions = FUNDING_BY_SOURCE[acqForm.source] || FUNDING_BY_SOURCE.direct;
+
+  const onAcqSourceChange = (source: string) => {
+    const options = FUNDING_BY_SOURCE[source] || FUNDING_BY_SOURCE.direct;
+    const fundingStillValid = options.some((o) => o.value === acqForm.funding_method);
+    setAcqForm({
+      ...acqForm,
+      source,
+      funding_method: fundingStillValid ? acqForm.funding_method : options[0].value
+    });
+  };
 
   const runAcqAction = async (
     id: string,
@@ -309,10 +356,16 @@ export const AssetsPage: React.FC = () => {
       await api.budgets.create({
         name: budgetForm.name,
         fiscal_year: Number(budgetForm.fiscal_year),
-        lines: [{ account_id: budgetForm.account_id, period_no: 0, amount: Number(budgetForm.amount) }]
+        lines: [
+          {
+            asset_category_id: budgetForm.asset_category_id,
+            period_no: 0,
+            amount: Number(budgetForm.amount)
+          }
+        ]
       });
       await alertSuccess('Budget created');
-      setBudgetForm((f) => ({ ...f, name: '', amount: '' }));
+      setBudgetForm((f) => ({ ...f, name: '', amount: '', asset_category_id: '' }));
       await load();
     } catch (err: any) {
       await alertError('Budget failed', err.message);
@@ -498,10 +551,7 @@ export const AssetsPage: React.FC = () => {
               </div>
               <div className="field">
                 <label>Source</label>
-                <select
-                  value={acqForm.source}
-                  onChange={(e) => setAcqForm({ ...acqForm, source: e.target.value })}
-                >
+                <select value={acqForm.source} onChange={(e) => onAcqSourceChange(e.target.value)}>
                   <option value="direct">Direct</option>
                   <option value="opening_balance">Opening balance</option>
                   <option value="donation">Donation</option>
@@ -514,14 +564,57 @@ export const AssetsPage: React.FC = () => {
                   value={acqForm.funding_method}
                   onChange={(e) => setAcqForm({ ...acqForm, funding_method: e.target.value })}
                 >
-                  <option value="bank">Bank</option>
-                  <option value="cash">Cash</option>
-                  <option value="credit">Credit / payable</option>
-                  <option value="equity">Equity</option>
-                  <option value="opening">Opening equity</option>
-                  <option value="donation">Donation</option>
+                  {fundingOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
                 </select>
               </div>
+              {acqForm.funding_method === 'bank' || acqForm.funding_method === 'cash' ? (
+                <div className="field">
+                  <label>
+                    {acqForm.funding_method === 'bank' ? 'Bank account' : 'Cash / till account'}
+                    {acqForm.funding_method === 'cash' ? ' (optional)' : ''}
+                  </label>
+                  <select
+                    value={acqForm.bank_account_id}
+                    onChange={(e) => setAcqForm({ ...acqForm, bank_account_id: e.target.value })}
+                    required={acqForm.funding_method === 'bank'}
+                  >
+                    {acqForm.funding_method === 'cash' ? (
+                      <option value="">Default cash GL</option>
+                    ) : (
+                      <option value="">— Select bank —</option>
+                    )}
+                    {bankAccounts.map((ba) => (
+                      <option key={ba.id} value={ba.id}>
+                        {ba.name}
+                        {ba.bank_name ? ` (${ba.bank_name})` : ''}
+                        {ba.account_number ? ` · ${ba.account_number}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
+              {acqForm.funding_method === 'credit' ? (
+                <div className="field">
+                  <label>Supplier</label>
+                  <select
+                    value={acqForm.supplier_id}
+                    onChange={(e) => setAcqForm({ ...acqForm, supplier_id: e.target.value })}
+                    required
+                  >
+                    <option value="">— Select supplier —</option>
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.code ? `${s.code} — ` : ''}
+                        {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : null}
               <div className="field" style={{ gridColumn: '1 / -1' }}>
                 <label>
                   Serial numbers {acqQty > 1 ? `(required: ${acqQty} unique)` : '(optional)'}
@@ -1086,13 +1179,20 @@ export const AssetsPage: React.FC = () => {
                 <input value={budgetForm.fiscal_year} onChange={(e) => setBudgetForm({ ...budgetForm, fiscal_year: e.target.value })} required />
               </div>
               <div className="field">
-                <label>Account</label>
-                <select value={budgetForm.account_id} onChange={(e) => setBudgetForm({ ...budgetForm, account_id: e.target.value })} required>
-                  {glAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
+                <label>Category</label>
+                <select
+                  value={budgetForm.asset_category_id}
+                  onChange={(e) => setBudgetForm({ ...budgetForm, asset_category_id: e.target.value })}
+                  required
+                >
+                  <option value="">Select category…</option>
+                  {categories
+                    .filter((c) => c.is_active !== false)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.code} — {c.name}
+                      </option>
+                    ))}
                 </select>
               </div>
               <div className="field">
@@ -1152,9 +1252,9 @@ export const AssetsPage: React.FC = () => {
                 <table className="table">
                 <thead>
                   <tr>
-                    <th>Account</th>
+                    <th>Category</th>
                     <th>Budget</th>
-                    <th>Actual</th>
+                    <th>Actual (capitalised)</th>
                     <th>Variance</th>
                   </tr>
                 </thead>
@@ -1162,7 +1262,9 @@ export const AssetsPage: React.FC = () => {
                   {(vsActual.lines || []).map((l: any, i: number) => (
                     <tr key={i}>
                       <td>
-                        {l.account?.code} {l.account?.name}
+                        {l.asset_category
+                          ? `${l.asset_category.code} — ${l.asset_category.name}`
+                          : `${l.account?.code || ''} ${l.account?.name || ''}`.trim() || '—'}
                       </td>
                       <td>{Number(l.budget).toLocaleString()}</td>
                       <td>{Number(l.actual).toLocaleString()}</td>

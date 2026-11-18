@@ -26,7 +26,7 @@ Modular monolith:
 | GL | `Account`, `JournalEntry`, `JournalLine`, `DefaultAccountSetting`, `AccountingPeriod` |
 | Ops trail | `AuditLog`, `AppNotification` |
 | Assets (starter) | `FixedAsset`, `DepreciationEntry` |
-| Budgeting (keep separate UI) | `Budget`, `BudgetLine` |
+| Budgeting (CapEx by category) | `Budget`, `BudgetLine.assetCategoryId` (actuals = capitalised spend) |
 
 ## 3. Accounting posting architecture (reuse)
 

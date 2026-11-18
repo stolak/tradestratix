@@ -9,6 +9,11 @@ type BranchListOpts = {
   allowConsolidated?: boolean;
 };
 
+const lineInclude = {
+  account: true,
+  assetCategory: true
+};
+
 export async function listBudgets(
   user: AuthUser,
   fiscalYear?: number,
@@ -25,7 +30,7 @@ export async function listBudgets(
       ...(fiscalYear ? { fiscalYear } : {})
     },
     include: {
-      lines: { include: { account: true } },
+      lines: { include: lineInclude },
       _count: { select: { lines: true } }
     },
     orderBy: [{ fiscalYear: 'desc' }, { name: 'asc' }]
@@ -46,23 +51,56 @@ export async function createBudget(user: AuthUser, body: Record<string, any>) {
   const rawLines = Array.isArray(body.lines) ? body.lines : [];
   if (!rawLines.length) throw httpError(400, 'At least one budget line is required');
 
-  const lines = rawLines.map((line: any, idx: number) => {
-    const accountId = line.account_id || line.accountId;
-    if (!accountId) throw httpError(400, `lines[${idx}].account_id is required`);
+  const lines: {
+    accountId: string;
+    assetCategoryId: string | null;
+    periodNo: number;
+    amount: number;
+  }[] = [];
+
+  for (let idx = 0; idx < rawLines.length; idx += 1) {
+    const line = rawLines[idx];
     const amount = roundMoney(Number(line.amount ?? 0));
     if (amount < 0) throw httpError(400, `lines[${idx}].amount must be >= 0`);
-    return {
-      accountId: String(accountId),
-      periodNo: Number(line.period_no ?? line.periodNo ?? 0),
-      amount
-    };
-  });
+    const periodNo = Number(line.period_no ?? line.periodNo ?? 0);
 
-  for (const line of lines) {
+    let assetCategoryId: string | null =
+      line.asset_category_id || line.assetCategoryId || body.asset_category_id || body.assetCategoryId || null;
+    let accountId: string | null = line.account_id || line.accountId || null;
+
+    if (assetCategoryId) {
+      const cat = await prisma.assetCategory.findFirst({
+        where: { id: assetCategoryId, businessId: user.businessId }
+      });
+      if (!cat) throw httpError(400, `lines[${idx}].asset_category_id is invalid`);
+      // CapEx budget posts against the category cost account when present
+      if (!accountId) {
+        accountId = cat.costAccountId;
+      }
+      if (!accountId) {
+        throw httpError(
+          400,
+          `Category ${cat.code} has no cost account — set it on Categories before budgeting`
+        );
+      }
+      assetCategoryId = cat.id;
+    }
+
+    if (!accountId) {
+      throw httpError(400, `lines[${idx}] requires asset_category_id or account_id`);
+    }
+
     const acc = await prisma.account.findFirst({
-      where: { id: line.accountId, businessId: user.businessId }
+      where: { id: accountId, businessId: user.businessId }
     });
-    if (!acc) throw httpError(400, `Invalid account_id ${line.accountId}`);
+    if (!acc) throw httpError(400, `Invalid account_id ${accountId}`);
+
+    lines.push({
+      accountId: String(accountId),
+      assetCategoryId,
+      periodNo,
+      amount
+    });
   }
 
   const budget = await prisma.budget.create({
@@ -79,12 +117,13 @@ export async function createBudget(user: AuthUser, body: Record<string, any>) {
         create: lines.map((l) => ({
           id: shortId('bln'),
           accountId: l.accountId,
+          assetCategoryId: l.assetCategoryId,
           periodNo: l.periodNo,
           amount: toDec(l.amount)
         }))
       }
     },
-    include: { lines: { include: { account: true } } }
+    include: { lines: { include: lineInclude } }
   });
 
   await writeAudit({
@@ -116,7 +155,7 @@ export async function activateBudget(user: AuthUser, id: string) {
     return tx.budget.update({
       where: { id },
       data: { status: 'active' },
-      include: { lines: { include: { account: true } } }
+      include: { lines: { include: lineInclude } }
     });
   });
 
@@ -134,12 +173,52 @@ export async function activateBudget(user: AuthUser, id: string) {
 export async function budgetVsActual(businessId: string, budgetId: string) {
   const budget = await prisma.budget.findFirst({
     where: { id: budgetId, businessId },
-    include: { lines: { include: { account: true } } }
+    include: { lines: { include: lineInclude } }
   });
   if (!budget) throw httpError(404, 'Budget not found');
 
   const yearStart = new Date(budget.fiscalYear, 0, 1);
   const yearEnd = new Date(budget.fiscalYear, 11, 31, 23, 59, 59);
+
+  const categoryIds = [
+    ...new Set(budget.lines.map((l) => l.assetCategoryId).filter(Boolean) as string[])
+  ];
+
+  /** CapEx actuals: capitalised asset cost by category in the fiscal year */
+  const capexByCategory = new Map<string, number>();
+  if (categoryIds.length) {
+    const assets = await prisma.fixedAsset.findMany({
+      where: {
+        businessId,
+        categoryId: { in: categoryIds },
+        financialStatus: { in: ['capitalised', 'depreciating', 'fully_depreciated'] },
+        OR: [
+          { capitalisationDate: { gte: yearStart, lte: yearEnd } },
+          {
+            capitalisationDate: null,
+            purchaseDate: { gte: yearStart, lte: yearEnd }
+          }
+        ]
+      },
+      select: {
+        categoryId: true,
+        purchaseCost: true,
+        freightCost: true,
+        installationCost: true,
+        otherCapitalCost: true
+      }
+    });
+    for (const a of assets) {
+      if (!a.categoryId) continue;
+      const cost = roundMoney(
+        Number(a.purchaseCost || 0) +
+          Number(a.freightCost || 0) +
+          Number(a.installationCost || 0) +
+          Number(a.otherCapitalCost || 0)
+      );
+      capexByCategory.set(a.categoryId, roundMoney((capexByCategory.get(a.categoryId) || 0) + cost));
+    }
+  }
 
   const accountIds = [...new Set(budget.lines.map((l) => l.accountId))];
   const journalLines = await prisma.journalLine.findMany({
@@ -150,40 +229,45 @@ export async function budgetVsActual(businessId: string, budgetId: string) {
         status: 'posted',
         entryDate: { gte: yearStart, lte: yearEnd }
       }
-    },
-    include: { journalEntry: { select: { entryDate: true } } }
+    }
   });
 
   const actualByAccount = new Map<string, number>();
   for (const jl of journalLines) {
-    const debit = Number(jl.debit);
-    const credit = Number(jl.credit);
-    const type = (jl as any).account?.accountType;
-    // Prefer signed activity: expenses/cogs/assets use debit-credit; revenue/liability/equity credit-debit
-    void type;
-    const net = roundMoney(debit - credit);
+    const net = roundMoney(Number(jl.debit) - Number(jl.credit));
     actualByAccount.set(jl.accountId, roundMoney((actualByAccount.get(jl.accountId) || 0) + net));
   }
 
-  // Enrich with account types for proper sign
-  const accounts = await prisma.account.findMany({
-    where: { id: { in: accountIds } }
-  });
+  const accounts = await prisma.account.findMany({ where: { id: { in: accountIds } } });
   const typeById = new Map(accounts.map((a) => [a.id, a.accountType]));
 
   const rows = budget.lines.map((line) => {
-    const raw = actualByAccount.get(line.accountId) || 0;
-    const t = typeById.get(line.accountId) || 'expense';
-    const actual =
-      t === 'revenue' || t === 'liability' || t === 'equity' ? roundMoney(-raw) : raw;
     const budgetAmt = Number(line.amount);
+    let actual = 0;
+    let actualSource: 'category_capex' | 'gl' = 'gl';
+
+    if (line.assetCategoryId) {
+      actual = capexByCategory.get(line.assetCategoryId) || 0;
+      actualSource = 'category_capex';
+    } else {
+      const raw = actualByAccount.get(line.accountId) || 0;
+      const t = typeById.get(line.accountId) || 'expense';
+      actual =
+        t === 'revenue' || t === 'liability' || t === 'equity'
+          ? roundMoney(Math.abs(-raw))
+          : roundMoney(Math.abs(raw));
+    }
+
     return {
       account_id: line.accountId,
       account: serialize(line.account),
+      asset_category_id: line.assetCategoryId,
+      asset_category: line.assetCategory ? serialize(line.assetCategory) : null,
       period_no: line.periodNo,
       budget: budgetAmt,
-      actual: roundMoney(Math.abs(actual)),
-      variance: roundMoney(budgetAmt - Math.abs(actual))
+      actual: roundMoney(actual),
+      variance: roundMoney(budgetAmt - actual),
+      actual_source: actualSource
     };
   });
 

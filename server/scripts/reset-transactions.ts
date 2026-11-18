@@ -6,8 +6,10 @@
  * memberships / overrides, bank accounts, vehicles, SaaS plans/subscriptions, settings.
  *
  * Cleared: sales / purchases / stock movements, lots & serials / journals / banking txns /
- * expenses / assets & budgets / payroll & attendance / deliveries / audit & sessions /
- * notifications / customer notes.
+ * expenses / fixed assets & acquisitions / budgets / payroll & attendance / deliveries /
+ * audit & sessions / notifications / customer notes.
+ *
+ * Asset masters kept: asset_categories, asset_locations.
  *
  * Usage (from server/):
  *   npm run reset:transactions
@@ -65,6 +67,12 @@ const TRANSACTION_TABLES = [
   'bank_transactions',
   'expense_bill_lines',
   'expense_bills',
+  'asset_capitalisations',
+  'asset_cost_additions',
+  'asset_acquisitions',
+  'asset_documents',
+  'asset_assignment_history',
+  'asset_status_history',
   'depreciation_entries',
   'fixed_assets',
   'budget_lines',

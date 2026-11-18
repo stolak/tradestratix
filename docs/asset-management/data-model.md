@@ -37,6 +37,12 @@ Statuses:
 - **AssetDocument** — assetId, eventType?, storageKey, url, fileName, mime, uploadedById (S3)  
 - **AssetStatusHistory** — assetId, field, fromValue, toValue, at, by  
 
+### CapEx budgets (reuse `Budget` / `BudgetLine`)
+
+- `BudgetLine.assetCategoryId` (optional) — Assets UI always sets this
+- Create resolves `accountId` from `AssetCategory.costAccountId` when omitted
+- Vs-actual for category lines = sum of capitalised asset costs in that category for the fiscal year (not raw GL drift)
+
 ## Later phases (logical entities)
 
 | Phase | Models |

@@ -127,6 +127,80 @@ export async function nextAssetCodes(
   return codes;
 }
 
+/** Source restricts which funding methods are valid (no PO creation from Assets). */
+const FUNDING_BY_SOURCE: Record<string, string[]> = {
+  direct: ['bank', 'cash', 'credit'],
+  opening_balance: ['opening'],
+  donation: ['donation', 'equity'],
+  other: ['bank', 'cash', 'credit', 'equity']
+};
+
+function normalizeSourceFunding(body: Record<string, any>) {
+  const source = String(body.source || 'direct').toLowerCase();
+  if (!FUNDING_BY_SOURCE[source]) {
+    throw httpError(
+      400,
+      `Invalid source. Use: ${Object.keys(FUNDING_BY_SOURCE).join(', ')}`
+    );
+  }
+  const allowed = FUNDING_BY_SOURCE[source];
+  let fundingMethod = String(
+    body.funding_method || body.fundingMethod || body.pay_method || allowed[0]
+  ).toLowerCase();
+  // Map legacy alias
+  if (fundingMethod === 'opening_equity') fundingMethod = 'opening';
+  if (!allowed.includes(fundingMethod)) {
+    throw httpError(
+      400,
+      `Funding "${fundingMethod}" is not allowed for source "${source}". Use: ${allowed.join(', ')}`
+    );
+  }
+  return { source, fundingMethod, allowed };
+}
+
+async function resolveBankAndSupplier(
+  businessId: string,
+  fundingMethod: string,
+  body: Record<string, any>
+) {
+  let supplierId = body.supplier_id || body.supplierId || null;
+  let bankAccountId = body.bank_account_id || body.bankAccountId || null;
+
+  if (fundingMethod === 'credit') {
+    if (!supplierId) throw httpError(400, 'supplier_id is required when funding is credit');
+    const s = await prisma.supplier.findFirst({
+      where: { id: supplierId, businessId }
+    });
+    if (!s) throw httpError(400, 'Invalid supplier_id');
+  } else {
+    // Supplier is optional metadata only for non-credit; clear if accidentally sent with bank/cash
+    if (fundingMethod === 'bank' || fundingMethod === 'cash') {
+      // keep supplierId if provided for reference? Recommendation: only for credit. Clear others.
+      supplierId = null;
+    }
+  }
+
+  if (fundingMethod === 'bank') {
+    if (!bankAccountId) throw httpError(400, 'bank_account_id is required when funding is bank');
+    const bank = await prisma.bankAccount.findFirst({
+      where: { id: bankAccountId, businessId, isActive: true }
+    });
+    if (!bank) throw httpError(400, 'Invalid bank_account_id');
+  } else if (fundingMethod === 'cash') {
+    // Optional: pick a cash/till bank account; otherwise default cash GL is used at capitalise
+    if (bankAccountId) {
+      const bank = await prisma.bankAccount.findFirst({
+        where: { id: bankAccountId, businessId, isActive: true }
+      });
+      if (!bank) throw httpError(400, 'Invalid bank_account_id');
+    }
+  } else {
+    bankAccountId = null;
+  }
+
+  return { supplierId, bankAccountId };
+}
+
 async function nextAcquisitionNumber(businessId: string) {
   const ymd = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const prefix = `AQ-${ymd}-`;
@@ -242,13 +316,12 @@ export async function createAcquisition(user: AuthUser, body: Record<string, any
     if (!loc) throw httpError(400, 'Invalid location_id');
   }
 
-  const supplierId = body.supplier_id || body.supplierId || null;
-  if (supplierId) {
-    const s = await prisma.supplier.findFirst({
-      where: { id: supplierId, businessId: user.businessId }
-    });
-    if (!s) throw httpError(400, 'Invalid supplier_id');
-  }
+  const { source, fundingMethod } = normalizeSourceFunding(body);
+  const { supplierId, bankAccountId } = await resolveBankAndSupplier(
+    user.businessId,
+    fundingMethod,
+    body
+  );
 
   const serials = parseSerialNumbers(
     body.serial_numbers ?? body.serialNumbers ?? body.serial_numbers_text ?? body.serialNumbersText
@@ -283,8 +356,6 @@ export async function createAcquisition(user: AuthUser, body: Record<string, any
     ? new Date(body.available_for_use_date || body.availableForUseDate)
     : null;
 
-  const source = String(body.source || 'direct').toLowerCase();
-  const fundingMethod = String(body.funding_method || body.fundingMethod || body.pay_method || 'bank').toLowerCase();
   const manufacturer = body.manufacturer || null;
   const model = body.model || body.assetName || assetName;
 
@@ -327,7 +398,7 @@ export async function createAcquisition(user: AuthUser, body: Record<string, any
       currencyCode: body.currency_code || body.currencyCode || 'NGN',
       exchangeRate: toDec(Number(body.exchange_rate ?? body.exchangeRate ?? 1)),
       fundingMethod,
-      bankAccountId: body.bank_account_id || body.bankAccountId || null,
+      bankAccountId,
       notes: body.notes || null,
       createdById: user.id
     },
@@ -765,34 +836,47 @@ export async function capitaliseAcquisition(user: AuthUser, id: string, body: Re
     if (!costAccountId) costAccountId = map.fixed_assets || null;
     if (!costAccountId) throw httpError(400, 'fixed_assets GL account is not configured');
 
-    const method = String(
-      body.funding_method || body.fundingMethod || existing.fundingMethod || 'bank'
-    ).toLowerCase();
+    const { fundingMethod: method } = normalizeSourceFunding({
+      source: existing.source,
+      funding_method: body.funding_method || body.fundingMethod || existing.fundingMethod
+    });
 
     let creditAccountId: string | null = null;
     let creditDesc = `Fund ${method}`;
-    if (method === 'cash') {
-      creditAccountId = map.cash || null;
+    const bankAccountId =
+      body.bank_account_id || body.bankAccountId || existing.bankAccountId || null;
+    const supplierId = body.supplier_id || body.supplierId || existing.supplierId || null;
+
+    if (method === 'bank') {
+      if (!bankAccountId) throw httpError(400, 'bank_account_id is required when funding is bank');
+      const bank = await tx.bankAccount.findFirst({
+        where: { id: bankAccountId, businessId: user.businessId }
+      });
+      if (!bank) throw httpError(400, 'Invalid bank_account_id');
+      creditAccountId = bank.glAccountId;
+      creditDesc = `Pay from ${bank.name}`;
+    } else if (method === 'cash') {
+      if (bankAccountId) {
+        const bank = await tx.bankAccount.findFirst({
+          where: { id: bankAccountId, businessId: user.businessId }
+        });
+        if (!bank) throw httpError(400, 'Invalid bank_account_id');
+        creditAccountId = bank.glAccountId;
+        creditDesc = `Pay cash from ${bank.name}`;
+      } else {
+        creditAccountId = map.cash || null;
+        creditDesc = 'Pay cash';
+      }
     } else if (method === 'equity' || method === 'donation') {
       creditAccountId = map.equity || map.asset_disposal_gain || null;
       creditDesc = method === 'donation' ? 'Donation / capital contribution' : 'Equity funding';
     } else if (method === 'credit') {
+      if (!supplierId) throw httpError(400, 'supplier_id is required when funding is credit');
       creditAccountId = map.asset_acquisition_payable || map.accounts_payable || null;
       creditDesc = 'Asset acquisition payable';
     } else if (method === 'opening') {
       creditAccountId = map.equity || null;
       creditDesc = 'Opening balance equity';
-    } else if (existing.bankAccountId || body.bank_account_id || body.bankAccountId) {
-      const bank = await tx.bankAccount.findFirst({
-        where: {
-          id: existing.bankAccountId || body.bank_account_id || body.bankAccountId,
-          businessId: user.businessId
-        }
-      });
-      if (!bank) throw httpError(400, 'Invalid bank_account_id');
-      creditAccountId = bank.glAccountId;
-    } else {
-      creditAccountId = map.bank || null;
     }
     if (!creditAccountId) {
       throw httpError(400, `Credit GL account is not configured for funding method "${method}"`);
@@ -843,7 +927,7 @@ export async function capitaliseAcquisition(user: AuthUser, id: string, body: Re
         source_id: batchId,
         idempotency_key: `asset_capitalisation:${id}`,
         branch_id: branchId || undefined,
-        supplier_id: existing.supplierId,
+        supplier_id: method === 'credit' ? supplierId : existing.supplierId,
         post: true,
         lines
       },

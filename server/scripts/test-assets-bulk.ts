@@ -85,7 +85,7 @@ async function main() {
           quantity: 3,
           unit_cost: 450000,
           funding_method: 'equity',
-          source: 'direct',
+          source: 'other',
           serial_numbers: serials,
           useful_life_months: 36
         }
@@ -116,6 +116,7 @@ async function main() {
             quantity: 1,
             unit_cost: 1,
             funding_method: 'equity',
+            source: 'other',
             serial_numbers: [serials[0]]
           }
         });

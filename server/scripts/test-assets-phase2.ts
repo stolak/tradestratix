@@ -77,7 +77,7 @@ async function main() {
           purchase_cost: 500000,
           useful_life_months: 60,
           funding_method: 'equity',
-          source: 'direct',
+          source: 'other',
           category_id: categoryId
         }
       });

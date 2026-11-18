@@ -233,7 +233,7 @@ export const apiPaths: Record<string, unknown> = {
     get: {
       tags: ['Accounting'],
       summary: 'Budget vs actual for fiscal year',
-      responses: { 200: { description: 'Comparison by account' } }
+      responses: { 200: { description: 'Comparison by category (CapEx) or account (GL)' } }
     }
   },
   '/api/v1/hr/employees': {
