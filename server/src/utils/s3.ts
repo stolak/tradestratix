@@ -96,3 +96,37 @@ export async function deleteProofObject(key: string) {
   const s3 = getClient();
   await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
+
+/** Generic business document upload (assets, etc.). Same MIME/size rules as proofs. */
+export async function uploadBusinessObject(input: {
+  businessId: string;
+  folder: string;
+  entityId: string;
+  buffer: Buffer;
+  mimeType: string;
+  originalName?: string;
+  kind?: string;
+}) {
+  assertAllowedProofFile(input.mimeType, input.buffer.length);
+  const s3 = getClient();
+  const ext = extFor(input.mimeType, input.originalName);
+  const folder = (input.folder || 'docs').replace(/[^a-z0-9_-]/gi, '') || 'docs';
+  const kind = (input.kind || 'file').replace(/[^a-z0-9_-]/gi, '') || 'file';
+  const key = `tradestratix/${input.businessId}/${folder}/${input.entityId}/${kind}-${shortId('doc')}.${ext}`;
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: input.buffer,
+      ContentType: input.mimeType,
+      Metadata: {
+        businessId: input.businessId,
+        entityId: input.entityId
+      }
+    })
+  );
+
+  const url = cdn ? `${cdn}/${key}` : `https://${bucket}.s3.${region}.amazonaws.com/${key}`;
+  return { key, url, bucket, region };
+}

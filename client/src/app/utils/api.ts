@@ -772,17 +772,69 @@ export const api = {
       request<any>(`/inventory/transfers/${id}/cancel`, { method: 'POST', body: '{}' })
   },
   assets: {
-    list: (status?: string) =>
-      request<any[]>(`/assets${status ? `?status=${encodeURIComponent(status)}` : ''}`),
+    list: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets${q ? `?${q}` : ''}`);
+    },
     get: (id: string) => request<any>(`/assets/${id}`),
     create: (body: Record<string, unknown>) =>
       request<any>('/assets', { method: 'POST', body: JSON.stringify(body) }),
+    update: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/assets/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    categories: (active?: boolean) =>
+      request<any[]>(`/assets/categories${active ? '?active=1' : ''}`),
+    createCategory: (body: Record<string, unknown>) =>
+      request<any>('/assets/categories', { method: 'POST', body: JSON.stringify(body) }),
+    updateCategory: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/assets/categories/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body)
+      }),
+    locations: (params: { branch_id?: string; active?: boolean } = {}) => {
+      const qs = new URLSearchParams();
+      if (params.branch_id) qs.set('branch_id', params.branch_id);
+      if (params.active) qs.set('active', '1');
+      const q = qs.toString();
+      return request<any[]>(`/assets/locations${q ? `?${q}` : ''}`);
+    },
+    createLocation: (body: Record<string, unknown>) =>
+      request<any>('/assets/locations', { method: 'POST', body: JSON.stringify(body) }),
+    updateLocation: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/assets/locations/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body)
+      }),
     depreciationEntries: (assetId?: string) =>
       request<any[]>(
         `/assets/depreciation/entries${assetId ? `?asset_id=${encodeURIComponent(assetId)}` : ''}`
       ),
     runDepreciation: (body: Record<string, unknown> = {}) =>
-      request<any>('/assets/depreciation/run', { method: 'POST', body: JSON.stringify(body) })
+      request<any>('/assets/depreciation/run', { method: 'POST', body: JSON.stringify(body) }),
+    acquisitions: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/acquisitions${q ? `?${q}` : ''}`);
+    },
+    createAcquisition: (body: Record<string, unknown>) =>
+      request<any>('/assets/acquisitions', { method: 'POST', body: JSON.stringify(body) }),
+    submitAcquisition: (id: string) =>
+      request<any>(`/assets/acquisitions/${id}/submit`, { method: 'POST', body: '{}' }),
+    approveAcquisition: (id: string) =>
+      request<any>(`/assets/acquisitions/${id}/approve`, { method: 'POST', body: '{}' }),
+    capitaliseAcquisition: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/assets/acquisitions/${id}/capitalise`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    cancelAcquisition: (id: string) =>
+      request<any>(`/assets/acquisitions/${id}/cancel`, { method: 'POST', body: '{}' })
   },
   budgets: {
     list: () => request<any[]>('/budgets'),

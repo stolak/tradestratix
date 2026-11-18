@@ -246,6 +246,48 @@ export const DEFAULT_ACCOUNT_CATALOG: DefaultAccountKeyMeta[] = [
     category: 'assets'
   },
   {
+    key: 'asset_cip',
+    label: 'Capital Work in Progress',
+    description: 'CIP / assets under construction',
+    accountTypes: ['asset'],
+    category: 'assets'
+  },
+  {
+    key: 'asset_acquisition_payable',
+    label: 'Asset Acquisition Payable',
+    description: 'Amounts payable for capitalised assets',
+    accountTypes: ['liability'],
+    category: 'assets'
+  },
+  {
+    key: 'accumulated_impairment',
+    label: 'Accumulated Impairment',
+    description: 'Contra-asset for impairment',
+    accountTypes: ['asset'],
+    category: 'assets'
+  },
+  {
+    key: 'impairment_expense',
+    label: 'Impairment Loss',
+    description: 'Impairment expense',
+    accountTypes: ['expense'],
+    category: 'assets'
+  },
+  {
+    key: 'asset_disposal_gain',
+    label: 'Gain on Asset Disposal',
+    description: 'Gain on disposal of fixed assets',
+    accountTypes: ['revenue', 'equity'],
+    category: 'assets'
+  },
+  {
+    key: 'asset_disposal_loss',
+    label: 'Loss on Asset Disposal',
+    description: 'Loss on disposal of fixed assets',
+    accountTypes: ['expense'],
+    category: 'assets'
+  },
+  {
     key: 'salary_expense',
     label: 'Salary Expense',
     description: 'Payroll gross salary expense',

@@ -1,6 +1,42 @@
 # Implementation Progress
 
-Updated: 2026-11-12
+Updated: 2026-11-18
+
+## Asset Management module (in progress)
+
+**Phase 0 — Discovery & plan: COMPLETE**
+
+- Inspected existing Phase 6 foothold: `FixedAsset`, `DepreciationEntry`, `asset.service.ts`, `/assets` routes, `AssetsPage`, default accounts.
+- Confirmed reuse of Business/Branch/RBAC, `createJournal`/`reverseJournal`, procurement, inventory, audit, notifications, S3.
+- Docs under `docs/asset-management/`.
+
+**Phase 1 — Foundation: COMPLETE**
+
+- Prisma: `AssetCategory`, `AssetLocation`, `AssetAssignmentHistory`, `AssetStatusHistory`, `AssetDocument`; enriched `FixedAsset`
+- Services: categories (`ensureDefaultCategories`), locations, register CRUD, NBV helpers, document upload (S3)
+- API: categories/locations/register + `PATCH` + `POST /:id/documents`
+- Client: Register / Categories / Locations / Depreciate / Budgets + assignment edit
+- Seed permissions; `npm run test:assets`
+
+**Phase 2 — Acquisition & capitalisation: IN PROGRESS**
+
+- Prisma: `AssetAcquisition`, `AssetCostAddition`, `AssetCapitalisation`
+- Default account keys: `asset_cip`, `asset_acquisition_payable`, `accumulated_impairment`, `impairment_expense`, `asset_disposal_gain`, `asset_disposal_loss`
+- Workflow: draft → submit → approve → capitalise (or cancel); GL via `createJournal` on capitalise only
+- Funding: bank / cash / credit / equity / opening / donation; opening accum. dep. supported
+- Explicit GRN classification: `POST /assets/acquisitions/from-grn`
+- Cost-addition uniqueness prevents double capitalisation
+- Client: Assets → **Acquire** tab; permissions `assets.acquire` / `assets.approve` / `assets.capitalise`
+
+Tests: `npm run test:assets` (14) + `npm run test:assets:phase2` (12) + `npm run test:assets:bulk` (12) passed.
+
+Bulk capitalisation: quantity + unit cost + serial paste → N register lines with auto tags; serial unique per business. Register/Acquire UI merged into one Register tab.
+
+Still for Phase 2 polish: map new default accounts in CoA seed, Purchases UI pickers for GRN lines.
+
+**Outstanding (module):** Phases 3–8
+
+---
 
 ## Completed
 

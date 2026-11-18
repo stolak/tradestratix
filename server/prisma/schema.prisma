@@ -129,6 +129,14 @@ model Business {
   expenseCategories                 ExpenseCategory[]
   fixedAssets                       FixedAsset[]
   depreciationEntries               DepreciationEntry[]
+  assetCategories                   AssetCategory[]
+  assetLocations                    AssetLocation[]
+  assetAssignmentHistory            AssetAssignmentHistory[]
+  assetStatusHistory                AssetStatusHistory[]
+  assetDocuments                    AssetDocument[]
+  assetAcquisitions                 AssetAcquisition[]
+  assetCostAdditions                AssetCostAddition[]
+  assetCapitalisations              AssetCapitalisation[]
   budgets                           Budget[]
   employees                         Employee[]
   attendanceRecords                 AttendanceRecord[]
@@ -199,6 +207,8 @@ model Branch {
   salesReturns          SalesReturn[]           @relation("ReturnReceivingBranch")
   salesReturnsRevenue   SalesReturn[]           @relation("ReturnRevenueBranch")
   fixedAssets           FixedAsset[]
+  assetLocations        AssetLocation[]
+  assetAcquisitions     AssetAcquisition[]
   employees             Employee[]
   deliveryOrders        DeliveryOrder[]
   purchaseOrders        PurchaseOrder[]
@@ -280,6 +290,7 @@ model Warehouse {
   salesReservations SalesReservation[]
   salesFulfilments  SalesFulfilment[]
   salesReturns      SalesReturn[]
+  fixedAssets       FixedAsset[]
 
   @@unique([businessId, code])
   @@index([branchId])
@@ -520,6 +531,16 @@ model Account {
   expenseCategories              ExpenseCategory[]
   expenseFundingBills            ExpenseBill[]               @relation("ExpenseFundingAccount")
   budgetLines                    BudgetLine[]
+  assetCategoriesCost            AssetCategory[]             @relation("AssetCategoryCostAccount")
+  assetCategoriesAccumDep        AssetCategory[]             @relation("AssetCategoryAccumDepAccount")
+  assetCategoriesDepExpense      AssetCategory[]             @relation("AssetCategoryDepExpenseAccount")
+  assetCategoriesImpairment      AssetCategory[]             @relation("AssetCategoryImpairmentAccount")
+  assetCategoriesDisposalGain    AssetCategory[]             @relation("AssetCategoryDisposalGainAccount")
+  assetCategoriesDisposalLoss    AssetCategory[]             @relation("AssetCategoryDisposalLossAccount")
+  assetCategoriesCip             AssetCategory[]             @relation("AssetCategoryCipAccount")
+  fixedAssetsCostAccount         FixedAsset[]                @relation("FixedAssetCostAccount")
+  fixedAssetsAccumDepAccount     FixedAsset[]                @relation("FixedAssetAccumDepAccount")
+  fixedAssetsDepExpenseAccount   FixedAsset[]                @relation("FixedAssetDepExpenseAccount")
 
   @@unique([businessId, code])
   @@index([businessId])
@@ -1151,14 +1172,16 @@ model Supplier {
   createdById      String?  @map("created_by_id")
   updatedById      String?  @map("updated_by_id")
 
-  business       Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  purchaseOrders PurchaseOrder[]
-  receipts       GoodsReceiptNote[]
-  bills          SupplierBill[]
-  payments       SupplierPayment[]
-  expenseBills   ExpenseBill[]
-  journalEntries JournalEntry[]     @relation("JournalSupplier")
-  journalLines   JournalLine[]      @relation("JournalLineSupplier")
+  business         Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  fixedAssets      FixedAsset[]
+  assetAcquisitions AssetAcquisition[]
+  purchaseOrders   PurchaseOrder[]
+  receipts         GoodsReceiptNote[]
+  bills            SupplierBill[]
+  payments         SupplierPayment[]
+  expenseBills     ExpenseBill[]
+  journalEntries   JournalEntry[]     @relation("JournalSupplier")
+  journalLines     JournalLine[]      @relation("JournalLineSupplier")
 
   @@unique([businessId, code])
   @@index([businessId, name])
@@ -2122,37 +2145,359 @@ model ExpenseCategory {
   @@map("expense_categories")
 }
 
-// --- Phase 6: Assets / Depreciation / Budgeting ------------------------------
+// --- Phase 6+: Assets / Depreciation / Budgeting (Asset Mgmt Phase 1+) -------
 
-model FixedAsset {
-  id                        String   @id
-  businessId                String   @map("business_id")
-  branchId                  String?  @map("branch_id")
-  code                      String?
-  name                      String
-  category                  String   @default("equipment")
-  purchaseDate              DateTime @map("purchase_date")
-  purchaseCost              Decimal  @map("purchase_cost") @db.Decimal(18, 4)
-  salvageValue              Decimal  @default(0) @map("salvage_value") @db.Decimal(18, 4)
-  usefulLifeMonths          Int      @default(36) @map("useful_life_months")
-  /// straight_line
-  depreciationMethod        String   @default("straight_line") @map("depreciation_method")
-  accumulatedDepreciation   Decimal  @default(0) @map("accumulated_depreciation") @db.Decimal(18, 4)
-  /// active | fully_depreciated | disposed
-  status                    String   @default("active")
-  notes                     String?  @db.Text
-  acquisitionJournalEntryId String?  @map("acquisition_journal_entry_id")
-  createdById               String?  @map("created_by_id")
-  createdAt                 DateTime @default(now()) @map("created_at")
-  updatedAt                 DateTime @updatedAt @map("updated_at")
+model AssetCategory {
+  id                         String   @id
+  businessId                 String   @map("business_id")
+  code                       String
+  name                       String
+  description                String?  @db.Text
+  /// tangible | intangible | investment_property | other
+  assetType                  String   @default("tangible") @map("asset_type")
+  capitalisationThreshold    Decimal  @default(0) @map("capitalisation_threshold") @db.Decimal(18, 4)
+  defaultUsefulLifeMonths    Int      @default(36) @map("default_useful_life_months")
+  /// straight_line | reducing_balance | units_of_production | none
+  defaultDepreciationMethod  String   @default("straight_line") @map("default_depreciation_method")
+  defaultResidualPercent     Decimal  @default(0) @map("default_residual_percent") @db.Decimal(8, 4)
+  costAccountId              String?  @map("cost_account_id")
+  accumDepAccountId          String?  @map("accum_dep_account_id")
+  depExpenseAccountId        String?  @map("dep_expense_account_id")
+  impairmentAccountId        String?  @map("impairment_account_id")
+  disposalGainAccountId      String?  @map("disposal_gain_account_id")
+  disposalLossAccountId      String?  @map("disposal_loss_account_id")
+  cipAccountId               String?  @map("cip_account_id")
+  isActive                   Boolean  @default(true) @map("is_active")
+  createdById                String?  @map("created_by_id")
+  createdAt                  DateTime @default(now()) @map("created_at")
+  updatedAt                  DateTime @updatedAt @map("updated_at")
 
-  business            Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  branch              Branch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  depreciationEntries DepreciationEntry[]
+  business            Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  costAccount         Account?     @relation("AssetCategoryCostAccount", fields: [costAccountId], references: [id], onDelete: SetNull)
+  accumDepAccount     Account?     @relation("AssetCategoryAccumDepAccount", fields: [accumDepAccountId], references: [id], onDelete: SetNull)
+  depExpenseAccount   Account?     @relation("AssetCategoryDepExpenseAccount", fields: [depExpenseAccountId], references: [id], onDelete: SetNull)
+  impairmentAccount   Account?     @relation("AssetCategoryImpairmentAccount", fields: [impairmentAccountId], references: [id], onDelete: SetNull)
+  disposalGainAccount Account?     @relation("AssetCategoryDisposalGainAccount", fields: [disposalGainAccountId], references: [id], onDelete: SetNull)
+  disposalLossAccount Account?     @relation("AssetCategoryDisposalLossAccount", fields: [disposalLossAccountId], references: [id], onDelete: SetNull)
+  cipAccount          Account?     @relation("AssetCategoryCipAccount", fields: [cipAccountId], references: [id], onDelete: SetNull)
+  assets              FixedAsset[]
+  acquisitions        AssetAcquisition[]
 
   @@unique([businessId, code])
+  @@index([businessId, isActive])
+  @@map("asset_categories")
+}
+
+model AssetLocation {
+  id          String   @id
+  businessId  String   @map("business_id")
+  branchId    String?  @map("branch_id")
+  code        String
+  name        String
+  description String?  @db.Text
+  isActive    Boolean  @default(true) @map("is_active")
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  business     Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch       Branch?            @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assets       FixedAsset[]
+  acquisitions AssetAcquisition[]
+
+  @@unique([businessId, code])
+  @@index([businessId, branchId])
+  @@index([businessId, isActive])
+  @@map("asset_locations")
+}
+
+model FixedAsset {
+  id                        String    @id
+  businessId                String    @map("business_id")
+  branchId                  String?   @map("branch_id")
+  code                      String?
+  name                      String
+  description               String?   @db.Text
+  /// Legacy free-text category (kept for back-compat; prefer categoryId)
+  category                  String    @default("equipment")
+  categoryId                String?   @map("category_id")
+  /// tangible | intangible | investment_property | other
+  assetType                 String    @default("tangible") @map("asset_type")
+  parentAssetId             String?   @map("parent_asset_id")
+  manufacturer              String?
+  model                     String?
+  serialNumber              String?   @map("serial_number")
+  barcode                   String?
+  qrPayload                 String?   @map("qr_payload") @db.Text
+  photoUrl                  String?   @map("photo_url")
+  /// direct | purchase_order | grn | supplier_bill | opening_balance | donation | cip | other
+  acquisitionSource         String    @default("direct") @map("acquisition_source")
+  supplierId                String?   @map("supplier_id")
+  purchaseOrderId           String?   @map("purchase_order_id")
+  grnId                     String?   @map("grn_id")
+  supplierBillId            String?   @map("supplier_bill_id")
+  purchaseDate              DateTime  @map("purchase_date")
+  capitalisationDate        DateTime? @map("capitalisation_date")
+  availableForUseDate       DateTime? @map("available_for_use_date")
+  depreciationStartDate     DateTime? @map("depreciation_start_date")
+  purchaseCost              Decimal   @map("purchase_cost") @db.Decimal(18, 4)
+  freightCost               Decimal   @default(0) @map("freight_cost") @db.Decimal(18, 4)
+  installationCost          Decimal   @default(0) @map("installation_cost") @db.Decimal(18, 4)
+  otherCapitalCost          Decimal   @default(0) @map("other_capital_cost") @db.Decimal(18, 4)
+  currencyCode              String    @default("NGN") @map("currency_code")
+  exchangeRate              Decimal   @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  salvageValue              Decimal   @default(0) @map("salvage_value") @db.Decimal(18, 4)
+  usefulLifeMonths          Int       @default(36) @map("useful_life_months")
+  /// straight_line | reducing_balance | units_of_production
+  depreciationMethod        String    @default("straight_line") @map("depreciation_method")
+  reducingBalanceRate       Decimal?  @map("reducing_balance_rate") @db.Decimal(8, 4)
+  estimatedProductionUnits  Decimal?  @map("estimated_production_units") @db.Decimal(18, 4)
+  accumulatedDepreciation   Decimal   @default(0) @map("accumulated_depreciation") @db.Decimal(18, 4)
+  accumulatedImpairment     Decimal   @default(0) @map("accumulated_impairment") @db.Decimal(18, 4)
+  /// Legacy: active | fully_depreciated | disposed — synced with operational/financial status
+  status                    String    @default("active")
+  /// draft | pending_approval | acquired | cip | available | in_use | under_maintenance | idle | transfer_pending | disposal_pending | disposed | archived
+  operationalStatus         String    @default("in_use") @map("operational_status")
+  /// not_capitalised | capitalised | depreciating | fully_depreciated | impaired | disposed
+  financialStatus           String    @default("capitalised") @map("financial_status")
+  /// new | good | fair | poor | damaged
+  condition                 String    @default("good")
+  department                String?
+  locationId                String?   @map("location_id")
+  warehouseId               String?   @map("warehouse_id")
+  costCentre                String?   @map("cost_centre")
+  custodianEmployeeId       String?   @map("custodian_employee_id")
+  costAccountId             String?   @map("cost_account_id")
+  accumDepAccountId         String?   @map("accum_dep_account_id")
+  depExpenseAccountId       String?   @map("dep_expense_account_id")
+  bookCode                  String    @default("financial") @map("book_code")
+  isOpeningBalance          Boolean   @default(false) @map("is_opening_balance")
+  warrantyProvider          String?   @map("warranty_provider")
+  warrantyExpiryDate        DateTime? @map("warranty_expiry_date")
+  insuranceCompany          String?   @map("insurance_company")
+  insurancePolicy           String?   @map("insurance_policy")
+  insuranceExpiryDate       DateTime? @map("insurance_expiry_date")
+  maintenanceFrequencyDays  Int?      @map("maintenance_frequency_days")
+  lastMaintenanceDate       DateTime? @map("last_maintenance_date")
+  nextMaintenanceDate       DateTime? @map("next_maintenance_date")
+  notes                     String?   @db.Text
+  acquisitionJournalEntryId String?   @map("acquisition_journal_entry_id")
+  version                   Int       @default(1)
+  createdById               String?   @map("created_by_id")
+  updatedById               String?   @map("updated_by_id")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+
+  business            Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch              Branch?                  @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assetCategory       AssetCategory?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  parentAsset         FixedAsset?              @relation("AssetHierarchy", fields: [parentAssetId], references: [id], onDelete: SetNull)
+  childAssets         FixedAsset[]             @relation("AssetHierarchy")
+  supplier            Supplier?                @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  location            AssetLocation?           @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  warehouse           Warehouse?               @relation(fields: [warehouseId], references: [id], onDelete: SetNull)
+  custodian           Employee?                @relation("AssetCustodian", fields: [custodianEmployeeId], references: [id], onDelete: SetNull)
+  costAccount         Account?                 @relation("FixedAssetCostAccount", fields: [costAccountId], references: [id], onDelete: SetNull)
+  accumDepAccount     Account?                 @relation("FixedAssetAccumDepAccount", fields: [accumDepAccountId], references: [id], onDelete: SetNull)
+  depExpenseAccount   Account?                 @relation("FixedAssetDepExpenseAccount", fields: [depExpenseAccountId], references: [id], onDelete: SetNull)
+  depreciationEntries DepreciationEntry[]
+  assignmentHistory   AssetAssignmentHistory[]
+  statusHistory       AssetStatusHistory[]
+  documents           AssetDocument[]
+  acquisitions        AssetAcquisition[]       @relation("AcquisitionCapitalisedAsset")
+  costAdditions       AssetCostAddition[]
+  capitalisations     AssetCapitalisation[]
+
+  @@unique([businessId, code])
+  @@unique([businessId, serialNumber])
   @@index([businessId, status])
+  @@index([businessId, operationalStatus])
+  @@index([businessId, financialStatus])
+  @@index([businessId, categoryId])
+  @@index([businessId, model])
+  @@index([branchId])
+  @@index([custodianEmployeeId])
   @@map("fixed_assets")
+}
+
+/// Draft → pending_approval → approved → capitalised (or cancelled)
+model AssetAcquisition {
+  id                   String    @id
+  businessId           String    @map("business_id")
+  branchId             String?   @map("branch_id")
+  acquisitionNumber    String    @map("acquisition_number")
+  /// draft | pending_approval | approved | capitalised | cancelled
+  status               String    @default("draft")
+  /// direct | purchase_order | grn | supplier_bill | opening_balance | donation | other
+  source               String    @default("direct")
+  supplierId           String?   @map("supplier_id")
+  purchaseOrderId      String?   @map("purchase_order_id")
+  grnId                String?   @map("grn_id")
+  supplierBillId       String?   @map("supplier_bill_id")
+  categoryId           String?   @map("category_id")
+  locationId           String?   @map("location_id")
+  assetName            String    @map("asset_name")
+  assetCode            String?   @map("asset_code")
+  description          String?   @db.Text
+  manufacturer         String?
+  model                String?
+  /// Single-unit convenience; prefer serialNumbersJson for bulk
+  serialNumber         String?   @map("serial_number")
+  /// JSON string array of serial numbers (one per unit when quantity > 1)
+  serialNumbersJson    String?   @map("serial_numbers_json") @db.Text
+  /// Number of individual assets to capitalise from this acquisition
+  quantity             Int       @default(1)
+  /// Cost per unit (purchase). Lot purchase_cost = unit_cost × quantity
+  unitCost             Decimal   @default(0) @map("unit_cost") @db.Decimal(18, 4)
+  acquisitionDate      DateTime  @map("acquisition_date")
+  availableForUseDate  DateTime? @map("available_for_use_date")
+  /// Lot total for purchase (unit_cost × quantity)
+  purchaseCost         Decimal   @map("purchase_cost") @db.Decimal(18, 4)
+  freightCost          Decimal   @default(0) @map("freight_cost") @db.Decimal(18, 4)
+  installationCost     Decimal   @default(0) @map("installation_cost") @db.Decimal(18, 4)
+  otherCapitalCost     Decimal   @default(0) @map("other_capital_cost") @db.Decimal(18, 4)
+  /// For opening balances only
+  openingAccumDep      Decimal   @default(0) @map("opening_accum_dep") @db.Decimal(18, 4)
+  salvageValue         Decimal   @default(0) @map("salvage_value") @db.Decimal(18, 4)
+  usefulLifeMonths     Int       @default(36) @map("useful_life_months")
+  depreciationMethod   String    @default("straight_line") @map("depreciation_method")
+  currencyCode         String    @default("NGN") @map("currency_code")
+  exchangeRate         Decimal   @default(1) @map("exchange_rate") @db.Decimal(18, 6)
+  /// bank | cash | credit | equity | opening
+  fundingMethod        String    @default("bank") @map("funding_method")
+  bankAccountId        String?   @map("bank_account_id")
+  notes                String?   @db.Text
+  submittedAt          DateTime? @map("submitted_at")
+  approvedAt           DateTime? @map("approved_at")
+  approvedById         String?   @map("approved_by_id")
+  capitalisedAssetId   String?   @map("capitalised_asset_id")
+  createdById          String?   @map("created_by_id")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  business         Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch           Branch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  supplier         Supplier?           @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  category         AssetCategory?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  location         AssetLocation?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  capitalisedAsset FixedAsset?          @relation("AcquisitionCapitalisedAsset", fields: [capitalisedAssetId], references: [id], onDelete: SetNull)
+  costAdditions    AssetCostAddition[]
+  capitalisations  AssetCapitalisation[]
+
+  @@unique([businessId, acquisitionNumber])
+  @@index([businessId, status])
+  @@index([branchId])
+  @@map("asset_acquisitions")
+}
+
+model AssetCostAddition {
+  id            String   @id
+  businessId    String   @map("business_id")
+  acquisitionId String?  @map("acquisition_id")
+  assetId       String?  @map("asset_id")
+  /// purchase_order_item | grn_item | supplier_bill_line | manual
+  sourceType    String   @map("source_type")
+  sourceId      String   @map("source_id")
+  sourceLineId  String   @default("") @map("source_line_id")
+  description   String?
+  amount        Decimal  @db.Decimal(18, 4)
+  createdById   String?  @map("created_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  business    Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  acquisition AssetAcquisition? @relation(fields: [acquisitionId], references: [id], onDelete: Cascade)
+  asset       FixedAsset?       @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@unique([businessId, sourceType, sourceId, sourceLineId])
+  @@index([businessId, acquisitionId])
+  @@index([businessId, assetId])
+  @@map("asset_cost_additions")
+}
+
+model AssetCapitalisation {
+  id                String   @id
+  businessId        String   @map("business_id")
+  acquisitionId     String   @map("acquisition_id")
+  assetId           String   @map("asset_id")
+  capitalisedAmount Decimal  @map("capitalised_amount") @db.Decimal(18, 4)
+  journalEntryId    String?  @map("journal_entry_id")
+  capitalisedAt     DateTime @default(now()) @map("capitalised_at")
+  capitalisedById   String?  @map("capitalised_by_id")
+  notes             String?  @db.Text
+
+  business    Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  acquisition AssetAcquisition @relation(fields: [acquisitionId], references: [id], onDelete: Restrict)
+  asset       FixedAsset       @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([acquisitionId, assetId])
+  @@index([businessId, acquisitionId])
+  @@index([businessId, assetId])
+  @@map("asset_capitalisations")
+}
+
+model AssetAssignmentHistory {
+  id                   String   @id
+  businessId           String   @map("business_id")
+  assetId              String   @map("asset_id")
+  fromBranchId          String?  @map("from_branch_id")
+  toBranchId           String?  @map("to_branch_id")
+  fromLocationId       String?  @map("from_location_id")
+  toLocationId         String?  @map("to_location_id")
+  fromDepartment       String?  @map("from_department")
+  toDepartment         String?  @map("to_department")
+  fromCustodianId      String?  @map("from_custodian_id")
+  toCustodianId        String?  @map("to_custodian_id")
+  fromWarehouseId      String?  @map("from_warehouse_id")
+  toWarehouseId        String?  @map("to_warehouse_id")
+  reason               String?  @db.Text
+  changedById          String?  @map("changed_by_id")
+  changedAt            DateTime @default(now()) @map("changed_at")
+
+  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  asset    FixedAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@index([businessId, assetId])
+  @@index([assetId, changedAt])
+  @@map("asset_assignment_history")
+}
+
+model AssetStatusHistory {
+  id         String   @id
+  businessId String   @map("business_id")
+  assetId    String   @map("asset_id")
+  field      String
+  fromValue  String?  @map("from_value")
+  toValue    String?  @map("to_value")
+  reason     String?  @db.Text
+  changedById String? @map("changed_by_id")
+  changedAt  DateTime @default(now()) @map("changed_at")
+
+  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  asset    FixedAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@index([businessId, assetId])
+  @@map("asset_status_history")
+}
+
+model AssetDocument {
+  id           String   @id
+  businessId   String   @map("business_id")
+  assetId      String   @map("asset_id")
+  /// photo | invoice | warranty | insurance | other
+  docType      String   @default("other") @map("doc_type")
+  fileName     String   @map("file_name")
+  mimeType     String?  @map("mime_type")
+  sizeBytes    Int?     @map("size_bytes")
+  storageKey   String   @map("storage_key")
+  url          String
+  uploadedById String?  @map("uploaded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  asset    FixedAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@index([businessId, assetId])
+  @@map("asset_documents")
 }
 
 model DepreciationEntry {
@@ -2248,6 +2593,7 @@ model Employee {
   leaveRequests  LeaveRequest[]
   payrollItems   PayrollItem[]
   vehiclesDriven Vehicle[]
+  custodiedAssets FixedAsset[] @relation("AssetCustodian")
 
   @@unique([businessId, code])
   @@index([businessId, status])
