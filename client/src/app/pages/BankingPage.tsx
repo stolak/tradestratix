@@ -22,6 +22,7 @@ export const BankingPage: React.FC = () => {
   const [tab, setTab] = useState<Tab>(initialBankingTab);
   const [accounts, setAccounts] = useState<any[]>([]);
   const [glAccounts, setGlAccounts] = useState<any[]>([]);
+  const [cashGlAccounts, setCashGlAccounts] = useState<any[]>([]);
   const [txns, setTxns] = useState<any[]>([]);
   const [acctForm, setAcctForm] = useState({
     name: '',
@@ -30,11 +31,9 @@ export const BankingPage: React.FC = () => {
     gl_account_id: ''
   });
   const [moveForm, setMoveForm] = useState({
-    type: 'deposit',
-    bank_account_id: '',
-    to_bank_account_id: '',
+    from_account_id: '',
+    to_account_id: '',
     amount: '',
-    offset_account_id: '',
     memo: ''
   });
 
@@ -45,20 +44,36 @@ export const BankingPage: React.FC = () => {
         api.accounting.accounts(),
         api.banking.transactions()
       ]);
+      const activeGl = gl.filter((a: any) => a.is_active !== false);
       setAccounts(b);
-      setGlAccounts(gl.filter((a: any) => a.is_active !== false));
+      setGlAccounts(activeGl);
       setTxns(t);
       const bankGl = gl.find((a: any) => a.code === '1120') || gl.find((a: any) => a.account_type === 'asset');
       const cashGl = gl.find((a: any) => a.code === '1110');
+      const bankGlIds = new Set(
+        b.map((a: any) => a.gl_account_id || a.gl_account?.id).filter(Boolean)
+      );
+      const cashPool = activeGl.filter((a: any) => {
+        if (a.account_type && a.account_type !== 'asset') return false;
+        if (bankGlIds.has(a.id)) return true;
+        const code = String(a.code || '');
+        const name = String(a.name || '');
+        return code.startsWith('11') || /cash|bank|till|petty|vault/i.test(name);
+      });
+      setCashGlAccounts(cashPool.length ? cashPool : activeGl.filter((a: any) => a.account_type === 'asset'));
       setAcctForm((f) => ({
         ...f,
         gl_account_id: f.gl_account_id || bankGl?.id || ''
       }));
       setMoveForm((f) => ({
         ...f,
-        bank_account_id: f.bank_account_id || b[0]?.id || '',
-        to_bank_account_id: f.to_bank_account_id || b[1]?.id || b[0]?.id || '',
-        offset_account_id: f.offset_account_id || cashGl?.id || ''
+        from_account_id: f.from_account_id || cashGl?.id || cashPool[0]?.id || '',
+        to_account_id:
+          f.to_account_id ||
+          bankGl?.id ||
+          cashPool.find((a: any) => a.id !== (cashGl?.id || cashPool[0]?.id))?.id ||
+          cashPool[1]?.id ||
+          ''
       }));
     } catch (e: any) {
       await alertError('Banking', e.message);
@@ -89,30 +104,17 @@ export const BankingPage: React.FC = () => {
   const postMove = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const amount = Number(moveForm.amount);
-      if (moveForm.type === 'deposit') {
-        await api.banking.deposit({
-          bank_account_id: moveForm.bank_account_id,
-          amount,
-          offset_account_id: moveForm.offset_account_id || undefined,
-          memo: moveForm.memo || undefined
-        });
-      } else if (moveForm.type === 'withdrawal') {
-        await api.banking.withdraw({
-          bank_account_id: moveForm.bank_account_id,
-          amount,
-          offset_account_id: moveForm.offset_account_id || undefined,
-          memo: moveForm.memo || undefined
-        });
-      } else {
-        await api.banking.transfer({
-          from_bank_account_id: moveForm.bank_account_id,
-          to_bank_account_id: moveForm.to_bank_account_id,
-          amount,
-          memo: moveForm.memo || undefined
-        });
+      if (moveForm.from_account_id === moveForm.to_account_id) {
+        await alertError('Post failed', 'From GL and To GL must be different accounts');
+        return;
       }
-      await alertSuccess('Transaction posted');
+      await api.banking.transfer({
+        from_account_id: moveForm.from_account_id,
+        to_account_id: moveForm.to_account_id,
+        amount: Number(moveForm.amount),
+        memo: moveForm.memo || undefined
+      });
+      await alertSuccess('Cash moved');
       setMoveForm((f) => ({ ...f, amount: '', memo: '' }));
       await load();
       setTab('transactions');
@@ -247,62 +249,38 @@ export const BankingPage: React.FC = () => {
           className="card-surface"
           style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
         >
+          <p style={{ margin: 0, color: 'var(--ink-muted)', fontSize: '0.9rem' }}>
+            Move cash between cash and bank GL accounts (Dr To GL / Cr From GL).
+          </p>
           <div className="form-grid">
             <div className="field">
-              <label>Type</label>
+              <label>From GL</label>
               <select
-                value={moveForm.type}
-                onChange={(e) => setMoveForm({ ...moveForm, type: e.target.value })}
-              >
-                <option value="deposit">Deposit</option>
-                <option value="withdrawal">Withdrawal</option>
-                <option value="transfer">Transfer</option>
-              </select>
-            </div>
-            <div className="field">
-              <label>{moveForm.type === 'transfer' ? 'From account' : 'Bank account'}</label>
-              <select
-                value={moveForm.bank_account_id}
-                onChange={(e) => setMoveForm({ ...moveForm, bank_account_id: e.target.value })}
+                value={moveForm.from_account_id}
+                onChange={(e) => setMoveForm({ ...moveForm, from_account_id: e.target.value })}
                 required
               >
-                {accounts.map((a) => (
+                {cashGlAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.name}
+                    {a.code} — {a.name}
                   </option>
                 ))}
               </select>
             </div>
-            {moveForm.type === 'transfer' ? (
-              <div className="field">
-                <label>To account</label>
-                <select
-                  value={moveForm.to_bank_account_id}
-                  onChange={(e) => setMoveForm({ ...moveForm, to_bank_account_id: e.target.value })}
-                  required
-                >
-                  {accounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div className="field">
-                <label>Offset GL</label>
-                <select
-                  value={moveForm.offset_account_id}
-                  onChange={(e) => setMoveForm({ ...moveForm, offset_account_id: e.target.value })}
-                >
-                  {glAccounts.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.code} — {a.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+            <div className="field">
+              <label>To GL</label>
+              <select
+                value={moveForm.to_account_id}
+                onChange={(e) => setMoveForm({ ...moveForm, to_account_id: e.target.value })}
+                required
+              >
+                {cashGlAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.code} — {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="field">
               <label>Amount</label>
               <input

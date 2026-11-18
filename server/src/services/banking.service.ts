@@ -260,66 +260,132 @@ export async function withdraw(user: AuthUser, body: Record<string, any>) {
   return serialize(result);
 }
 
-/** Transfer: Dr destination bank GL / Cr source bank GL */
+async function findBankByGl(businessId: string, glAccountId: string) {
+  return prisma.bankAccount.findFirst({
+    where: { businessId, glAccountId, isActive: true },
+    include: { glAccount: true }
+  });
+}
+
+/** Transfer cash/bank: Dr destination GL / Cr source GL (till ↔ bank ↔ bank). */
 export async function transfer(user: AuthUser, body: Record<string, any>) {
-  const fromId = requireString(
-    body.from_bank_account_id || body.fromBankAccountId,
-    'from_bank_account_id'
-  );
-  const toId = requireString(
-    body.to_bank_account_id || body.toBankAccountId,
-    'to_bank_account_id'
-  );
-  if (fromId === toId) throw httpError(400, 'Source and destination must differ');
   const amount = roundMoney(Number(body.amount));
   if (!amount || amount <= 0) throw httpError(400, 'amount must be > 0');
 
-  const from = await getBankAccount(user.businessId, fromId);
-  const to = await getBankAccount(user.businessId, toId);
+  let fromBank =
+    body.from_bank_account_id || body.fromBankAccountId
+      ? await getBankAccount(
+          user.businessId,
+          requireString(body.from_bank_account_id || body.fromBankAccountId, 'from_bank_account_id')
+        )
+      : null;
+  let toBank =
+    body.to_bank_account_id || body.toBankAccountId
+      ? await getBankAccount(
+          user.businessId,
+          requireString(body.to_bank_account_id || body.toBankAccountId, 'to_bank_account_id')
+        )
+      : null;
+
+  let fromGlId = String(
+    body.from_account_id || body.fromAccountId || fromBank?.glAccountId || ''
+  ).trim();
+  let toGlId = String(body.to_account_id || body.toAccountId || toBank?.glAccountId || '').trim();
+
+  if (!fromGlId) throw httpError(400, 'from_account_id (From GL) is required');
+  if (!toGlId) throw httpError(400, 'to_account_id (To GL) is required');
+  if (fromGlId === toGlId) throw httpError(400, 'From GL and To GL must differ');
+
+  const [fromAcc, toAcc] = await Promise.all([
+    prisma.account.findFirst({ where: { id: fromGlId, businessId: user.businessId } }),
+    prisma.account.findFirst({ where: { id: toGlId, businessId: user.businessId } })
+  ]);
+  if (!fromAcc) throw httpError(400, 'Invalid From GL account');
+  if (!toAcc) throw httpError(400, 'Invalid To GL account');
+  if (fromAcc.accountType !== 'asset' || toAcc.accountType !== 'asset') {
+    throw httpError(400, 'From GL and To GL must both be asset (cash / bank) accounts');
+  }
+
+  if (!fromBank) fromBank = await findBankByGl(user.businessId, fromGlId);
+  if (!toBank) toBank = await findBankByGl(user.businessId, toGlId);
+
   const branchId = await branchAccess.resolveWriteBranchId(
     user,
-    body.branch_id || body.branchId || from.branchId || user.activeBranchId
+    body.branch_id ||
+      body.branchId ||
+      fromBank?.branchId ||
+      toBank?.branchId ||
+      user.activeBranchId
   );
 
   const txnId = shortId('btx');
   const txnNumber = await nextTxnNumber(user.businessId);
+  const memo =
+    body.memo ||
+    `Move ${fromAcc.code} ${fromAcc.name} → ${toAcc.code} ${toAcc.name}`;
 
   const result = await prisma.$transaction(async (tx) => {
     const journal = await createJournal(
       user,
       {
         entry_date: body.txn_date || body.txnDate || new Date(),
-        memo: body.memo || `Transfer ${from.name} → ${to.name}`,
+        memo,
         source_type: 'bank_transfer',
         source_id: txnId,
         idempotency_key: `bank_transfer:${txnId}`,
         branch_id: branchId,
         post: true,
         lines: [
-          { account_id: to.glAccountId, debit: amount, description: `Transfer in ${to.name}` },
-          { account_id: from.glAccountId, credit: amount, description: `Transfer out ${from.name}` }
+          {
+            account_id: toGlId,
+            debit: amount,
+            description: `Transfer in ${toAcc.code} — ${toAcc.name}`
+          },
+          {
+            account_id: fromGlId,
+            credit: amount,
+            description: `Transfer out ${fromAcc.code} — ${fromAcc.name}`
+          }
         ]
       },
       tx
     );
+
+    // Prefer a bank-account row for the transactions register when available
+    const primaryBank = fromBank || toBank;
+    if (!primaryBank) {
+      return {
+        id: txnId,
+        txnNumber,
+        type: 'transfer',
+        amount,
+        memo,
+        journalEntryId: (journal as any).id,
+        from_account: fromAcc,
+        to_account: toAcc,
+        bankAccount: null
+      };
+    }
 
     return tx.bankTransaction.create({
       data: {
         id: txnId,
         businessId: user.businessId,
         branchId,
-        bankAccountId: fromId,
+        bankAccountId: primaryBank.id,
         txnNumber,
         txnDate: body.txn_date || body.txnDate ? new Date(body.txn_date || body.txnDate) : new Date(),
         type: 'transfer',
         amount: toDec(amount),
-        counterpartyBankAccountId: toId,
+        counterpartyBankAccountId:
+          fromBank && toBank ? (primaryBank.id === fromBank.id ? toBank.id : fromBank.id) : null,
+        offsetAccountId: !fromBank || !toBank ? (!fromBank ? fromGlId : toGlId) : null,
         memo: body.memo || null,
         reference: body.reference || null,
         journalEntryId: (journal as any).id,
         createdById: user.id
       },
-      include: { bankAccount: true, counterpartyBankAccount: true }
+      include: { bankAccount: true, counterpartyBankAccount: true, offsetAccount: true }
     });
   });
 
@@ -329,7 +395,7 @@ export async function transfer(user: AuthUser, body: Record<string, any>) {
     module: 'banking',
     entityType: 'BankTransaction',
     entityId: txnId,
-    summary: `Transfer ${amount} ${from.name} → ${to.name}`
+    summary: `Move ${amount} ${fromAcc.code} → ${toAcc.code}`
   });
   return serialize(result);
 }

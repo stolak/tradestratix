@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
 import { useAuth } from '../context/AuthContext';
@@ -32,6 +32,8 @@ export const SalesRepCustodyFinance: React.FC = () => {
   const [reference, setReference] = useState('');
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [branchFilter, setBranchFilter] = useState('');
+  const [nameFilter, setNameFilter] = useState('');
 
   const load = async () => {
     setLoading(true);
@@ -104,9 +106,45 @@ export const SalesRepCustodyFinance: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const branchOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of rows) {
+      const id = r.branch_id || r.branch?.id || r.employee?.branch_id || r.employee?.branch?.id;
+      const code = r.branch?.code || r.employee?.branch?.code;
+      const name = r.branch?.name || r.employee?.branch?.name;
+      if (!id) continue;
+      map.set(id, name && code ? `${code} — ${name}` : code || name || id);
+    }
+    return [...map.entries()]
+      .map(([id, label]) => ({ id, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    const q = nameFilter.trim().toLowerCase();
+    return rows.filter((r) => {
+      if (branchFilter) {
+        const id = r.branch_id || r.branch?.id || r.employee?.branch_id || r.employee?.branch?.id;
+        if (id !== branchFilter) return false;
+      }
+      if (!q) return true;
+      const hay = [
+        r.name,
+        r.code,
+        r.employee?.full_name,
+        r.employee?.code
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [rows, branchFilter, nameFilter]);
+
   const selected = rows.find((r) => r.id === selectedId);
-  const holding = rows.filter((r) => r.balance > 0.005);
-  const totalHeld = holding.reduce((s, r) => s + r.balance, 0);
+  const holding = filteredRows.filter((r) => r.balance > 0.005);
+  const totalHeld = rows.filter((r) => r.balance > 0.005).reduce((s, r) => s + r.balance, 0);
+  const filteredHeld = holding.reduce((s, r) => s + r.balance, 0);
 
   const pickRep = (id: string) => {
     setSelectedId(id);
@@ -173,7 +211,45 @@ export const SalesRepCustodyFinance: React.FC = () => {
       </div>
 
       <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-        <div style={{ padding: '0.75rem 1rem', fontWeight: 600 }}>Sales reps holding cash</div>
+        <div
+          style={{
+            padding: '0.75rem 1rem',
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '0.75rem 1rem',
+            alignItems: 'end',
+            justifyContent: 'space-between'
+          }}
+        >
+          <div style={{ fontWeight: 600 }}>Sales reps holding cash</div>
+          <div className="form-grid" style={{ margin: 0, flex: '1 1 280px', maxWidth: 520 }}>
+            <div className="field" style={{ margin: 0 }}>
+              <label>Branch</label>
+              <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}>
+                <option value="">All branches</option>
+                {branchOptions.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field" style={{ margin: 0 }}>
+              <label>Filter by name</label>
+              <input
+                value={nameFilter}
+                onChange={(e) => setNameFilter(e.target.value)}
+                placeholder="Name or code…"
+              />
+            </div>
+          </div>
+        </div>
+        {(branchFilter || nameFilter.trim()) && !loading ? (
+          <div style={{ padding: '0 1rem 0.5rem', color: 'var(--ink-muted)', fontSize: '0.85rem' }}>
+            Showing {filteredRows.length} of {rows.length}
+            {filteredHeld > 0.005 ? ` · filtered custody ${money(filteredHeld)}` : ''}
+          </div>
+        ) : null}
         <div className="table-wrap">
           <table className="table">
             <thead>
@@ -187,7 +263,7 @@ export const SalesRepCustodyFinance: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {filteredRows.map((r) => {
                 const bal = Number(r.balance || 0);
                 return (
                   <tr
@@ -225,10 +301,14 @@ export const SalesRepCustodyFinance: React.FC = () => {
                   </tr>
                 );
               })}
-              {!rows.length ? (
+              {!filteredRows.length ? (
                 <tr>
                   <td colSpan={6} style={{ color: 'var(--ink-muted)' }}>
-                    {loading ? 'Loading…' : 'No sales reps found.'}
+                    {loading
+                      ? 'Loading…'
+                      : rows.length
+                        ? 'No sales reps match this branch / name filter.'
+                        : 'No sales reps found.'}
                   </td>
                 </tr>
               ) : null}
