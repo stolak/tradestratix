@@ -48,7 +48,7 @@ Statuses:
 | Phase | Models |
 |-------|--------|
 | 2 | AssetAcquisition, AssetCostAddition, AssetCapitalisation |
-| 3 | AssetDepreciationBook, AssetDepreciationSchedule, AssetDepreciationRun, AssetDepreciationRunLine (evolve DepreciationEntry → run lines) |
+| 3 | AssetDepreciationBook, AssetDepreciationRun, AssetDepreciationRunLine (DepreciationEntry linked; schedule deferred) |
 | 4 | AssetTransfer, AssetTransferLine, AssetMaintenanceRequest, AssetMaintenanceWorkOrder, AssetMaintenanceCost, AssetInsurance, AssetInsuranceClaim, AssetWarranty |
 | 5 | CapitalProject, CapitalProjectCost, AssetComponent, AssetImpairment, AssetRevaluation, AssetDisposal, AssetAccountingEvent |
 | 6 | AssetVerificationCampaign, AssetVerificationResult |

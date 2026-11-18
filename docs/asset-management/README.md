@@ -6,7 +6,9 @@ Enterprise Fixed Asset Lifecycle Management for TradeStratix ERP.
 
 **Phase 0 — complete.**  
 **Phase 1 (Foundation) — complete.**  
-**Phase 2 (Acquisition & capitalisation) — in progress.**
+**Phase 2 (Acquisition & capitalisation) — complete.**  
+**Phase 3 (Depreciation engine) — complete.**  
+**Phase 4 (Operations) — next.**
 
 ## Existing foothold (do not discard)
 
@@ -43,9 +45,9 @@ Further topic docs (transfers, maintenance, disposal, verification, reports, API
 
 0. Discovery & plan ← done  
 1. Foundation (categories, locations, enriched register, history, permissions) ← done  
-2. Acquisition & capitalisation (+ procurement classification) ← **current**  
-3. Depreciation engine (books, preview, approve, post, reverse)  
-4. Operations (transfers, maintenance+inventory, insurance/warranty)  
+2. Acquisition & capitalisation (+ procurement classification) ← done  
+3. Depreciation engine (books, preview, approve, post, reverse) ← done  
+4. Operations (transfers, maintenance+inventory, insurance/warranty) ← **next**  
 5. Advanced accounting (CIP, components, impairment, revaluation, disposal)  
 6. Physical verification (QR/barcode campaigns)  
 7. Dashboard & reports (+ GL reconciliation)  

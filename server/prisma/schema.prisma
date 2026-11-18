@@ -137,6 +137,9 @@ model Business {
   assetAcquisitions                 AssetAcquisition[]
   assetCostAdditions                AssetCostAddition[]
   assetCapitalisations              AssetCapitalisation[]
+  assetDepreciationBooks            AssetDepreciationBook[]
+  assetDepreciationRuns             AssetDepreciationRun[]
+  assetDepreciationRunLines         AssetDepreciationRunLine[]
   budgets                           Budget[]
   employees                         Employee[]
   attendanceRecords                 AttendanceRecord[]
@@ -2249,7 +2252,7 @@ model FixedAsset {
   exchangeRate              Decimal   @default(1) @map("exchange_rate") @db.Decimal(18, 6)
   salvageValue              Decimal   @default(0) @map("salvage_value") @db.Decimal(18, 4)
   usefulLifeMonths          Int       @default(36) @map("useful_life_months")
-  /// straight_line | reducing_balance | units_of_production
+  /// straight_line | reducing_balance | units_of_production | none
   depreciationMethod        String    @default("straight_line") @map("depreciation_method")
   reducingBalanceRate       Decimal?  @map("reducing_balance_rate") @db.Decimal(8, 4)
   estimatedProductionUnits  Decimal?  @map("estimated_production_units") @db.Decimal(18, 4)
@@ -2302,6 +2305,7 @@ model FixedAsset {
   accumDepAccount     Account?                 @relation("FixedAssetAccumDepAccount", fields: [accumDepAccountId], references: [id], onDelete: SetNull)
   depExpenseAccount   Account?                 @relation("FixedAssetDepExpenseAccount", fields: [depExpenseAccountId], references: [id], onDelete: SetNull)
   depreciationEntries DepreciationEntry[]
+  depreciationRunLines AssetDepreciationRunLine[]
   assignmentHistory   AssetAssignmentHistory[]
   statusHistory       AssetStatusHistory[]
   documents           AssetDocument[]
@@ -2364,7 +2368,7 @@ model AssetAcquisition {
   depreciationMethod   String    @default("straight_line") @map("depreciation_method")
   currencyCode         String    @default("NGN") @map("currency_code")
   exchangeRate         Decimal   @default(1) @map("exchange_rate") @db.Decimal(18, 6)
-  /// bank | cash | credit | equity | opening
+  /// bank | cash | credit | equity | opening | donation | inventory_reclass
   fundingMethod        String    @default("bank") @map("funding_method")
   bankAccountId        String?   @map("bank_account_id")
   notes                String?   @db.Text
@@ -2501,22 +2505,113 @@ model AssetDocument {
   @@map("asset_documents")
 }
 
+model AssetDepreciationBook {
+  id          String   @id
+  businessId  String   @map("business_id")
+  code        String
+  name        String
+  isDefault   Boolean  @default(false) @map("is_default")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  business Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  runs     AssetDepreciationRun[]
+
+  @@unique([businessId, code])
+  @@index([businessId, isActive])
+  @@map("asset_depreciation_books")
+}
+
+model AssetDepreciationRun {
+  id                   String    @id
+  businessId           String    @map("business_id")
+  bookId               String    @map("book_id")
+  runNumber            String    @map("run_number")
+  /// YYYY-MM
+  periodLabel          String    @map("period_label")
+  /// draft | previewed | approved | posted | reversed
+  status               String    @default("draft")
+  totalAmount          Decimal   @default(0) @map("total_amount") @db.Decimal(18, 4)
+  lineCount            Int       @default(0) @map("line_count")
+  includedCount        Int       @default(0) @map("included_count")
+  /// JSON string array of posted journal entry ids
+  journalEntryIdsJson  String?   @map("journal_entry_ids_json") @db.Text
+  notes                String?   @db.Text
+  previewedAt          DateTime? @map("previewed_at")
+  approvedAt           DateTime? @map("approved_at")
+  approvedById         String?   @map("approved_by_id")
+  postedAt             DateTime? @map("posted_at")
+  postedById           String?   @map("posted_by_id")
+  reversedAt           DateTime? @map("reversed_at")
+  reversedById         String?   @map("reversed_by_id")
+  createdById          String?   @map("created_by_id")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  business Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  book     AssetDepreciationBook     @relation(fields: [bookId], references: [id], onDelete: Restrict)
+  lines    AssetDepreciationRunLine[]
+
+  @@unique([businessId, runNumber])
+  @@index([businessId, periodLabel])
+  @@index([businessId, status])
+  @@map("asset_depreciation_runs")
+}
+
+model AssetDepreciationRunLine {
+  id                 String   @id
+  businessId         String   @map("business_id")
+  runId              String   @map("run_id")
+  assetId            String   @map("asset_id")
+  branchId           String?  @map("branch_id")
+  method             String
+  costBasis          Decimal  @map("cost_basis") @db.Decimal(18, 4)
+  openingAccum       Decimal  @map("opening_accum") @db.Decimal(18, 4)
+  openingNbv         Decimal  @map("opening_nbv") @db.Decimal(18, 4)
+  residual           Decimal  @default(0) @db.Decimal(18, 4)
+  /// Units of production actual units for this period (nullable for other methods)
+  unitsActual        Decimal? @map("units_actual") @db.Decimal(18, 4)
+  amount             Decimal  @db.Decimal(18, 4)
+  /// included | skipped
+  lineStatus         String   @default("included") @map("line_status")
+  exceptionReason    String?  @map("exception_reason") @db.Text
+  depreciationEntryId String? @map("depreciation_entry_id")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  business Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  run      AssetDepreciationRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  asset    FixedAsset          @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([runId, assetId])
+  @@index([businessId, runId])
+  @@index([assetId])
+  @@map("asset_depreciation_run_lines")
+}
+
 model DepreciationEntry {
   id             String   @id
   businessId     String   @map("business_id")
   assetId        String   @map("asset_id")
+  /// Optional Phase 3 book (defaults to financial when null — historical rows)
+  bookCode       String   @default("financial") @map("book_code")
+  runId          String?  @map("run_id")
+  runLineId      String?  @map("run_line_id")
   periodLabel    String   @map("period_label")
   runDate        DateTime @default(now()) @map("run_date")
   amount         Decimal  @db.Decimal(18, 4)
   journalEntryId String?  @map("journal_entry_id")
+  /// posted | reversed
+  status         String   @default("posted")
   createdById    String?  @map("created_by_id")
   createdAt      DateTime @default(now()) @map("created_at")
 
   business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
   asset    FixedAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
-  @@unique([assetId, periodLabel])
+  @@unique([assetId, bookCode, periodLabel], map: "depreciation_entries_asset_book_period_key")
   @@index([businessId])
+  @@index([runId])
   @@map("depreciation_entries")
 }
 

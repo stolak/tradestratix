@@ -3,6 +3,7 @@ import * as assetService from '../services/asset.service.js';
 import * as categoryService from '../services/asset-category.service.js';
 import * as locationService from '../services/asset-location.service.js';
 import * as acquisitionService from '../services/asset-acquisition.service.js';
+import * as depreciationService from '../services/asset-depreciation.service.js';
 
 function branchListOpts(req: Request) {
   return {
@@ -62,10 +63,11 @@ export async function update(req: Request, res: Response, next: NextFunction) {
 export async function listDepreciationEntries(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(
-      await assetService.listDepreciationEntries(req.user!.businessId, {
+      await depreciationService.listDepreciationEntries(req.user!.businessId, {
         asset_id: typeof req.query.asset_id === 'string' ? req.query.asset_id : undefined,
         period_label:
-          typeof req.query.period_label === 'string' ? req.query.period_label : undefined
+          typeof req.query.period_label === 'string' ? req.query.period_label : undefined,
+        run_id: typeof req.query.run_id === 'string' ? req.query.run_id : undefined
       })
     );
   } catch (err) {
@@ -76,11 +78,68 @@ export async function listDepreciationEntries(req: Request, res: Response, next:
 export async function runDepreciation(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(
-      await assetService.runDepreciation(req.user!, {
+      await depreciationService.runDepreciationImmediate(req.user!, {
         period_label: req.body?.period_label || req.body?.periodLabel,
-        asset_ids: req.body?.asset_ids || req.body?.assetIds
+        asset_ids: req.body?.asset_ids || req.body?.assetIds,
+        units: req.body?.units || req.body?.units_by_asset
       })
     );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function listDepreciationRuns(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await depreciationService.listRuns(req.user!, {
+        period_label:
+          typeof req.query.period_label === 'string' ? req.query.period_label : undefined,
+        status: typeof req.query.status === 'string' ? req.query.status : undefined
+      })
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function getDepreciationRun(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await depreciationService.getRun(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function createDepreciationPreview(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res
+      .status(201)
+      .json(await depreciationService.createPreviewRun(req.user!, req.body || {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function approveDepreciationRun(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await depreciationService.approveRun(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function postDepreciationRun(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await depreciationService.postRun(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function reverseDepreciationRun(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await depreciationService.reverseRun(req.user!, req.params.id));
   } catch (err) {
     return next(err);
   }

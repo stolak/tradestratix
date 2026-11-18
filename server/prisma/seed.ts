@@ -203,6 +203,8 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'assets.capitalise',
       'assets.settings.manage',
       'assets.depreciation.view',
+      'assets.depreciation.calculate',
+      'assets.depreciation.approve',
       'assets.depreciation.post',
       'hr.*',
       'payroll.view',
@@ -444,6 +446,8 @@ const ROLE_ACCESS: Record<string, { menus: string[] | '*'; permissions: string[]
       'assets.approve',
       'assets.capitalise',
       'assets.depreciation.view',
+      'assets.depreciation.calculate',
+      'assets.depreciation.approve',
       'assets.depreciation.post',
       'assets.settings.manage',
       'reports.*',
@@ -661,10 +665,24 @@ const COA: {
     parentCode: '1200'
   },
   {
+    code: '1215',
+    name: 'Capital Work in Progress',
+    accountType: 'asset',
+    key: 'asset_cip',
+    parentCode: '1200'
+  },
+  {
     code: '1220',
     name: 'Accumulated Depreciation',
     accountType: 'asset',
     key: 'accumulated_depreciation',
+    parentCode: '1200'
+  },
+  {
+    code: '1230',
+    name: 'Accumulated Impairment',
+    accountType: 'asset',
+    key: 'accumulated_impairment',
     parentCode: '1200'
   },
   { code: '2000', name: 'Liabilities', accountType: 'liability', parentCode: null },
@@ -675,6 +693,13 @@ const COA: {
     name: 'Accounts Payable',
     accountType: 'liability',
     key: 'accounts_payable',
+    parentCode: '2090'
+  },
+  {
+    code: '2105',
+    name: 'Asset Acquisition Payable',
+    accountType: 'liability',
+    key: 'asset_acquisition_payable',
     parentCode: '2090'
   },
   {
@@ -748,6 +773,13 @@ const COA: {
     parentCode: '4000'
   },
   {
+    code: '4300',
+    name: 'Gain on Asset Disposal',
+    accountType: 'revenue',
+    key: 'asset_disposal_gain',
+    parentCode: '4000'
+  },
+  {
     code: '4200',
     name: 'Sales Returns',
     accountType: 'revenue',
@@ -785,6 +817,20 @@ const COA: {
     name: 'Depreciation Expense',
     accountType: 'expense',
     key: 'depreciation_expense',
+    parentCode: '6000'
+  },
+  {
+    code: '6310',
+    name: 'Impairment Loss',
+    accountType: 'expense',
+    key: 'impairment_expense',
+    parentCode: '6000'
+  },
+  {
+    code: '6320',
+    name: 'Loss on Asset Disposal',
+    accountType: 'expense',
+    key: 'asset_disposal_loss',
     parentCode: '6000'
   },
   { code: '6400', name: 'General Expenses', accountType: 'expense', key: 'expense', parentCode: '6000' },
@@ -970,6 +1016,16 @@ async function main() {
       module: 'accounting',
       action: 'periods',
       description: 'View accounting periods (lock/unlock still needs accounting.edit)'
+    },
+    {
+      module: 'assets',
+      action: 'depreciation.calculate',
+      description: 'Generate depreciation run previews'
+    },
+    {
+      module: 'assets',
+      action: 'depreciation.approve',
+      description: 'Approve depreciation runs before posting'
     }
   ];
   for (const p of EXTRA_PERMISSIONS) {

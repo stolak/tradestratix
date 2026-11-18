@@ -10,8 +10,9 @@ Source **restricts** funding (no PO created from Assets):
 | `opening_balance` | `opening` | Opening accum. dep. if any |
 | `donation` | `donation`, `equity` | — |
 | `other` | `bank`, `cash`, `credit`, `equity` | Same pickers as above |
+| `grn` | `inventory_reclass` | Category required. Capitalise posts Dr FA / Cr Inventory and issues stock qty from the GRN warehouse |
 
-Procurement path stays in Purchases: PO → GRN → classify line as asset (`from-grn`). Do not spawn PO from Register.
+Procurement path stays in Purchases: PO → GRN → **CapEx lines** → classify as asset (`POST /assets/acquisitions/from-grn`). Do not spawn PO from Register.
 
 Legacy list for reference:
 

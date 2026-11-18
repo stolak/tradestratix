@@ -3,6 +3,7 @@ import { httpError, requireString, roundMoney, serialize, shortId, toDec } from 
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
+import { createStockMovement } from './inventory.service.js';
 import * as branchAccess from './branch-access.service.js';
 
 const acqInclude = {
@@ -132,7 +133,9 @@ const FUNDING_BY_SOURCE: Record<string, string[]> = {
   direct: ['bank', 'cash', 'credit'],
   opening_balance: ['opening'],
   donation: ['donation', 'equity'],
-  other: ['bank', 'cash', 'credit', 'equity']
+  other: ['bank', 'cash', 'credit', 'equity'],
+  /** Posted GRN already Dr Inventory / Cr AP — capitalise reclasses inventory → FA */
+  grn: ['inventory_reclass']
 };
 
 function normalizeSourceFunding(body: Record<string, any>) {
@@ -717,6 +720,7 @@ export async function addCostAddition(user: AuthUser, acquisitionId: string, bod
  */
 export async function createFromGrnItem(user: AuthUser, body: Record<string, any>) {
   const grnItemId = requireString(body.grn_item_id || body.grnItemId, 'grn_item_id');
+  const categoryId = requireString(body.category_id || body.categoryId, 'category_id');
   const item = await prisma.goodsReceiptItem.findFirst({
     where: { id: grnItemId },
     include: {
@@ -731,6 +735,11 @@ export async function createFromGrnItem(user: AuthUser, body: Record<string, any
     throw httpError(400, 'Only posted GRN lines can be classified as assets');
   }
 
+  const cat = await prisma.assetCategory.findFirst({
+    where: { id: categoryId, businessId: user.businessId, isActive: true }
+  });
+  if (!cat) throw httpError(400, 'category_id is invalid or inactive');
+
   const existing = await prisma.assetCostAddition.findFirst({
     where: {
       businessId: user.businessId,
@@ -742,11 +751,19 @@ export async function createFromGrnItem(user: AuthUser, body: Record<string, any
   if (existing) throw httpError(400, 'This GRN line is already linked to an asset acquisition');
 
   const amount = roundMoney(Number(item.lineTotal));
+  const requestedQty = body.quantity != null || body.qty != null ? Number(body.quantity ?? body.qty) : 1;
+  const quantity = Math.max(1, Math.round(requestedQty) || 1);
+  const unitCost =
+    body.unit_cost != null || body.unitCost != null
+      ? Number(body.unit_cost ?? body.unitCost)
+      : roundMoney(amount / quantity);
   const acq = await createAcquisition(user, {
     asset_name: body.asset_name || body.assetName || item.product.name,
     asset_code: body.asset_code || body.assetCode || null,
-    category_id: body.category_id || body.categoryId || null,
+    category_id: cat.id,
     location_id: body.location_id || body.locationId || null,
+    quantity,
+    unit_cost: unitCost,
     purchase_cost: amount,
     source: 'grn',
     supplier_id: item.grn.supplierId,
@@ -754,9 +771,12 @@ export async function createFromGrnItem(user: AuthUser, body: Record<string, any
     purchase_order_id: item.grn.purchaseOrderId,
     branch_id: item.grn.branchId,
     acquisition_date: item.grn.receivedAt,
-    funding_method: body.funding_method || body.fundingMethod || 'credit',
-    useful_life_months: body.useful_life_months || body.usefulLifeMonths,
-    depreciation_method: body.depreciation_method || body.depreciationMethod,
+    funding_method: 'inventory_reclass',
+    useful_life_months:
+      body.useful_life_months || body.usefulLifeMonths || cat.defaultUsefulLifeMonths,
+    depreciation_method:
+      body.depreciation_method || body.depreciationMethod || cat.defaultDepreciationMethod,
+    serial_numbers: body.serial_numbers || body.serialNumbers,
     notes: body.notes || `From GRN ${item.grn.grnNumber}`
   });
 
@@ -877,6 +897,9 @@ export async function capitaliseAcquisition(user: AuthUser, id: string, body: Re
     } else if (method === 'opening') {
       creditAccountId = map.equity || null;
       creditDesc = 'Opening balance equity';
+    } else if (method === 'inventory_reclass') {
+      creditAccountId = map.inventory || null;
+      creditDesc = 'Reclass from inventory (GRN)';
     }
     if (!creditAccountId) {
       throw httpError(400, `Credit GL account is not configured for funding method "${method}"`);
@@ -1051,6 +1074,55 @@ export async function capitaliseAcquisition(user: AuthUser, id: string, body: Re
         where: { acquisitionId: id },
         data: { assetId: assets[0].id }
       });
+    }
+
+    // GRN path: inventory qty came in on receive; remove it now that GL reclassed to FA
+    if (method === 'inventory_reclass') {
+      const grnLink = existing.costAdditions.find((a) => a.sourceType === 'grn_item' && a.sourceLineId);
+      if (grnLink?.sourceLineId) {
+        const grnItem = await tx.goodsReceiptItem.findFirst({
+          where: { id: grnLink.sourceLineId },
+          include: { grn: true }
+        });
+        if (grnItem?.grn?.warehouseId) {
+          const issueQty = roundMoney(Number(grnItem.quantity));
+          if (issueQty > 0) {
+            let lotId: string | undefined;
+            if (grnItem.stockMovementId) {
+              const mv = await tx.stockMovement.findFirst({
+                where: { id: grnItem.stockMovementId, businessId: user.businessId }
+              });
+              if (mv?.lotId) lotId = mv.lotId;
+            }
+            const issueSerials =
+              serials.length > 0
+                ? serials
+                : parseSerialNumbers(grnItem.serialNumbersJson);
+            await createStockMovement(
+              user,
+              {
+                product_id: grnItem.productId,
+                variant_id: grnItem.variantId || undefined,
+                warehouse_id: grnItem.grn.warehouseId,
+                lot_id: lotId,
+                movement_type: 'asset_capitalise',
+                quantity_in: 0,
+                quantity_out: issueQty,
+                unit_cost: Number(grnItem.unitCost),
+                batch_number: grnItem.batchNumber || undefined,
+                expiry_date: grnItem.expiryDate || undefined,
+                serial_numbers: issueSerials.length ? issueSerials : undefined,
+                allow_expired: true,
+                reason: `Capitalise ${existing.acquisitionNumber} (inventory → FA)`,
+                reference_type: 'asset_capitalisation',
+                reference_id: id,
+                idempotency_key: `asset_cap_stock:${id}`
+              },
+              tx
+            );
+          }
+        }
+      }
     }
 
     const acq = await tx.assetAcquisition.update({

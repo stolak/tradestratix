@@ -101,4 +101,4 @@ There is **no generic ApprovalWorkflow engine**. Approvals are **module-local st
 
 ## 10. Next step
 
-Proceed to **Phase 1 — Foundation** after this assessment: Prisma expansions + categories + locations + enriched register + history + permission seed + register UI shell (no fake buttons).
+Phases 0–3 complete. Proceed to **Phase 4 — Operations** (transfers, maintenance, insurance/warranty).

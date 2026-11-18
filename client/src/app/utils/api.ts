@@ -462,6 +462,7 @@ export const api = {
     cancelOrder: (id: string) =>
       request<any>(`/purchases/orders/${id}/cancel`, { method: 'POST', body: '{}' }),
     receipts: () => request<any[]>('/purchases/receipts'),
+    getReceipt: (id: string) => request<any>(`/purchases/receipts/${id}`),
     receive: (body: Record<string, unknown>) =>
       request<any>('/purchases/receipts', { method: 'POST', body: JSON.stringify(body) }),
     bills: (supplierId?: string, opts?: { consolidated?: boolean }) => {
@@ -812,6 +813,26 @@ export const api = {
       request<any[]>(
         `/assets/depreciation/entries${assetId ? `?asset_id=${encodeURIComponent(assetId)}` : ''}`
       ),
+    depreciationRuns: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/depreciation/runs${q ? `?${q}` : ''}`);
+    },
+    getDepreciationRun: (id: string) => request<any>(`/assets/depreciation/runs/${id}`),
+    previewDepreciation: (body: Record<string, unknown> = {}) =>
+      request<any>('/assets/depreciation/runs/preview', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    approveDepreciationRun: (id: string) =>
+      request<any>(`/assets/depreciation/runs/${id}/approve`, { method: 'POST', body: '{}' }),
+    postDepreciationRun: (id: string) =>
+      request<any>(`/assets/depreciation/runs/${id}/post`, { method: 'POST', body: '{}' }),
+    reverseDepreciationRun: (id: string) =>
+      request<any>(`/assets/depreciation/runs/${id}/reverse`, { method: 'POST', body: '{}' }),
     runDepreciation: (body: Record<string, unknown> = {}) =>
       request<any>('/assets/depreciation/run', { method: 'POST', body: JSON.stringify(body) }),
     acquisitions: (params: Record<string, string | undefined> = {}) => {
@@ -824,6 +845,8 @@ export const api = {
     },
     createAcquisition: (body: Record<string, unknown>) =>
       request<any>('/assets/acquisitions', { method: 'POST', body: JSON.stringify(body) }),
+    createAcquisitionFromGrn: (body: Record<string, unknown>) =>
+      request<any>('/assets/acquisitions/from-grn', { method: 'POST', body: JSON.stringify(body) }),
     submitAcquisition: (id: string) =>
       request<any>(`/assets/acquisitions/${id}/submit`, { method: 'POST', body: '{}' }),
     approveAcquisition: (id: string) =>

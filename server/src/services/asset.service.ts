@@ -519,153 +519,21 @@ export async function updateAsset(user: AuthUser, id: string, body: Record<strin
   return serialize(withNbv(updated));
 }
 
+/** @deprecated Prefer asset-depreciation.service createPreviewRun → approve → post */
 export async function runDepreciation(
   user: AuthUser,
-  opts: { period_label?: string; asset_ids?: string[] } = {}
+  opts: { period_label?: string; asset_ids?: string[]; units?: Record<string, number> } = {}
 ) {
-  const periodLabel = opts.period_label || defaultPeriodLabel();
-  const map = await getDefaultAccountMap(user.businessId);
-  if (!map.depreciation_expense) throw httpError(400, 'depreciation_expense is not configured');
-  if (!map.accumulated_depreciation) {
-    throw httpError(400, 'accumulated_depreciation is not configured');
-  }
-
-  const assets = await prisma.fixedAsset.findMany({
-    where: {
-      businessId: user.businessId,
-      status: 'active',
-      ...(opts.asset_ids?.length ? { id: { in: opts.asset_ids } } : {})
-    }
-  });
-
-  const results: unknown[] = [];
-
-  for (const asset of assets) {
-    if (asset.availableForUseDate && asset.availableForUseDate > new Date()) continue;
-    if (asset.financialStatus === 'disposed' || asset.financialStatus === 'not_capitalised') continue;
-    // IAS 16 / US GAAP: land and other non-depreciable PPE (method none / zero life)
-    if (
-      String(asset.depreciationMethod || '').toLowerCase() === 'none' ||
-      !asset.usefulLifeMonths ||
-      asset.usefulLifeMonths <= 0
-    ) {
-      continue;
-    }
-
-    const cost =
-      Number(asset.purchaseCost) +
-      Number(asset.freightCost || 0) +
-      Number(asset.installationCost || 0) +
-      Number(asset.otherCapitalCost || 0);
-    const salvage = Number(asset.salvageValue);
-    const accumulated = Number(asset.accumulatedDepreciation);
-    const impairment = Number(asset.accumulatedImpairment || 0);
-    const bookValue = roundMoney(cost - accumulated - impairment);
-    if (bookValue <= salvage + 0.01) {
-      if (asset.status === 'active' || asset.financialStatus === 'depreciating') {
-        await prisma.fixedAsset.update({
-          where: { id: asset.id },
-          data: { status: 'fully_depreciated', financialStatus: 'fully_depreciated' }
-        });
-      }
-      continue;
-    }
-
-    const existing = await prisma.depreciationEntry.findUnique({
-      where: { assetId_periodLabel: { assetId: asset.id, periodLabel } }
-    });
-    if (existing) continue;
-
-    let amount = monthlyDepreciationAmount(cost, salvage, asset.usefulLifeMonths);
-    const maxDep = roundMoney(bookValue - salvage);
-    if (amount > maxDep) amount = maxDep;
-    if (amount <= 0) continue;
-
-    const entryId = shortId('dep');
-    const posted = await prisma.$transaction(async (tx) => {
-      const journal = await createJournal(
-        user,
-        {
-          memo: `Depreciation ${periodLabel} — ${asset.name}`,
-          source_type: 'depreciation',
-          source_id: entryId,
-          idempotency_key: `depreciation:${asset.id}:${periodLabel}`,
-          branch_id: asset.branchId || undefined,
-          post: true,
-          lines: [
-            {
-              account_id: map.depreciation_expense,
-              debit: amount,
-              description: `Depreciation ${asset.name}`
-            },
-            {
-              account_id: map.accumulated_depreciation,
-              credit: amount,
-              description: `Accum. dep. ${asset.name}`
-            }
-          ]
-        },
-        tx
-      );
-
-      const newAccum = roundMoney(accumulated + amount);
-      const newBook = roundMoney(cost - newAccum);
-      const fully = newBook <= salvage + 0.01;
-
-      await tx.fixedAsset.update({
-        where: { id: asset.id },
-        data: {
-          accumulatedDepreciation: toDec(newAccum),
-          status: fully ? 'fully_depreciated' : 'active',
-          financialStatus: fully ? 'fully_depreciated' : 'depreciating'
-        }
-      });
-
-      return tx.depreciationEntry.create({
-        data: {
-          id: entryId,
-          businessId: user.businessId,
-          assetId: asset.id,
-          periodLabel,
-          runDate: new Date(),
-          amount: toDec(amount),
-          journalEntryId: (journal as any).id,
-          createdById: user.id
-        },
-        include: { asset: true }
-      });
-    });
-
-    results.push(serialize(posted));
-  }
-
-  await writeAudit({
-    user,
-    action: 'post',
-    module: 'assets',
-    entityType: 'DepreciationEntry',
-    entityId: periodLabel,
-    summary: `Ran depreciation for ${periodLabel} (${results.length} entries)`
-  });
-
-  return { period_label: periodLabel, entries: results, count: results.length };
+  const dep = await import('./asset-depreciation.service.js');
+  return dep.runDepreciationImmediate(user, opts);
 }
 
 export async function listDepreciationEntries(
   businessId: string,
-  opts: { asset_id?: string; period_label?: string } = {}
+  opts: { asset_id?: string; period_label?: string; run_id?: string } = {}
 ) {
-  const rows = await prisma.depreciationEntry.findMany({
-    where: {
-      businessId,
-      ...(opts.asset_id ? { assetId: opts.asset_id } : {}),
-      ...(opts.period_label ? { periodLabel: opts.period_label } : {})
-    },
-    include: { asset: true },
-    orderBy: [{ periodLabel: 'desc' }, { createdAt: 'desc' }],
-    take: 200
-  });
-  return serialize(rows);
+  const dep = await import('./asset-depreciation.service.js');
+  return dep.listDepreciationEntries(businessId, opts);
 }
 
 export async function uploadAssetDocument(

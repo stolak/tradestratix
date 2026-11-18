@@ -10,6 +10,7 @@
     "build": "tsc",
     "seed": "tsx prisma/seed.ts",
     "seed:parent-filters": "tsx scripts/seed-parent-ledger-filters.ts",
+    "seed:asset-coa": "tsx scripts/seed-asset-coa.ts",
     "seed:expense-categories": "tsx scripts/seed-expense-categories.ts",
     "seed:vat": "tsx scripts/seed-vat-settings.ts",
     "prisma:generate": "prisma generate",
@@ -30,6 +31,7 @@
     "test:assets": "tsx scripts/test-assets-phase1.ts",
     "test:assets:phase2": "tsx scripts/test-assets-phase2.ts",
     "test:assets:bulk": "tsx scripts/test-assets-bulk.ts",
+    "test:assets:phase3": "tsx scripts/test-assets-phase3.ts",
     "reset:transactions": "tsx scripts/reset-transactions.ts",
     "db:reset": "npx prisma migrate reset"
   },

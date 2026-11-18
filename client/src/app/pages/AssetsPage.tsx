@@ -11,6 +11,11 @@ export const AssetsPage: React.FC = () => {
   const [categories, setCategories] = useState<any[]>([]);
   const [locations, setLocations] = useState<any[]>([]);
   const [deps, setDeps] = useState<any[]>([]);
+  const [depRuns, setDepRuns] = useState<any[]>([]);
+  const [selectedRun, setSelectedRun] = useState<any | null>(null);
+  const [depPeriod, setDepPeriod] = useState(
+    `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`
+  );
   const [budgets, setBudgets] = useState<any[]>([]);
   const [glAccounts, setGlAccounts] = useState<any[]>([]);
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
@@ -85,7 +90,7 @@ export const AssetsPage: React.FC = () => {
 
   const load = async () => {
     try {
-      const [a, acqs, cats, locs, d, b, gl, banks, sups] = await Promise.all([
+      const [a, acqs, cats, locs, d, runs, b, gl, banks, sups] = await Promise.all([
         api.assets.list({
           q: nameFilter || undefined,
           category_id: categoryFilter || undefined
@@ -94,6 +99,7 @@ export const AssetsPage: React.FC = () => {
         api.assets.categories().catch(() => []),
         api.assets.locations().catch(() => []),
         api.assets.depreciationEntries(),
+        api.assets.depreciationRuns().catch(() => []),
         api.budgets.list(),
         api.accounting.accounts(),
         api.banking.accounts().catch(() => []),
@@ -102,6 +108,7 @@ export const AssetsPage: React.FC = () => {
       setAssets(a);
       setAcquisitions(acqs);
       setCategories(cats);
+      setDepRuns(Array.isArray(runs) ? runs : []);
       setLocations(locs);
       setDeps(d);
       setBudgets(b);
@@ -118,7 +125,6 @@ export const AssetsPage: React.FC = () => {
         activeGl.find((x: any) => x.account_type === 'asset');
       const accum =
         activeGl.find((x: any) => /accum/i.test(x.name) && x.account_type === 'asset') || fa;
-      setBudgetForm((f) => ({ ...f, account_id: f.account_id || expense?.id || '' }));
       setCategoryForm((f) => ({
         ...f,
         cost_account_id: f.cost_account_id || fa?.id || '',
@@ -339,14 +345,56 @@ export const AssetsPage: React.FC = () => {
     }
   };
 
-  const runDep = async () => {
+  const previewDep = async () => {
     try {
-      const res = await api.assets.runDepreciation({});
-      await alertSuccess(`Depreciation posted (${res.count || 0} entries)`);
+      const run = await api.assets.previewDepreciation({ period_label: depPeriod });
+      setSelectedRun(run);
+      await alertSuccess(
+        `Preview ${run.run_number}`,
+        `${run.included_count || 0} included · ${Number(run.total_amount || 0).toLocaleString()}`
+      );
       await load();
       setTab('depreciate');
     } catch (err: any) {
-      await alertError('Depreciation failed', err.message);
+      await alertError('Preview failed', err.message);
+    }
+  };
+
+  const openRun = async (id: string) => {
+    try {
+      setSelectedRun(await api.assets.getDepreciationRun(id));
+    } catch (err: any) {
+      await alertError('Load run failed', err.message);
+    }
+  };
+
+  const approveDepRun = async (id: string) => {
+    try {
+      setSelectedRun(await api.assets.approveDepreciationRun(id));
+      await alertSuccess('Run approved');
+      await load();
+    } catch (err: any) {
+      await alertError('Approve failed', err.message);
+    }
+  };
+
+  const postDepRun = async (id: string) => {
+    try {
+      setSelectedRun(await api.assets.postDepreciationRun(id));
+      await alertSuccess('Depreciation posted');
+      await load();
+    } catch (err: any) {
+      await alertError('Post failed', err.message);
+    }
+  };
+
+  const reverseDepRun = async (id: string) => {
+    try {
+      setSelectedRun(await api.assets.reverseDepreciationRun(id));
+      await alertSuccess('Run reversed');
+      await load();
+    } catch (err: any) {
+      await alertError('Reverse failed', err.message);
     }
   };
 
@@ -397,7 +445,7 @@ export const AssetsPage: React.FC = () => {
           Asset Management
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Acquire via draft → approve → capitalise, then manage the live register, depreciation, and budgets.
+          Acquire via draft → approve → capitalise (or classify a posted GRN line from Purchases), then manage the register, depreciation, and budgets.
         </p>
       </header>
 
@@ -1130,36 +1178,153 @@ export const AssetsPage: React.FC = () => {
 
       {tab === 'depreciate' ? (
         <>
-          <div className="card-surface" style={{ padding: '1.25rem', display: 'flex', gap: 12, alignItems: 'center' }}>
-            <button type="button" className="btn btn-primary" onClick={() => void runDep()}>
-              Run this month&apos;s depreciation
+          <div
+            className="card-surface"
+            style={{ padding: '1.25rem', display: 'flex', gap: 12, alignItems: 'end', flexWrap: 'wrap' }}
+          >
+            <div className="field">
+              <label>Period (YYYY-MM)</label>
+              <input value={depPeriod} onChange={(e) => setDepPeriod(e.target.value)} required />
+            </div>
+            <button type="button" className="btn btn-primary" onClick={() => void previewDep()}>
+              Preview run
             </button>
             <span style={{ color: 'var(--ink-muted)', fontSize: 14 }}>
-              Posts Dr depreciation expense / Cr accumulated depreciation for each active asset.
+              Preview → approve → post. Methods: straight-line, reducing balance, units of production, none
+              (land). Posted runs can be reversed.
             </span>
           </div>
+
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+            <div style={{ fontWeight: 700, padding: '0.5rem 1rem' }}>Runs</div>
             <div className="table-wrap">
               <table className="table">
-              <thead>
-                <tr>
-                  <th>Period</th>
-                  <th>Asset</th>
-                  <th>Amount</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {deps.map((d) => (
-                  <tr key={d.id}>
-                    <td>{d.period_label}</td>
-                    <td>{d.asset?.name}</td>
-                    <td>{Number(d.amount).toLocaleString()}</td>
-                    <td>{d.run_date?.slice?.(0, 10) || d.created_at?.slice?.(0, 10)}</td>
+                <thead>
+                  <tr>
+                    <th>Run</th>
+                    <th>Period</th>
+                    <th>Status</th>
+                    <th>Included</th>
+                    <th>Total</th>
+                    <th />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {depRuns.map((r) => (
+                    <tr key={r.id}>
+                      <td>{r.run_number}</td>
+                      <td>{r.period_label}</td>
+                      <td>{r.status}</td>
+                      <td>{r.included_count}</td>
+                      <td>{Number(r.total_amount).toLocaleString()}</td>
+                      <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button type="button" className="btn btn-ghost" onClick={() => void openRun(r.id)}>
+                          Open
+                        </button>
+                        {r.status === 'previewed' ? (
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => void approveDepRun(r.id)}
+                          >
+                            Approve
+                          </button>
+                        ) : null}
+                        {r.status === 'approved' ? (
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => void postDepRun(r.id)}
+                          >
+                            Post
+                          </button>
+                        ) : null}
+                        {r.status === 'posted' ? (
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => void reverseDepRun(r.id)}
+                          >
+                            Reverse
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                  {!depRuns.length ? (
+                    <tr>
+                      <td colSpan={6} style={{ color: 'var(--ink-muted)' }}>
+                        No depreciation runs yet
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {selectedRun ? (
+            <div className="card-surface" style={{ padding: '1rem' }}>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>
+                {selectedRun.run_number} — {selectedRun.period_label} ({selectedRun.status})
+              </div>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Asset</th>
+                      <th>Method</th>
+                      <th>Amount</th>
+                      <th>Status</th>
+                      <th>Note</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(selectedRun.lines || []).map((l: any) => (
+                      <tr key={l.id}>
+                        <td>
+                          {l.asset?.code ? `${l.asset.code} — ` : ''}
+                          {l.asset?.name || l.asset_id}
+                        </td>
+                        <td>{l.method}</td>
+                        <td>{Number(l.amount).toLocaleString()}</td>
+                        <td>{l.line_status}</td>
+                        <td style={{ color: 'var(--ink-muted)', fontSize: 13 }}>
+                          {l.exception_reason || '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+            <div style={{ fontWeight: 700, padding: '0.5rem 1rem' }}>Posted entries</div>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Period</th>
+                    <th>Asset</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deps.map((d) => (
+                    <tr key={d.id}>
+                      <td>{d.period_label}</td>
+                      <td>{d.asset?.name}</td>
+                      <td>{Number(d.amount).toLocaleString()}</td>
+                      <td>{d.status || 'posted'}</td>
+                      <td>{d.run_date?.slice?.(0, 10) || d.created_at?.slice?.(0, 10)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
         </>

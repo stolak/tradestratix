@@ -203,10 +203,24 @@ export const apiPaths: Record<string, unknown> = {
       responses: { 201: { description: 'Created' } }
     }
   },
+  '/api/v1/assets/depreciation/runs/preview': {
+    post: {
+      tags: ['Assets'],
+      summary: 'Preview depreciation run',
+      responses: { 201: { description: 'Previewed run with lines' } }
+    }
+  },
+  '/api/v1/assets/depreciation/runs': {
+    get: {
+      tags: ['Assets'],
+      summary: 'List depreciation runs',
+      responses: { 200: { description: 'Runs' } }
+    }
+  },
   '/api/v1/assets/depreciation/run': {
     post: {
       tags: ['Assets'],
-      summary: 'Run monthly straight-line depreciation',
+      summary: 'Legacy one-shot: preview → approve → post',
       responses: { 200: { description: 'Depreciation entries posted' } }
     }
   },

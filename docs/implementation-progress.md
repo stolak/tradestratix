@@ -18,25 +18,30 @@ Updated: 2026-11-18
 - Client: Register / Categories / Locations / Depreciate / Budgets + assignment edit
 - Seed permissions; `npm run test:assets`
 
-**Phase 2 — Acquisition & capitalisation: IN PROGRESS**
+**Phase 2 — Acquisition & capitalisation: COMPLETE**
 
 - Prisma: `AssetAcquisition`, `AssetCostAddition`, `AssetCapitalisation`
-- Default account keys: `asset_cip`, `asset_acquisition_payable`, `accumulated_impairment`, `impairment_expense`, `asset_disposal_gain`, `asset_disposal_loss`
+- Default account keys + CoA leaves: `asset_cip` (1215), `asset_acquisition_payable` (2105), `accumulated_impairment` (1230), `impairment_expense` (6310), `asset_disposal_gain` (4300), `asset_disposal_loss` (6320); `npm run seed:asset-coa`
 - Workflow: draft → submit → approve → capitalise (or cancel); GL via `createJournal` on capitalise only
-- Funding: bank / cash / credit / equity / opening / donation; opening accum. dep. supported
-- Explicit GRN classification: `POST /assets/acquisitions/from-grn`
+- Funding: bank / cash / credit / equity / opening / donation; GRN → `inventory_reclass` (Dr FA / Cr Inventory + stock issue)
+- Explicit GRN classification: `POST /assets/acquisitions/from-grn` + Purchases → CapEx lines UI (category required)
 - Cost-addition uniqueness prevents double capitalisation
-- Client: Assets → **Acquire** tab; permissions `assets.acquire` / `assets.approve` / `assets.capitalise`
+- Bulk capitalisation + Register/Acquire merged; CapEx budgets by `assetCategoryId`
+- Permissions `assets.acquire` / `assets.approve` / `assets.capitalise`
+- Tests: `test:assets` + `test:assets:phase2` + `test:assets:bulk`
 
-Tests: `npm run test:assets` (14) + `npm run test:assets:phase2` (12) + `npm run test:assets:bulk` (12) passed.
+**Phase 3 — Depreciation engine: COMPLETE**
 
-Bulk capitalisation: quantity + unit cost + serial paste → N register lines with auto tags; serial unique per business. Register/Acquire UI merged into one Register tab.
+- Models: `AssetDepreciationBook`, `AssetDepreciationRun`, `AssetDepreciationRunLine`; `DepreciationEntry` + book/run/status
+- Methods: straight-line, reducing balance, units of production, none (skip)
+- Workflow: preview → approve → post → reverse; journals via `createJournal` / `reverseJournal`
+- UI: Assets → Depreciate (period preview, run list, line detail)
+- Permissions: `assets.depreciation.calculate` / `.approve` / `.post` / `.view`
+- Tests: `npm run test:assets:phase3`
 
-CapEx budgets: `BudgetLine.assetCategoryId`; Assets → Budgets picks category (resolves cost GL); vs-actual = capitalised cost in that category for the FY.
+**Next:** Phase 4 — Operations (transfers, maintenance, insurance/warranty)
 
-Still for Phase 2 polish: map new default accounts in CoA seed, Purchases UI pickers for GRN lines.
-
-**Outstanding (module):** Phases 3–8
+**Outstanding (module):** Phases 4–8
 
 ---
 

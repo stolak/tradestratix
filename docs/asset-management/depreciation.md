@@ -35,13 +35,15 @@ Cap so carrying ≥ residual.
 - Preview → approve → post (posted run immutable; fix via reverse + new run)  
 - Use `roundMoney`; residual floor  
 
-## Evolution from today
+## Implementation (Phase 3)
 
-Current `runDepreciation` posts immediately per asset with `periodLabel` `YYYY-MM`. Phase 3 introduces:
+1. `AssetDepreciationBook` — default `financial` book auto-created  
+2. `AssetDepreciationRun` — `previewed → approved → posted` (or `reversed`)  
+3. `AssetDepreciationRunLine` — amount + skip/exception reasons; UoP `units_actual`  
+4. Journals batched per branch; idempotency `depreciation_run:{runId}:{branch}`  
+5. `DepreciationEntry` links `runId` / `runLineId` / `bookCode`; status `posted|reversed`  
+6. Legacy `POST /assets/depreciation/run` still one-shots preview→approve→post  
 
-1. `AssetDepreciationRun` (draft/preview/approved/posted)  
-2. Lines with calculated amount + exceptions  
-3. Single or batched journals with run-level idempotency  
-4. Optional link from existing `DepreciationEntry` rows as historical lines  
+API: `POST /assets/depreciation/runs/preview`, `.../approve`, `.../post`, `.../reverse`.
 
 Budgets remain outside depreciation.

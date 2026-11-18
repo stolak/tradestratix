@@ -50,6 +50,10 @@ export const PurchasesPage: React.FC = () => {
   const [orders, setOrders] = useState<any[]>([]);
   const [receipts, setReceipts] = useState<any[]>([]);
   const [bills, setBills] = useState<any[]>([]);
+  const [assetCategories, setAssetCategories] = useState<any[]>([]);
+  const [expandedGrnId, setExpandedGrnId] = useState<string | null>(null);
+  const [classifyCategoryId, setClassifyCategoryId] = useState('');
+  const [classifyingItemId, setClassifyingItemId] = useState<string | null>(null);
 
   const [poForm, setPoForm] = useState(() => {
     const cached = readPoDraftCache();
@@ -202,13 +206,14 @@ export const PurchasesPage: React.FC = () => {
 
   const load = async () => {
     try {
-      const [s, w, p, o, r, b] = await Promise.all([
+      const [s, w, p, o, r, b, cats] = await Promise.all([
         api.suppliers.list(),
         api.warehouses.list(),
         api.products.list(),
         api.purchases.orders(),
         api.purchases.receipts(),
-        api.purchases.bills()
+        api.purchases.bills(),
+        api.assets.categories().catch(() => [])
       ]);
       setSuppliers(s);
       setWarehouses(w);
@@ -216,6 +221,10 @@ export const PurchasesPage: React.FC = () => {
       setOrders(o);
       setReceipts(r);
       setBills(b);
+      setAssetCategories(Array.isArray(cats) ? cats.filter((c: any) => c.is_active !== false) : []);
+      if (!classifyCategoryId && Array.isArray(cats) && cats[0]?.id) {
+        setClassifyCategoryId(cats[0].id);
+      }
       // Keep manual / cached supplier·warehouse·product — never auto-pick first rows.
       setPoForm((f) => {
         const supplier_id =
@@ -414,6 +423,29 @@ export const PurchasesPage: React.FC = () => {
     }
   };
 
+  const classifyGrnLine = async (grnItemId: string) => {
+    if (!classifyCategoryId) {
+      await alertError('Category required', 'Select an asset category before classifying.');
+      return;
+    }
+    setClassifyingItemId(grnItemId);
+    try {
+      const acq = await api.assets.createAcquisitionFromGrn({
+        grn_item_id: grnItemId,
+        category_id: classifyCategoryId
+      });
+      await alertSuccess(
+        'Asset draft created',
+        `${acq.acquisition_number || 'Acquisition'} — finish on Assets → Register`
+      );
+      await load();
+    } catch (err: any) {
+      await alertError('Classify failed', err.message);
+    } finally {
+      setClassifyingItemId(null);
+    }
+  };
+
   const tabs: { id: Tab; label: string }[] = [
     { id: 'orders', label: 'Purchase orders' },
     { id: 'receive', label: 'Receive (GRN)' },
@@ -428,7 +460,7 @@ export const PurchasesPage: React.FC = () => {
           Purchases
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          PO → approve → GRN (stock + AP) → pay supplier.
+          PO → approve → GRN (stock + AP) → pay supplier. CapEx lines: expand a posted GRN and classify as fixed asset.
         </p>
       </header>
 
@@ -804,18 +836,104 @@ export const PurchasesPage: React.FC = () => {
                   <th>Status</th>
                   <th>Subtotal</th>
                   <th>Bill</th>
+                  <th />
                 </tr>
               </thead>
               <tbody>
                 {receipts.map((r) => (
-                  <tr key={r.id}>
-                    <td>{r.grn_number}</td>
-                    <td>{r.purchase_order?.po_number || '—'}</td>
-                    <td>{r.supplier?.name}</td>
-                    <td>{r.status}</td>
-                    <td>{Number(r.subtotal).toLocaleString()}</td>
-                    <td>{r.bill?.bill_number || '—'}</td>
-                  </tr>
+                  <React.Fragment key={r.id}>
+                    <tr>
+                      <td>{r.grn_number}</td>
+                      <td>{r.purchase_order?.po_number || '—'}</td>
+                      <td>{r.supplier?.name}</td>
+                      <td>{r.status}</td>
+                      <td>{Number(r.subtotal).toLocaleString()}</td>
+                      <td>{r.bill?.bill_number || '—'}</td>
+                      <td>
+                        {r.status === 'posted' ? (
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() =>
+                              setExpandedGrnId((id) => (id === r.id ? null : r.id))
+                            }
+                          >
+                            {expandedGrnId === r.id ? 'Hide lines' : 'CapEx lines'}
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                    {expandedGrnId === r.id ? (
+                      <tr>
+                        <td colSpan={7} style={{ background: 'var(--surface-muted, #f7f7f5)' }}>
+                          <div style={{ display: 'grid', gap: 10, padding: '0.5rem 0' }}>
+                            <div className="field" style={{ maxWidth: 320 }}>
+                              <label>Asset category</label>
+                              <select
+                                value={classifyCategoryId}
+                                onChange={(e) => setClassifyCategoryId(e.target.value)}
+                                required
+                              >
+                                <option value="">Select category…</option>
+                                {assetCategories.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.code} — {c.name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="table-wrap">
+                              <table className="table">
+                                <thead>
+                                  <tr>
+                                    <th>Product</th>
+                                    <th>Qty</th>
+                                    <th>Amount</th>
+                                    <th />
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {(r.items || []).map((it: any) => (
+                                    <tr key={it.id}>
+                                      <td>
+                                        {it.product?.name || it.product_id}
+                                        {it.product?.sku ? ` (${it.product.sku})` : ''}
+                                      </td>
+                                      <td>{Number(it.quantity).toLocaleString()}</td>
+                                      <td>{Number(it.line_total).toLocaleString()}</td>
+                                      <td>
+                                        <button
+                                          type="button"
+                                          className="btn btn-ghost"
+                                          disabled={classifyingItemId === it.id}
+                                          onClick={() => void classifyGrnLine(it.id)}
+                                        >
+                                          {classifyingItemId === it.id
+                                            ? 'Creating…'
+                                            : 'Classify as asset'}
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                  {!(r.items || []).length ? (
+                                    <tr>
+                                      <td colSpan={4} style={{ color: 'var(--ink-muted)' }}>
+                                        No lines on this GRN
+                                      </td>
+                                    </tr>
+                                  ) : null}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div style={{ color: 'var(--ink-muted)', fontSize: '0.9rem' }}>
+                              Creates an Assets acquisition draft (inventory → FA on capitalise). Finish
+                              submit → approve → capitalise on Assets → Register.
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : null}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>

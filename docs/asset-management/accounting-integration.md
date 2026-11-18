@@ -23,16 +23,18 @@ Requirements enforced by that engine (do not bypass):
 | `accumulated_depreciation` | Contra (fallback) |
 | `depreciation_expense` | Expense (fallback) |
 
-### Add in Phase 2+
+### Phase 2 (seeded CoA + default keys)
 
-| Key | Type | Use |
-|-----|------|-----|
-| `asset_cip` | asset | Capital WIP |
-| `accumulated_impairment` | asset (contra) | Impairment |
-| `impairment_expense` | expense | Impairment loss |
-| `asset_disposal_gain` | income/revenue | Gain on disposal |
-| `asset_disposal_loss` | expense | Loss on disposal |
-| `asset_acquisition_payable` | liability | Unpaid capitalisation |
+| Key | CoA code | Type | Use |
+|-----|----------|------|-----|
+| `asset_cip` | 1215 | asset | Capital WIP |
+| `accumulated_impairment` | 1230 | asset (contra) | Impairment |
+| `impairment_expense` | 6310 | expense | Impairment loss |
+| `asset_disposal_gain` | 4300 | revenue | Gain on disposal |
+| `asset_disposal_loss` | 6320 | expense | Loss on disposal |
+| `asset_acquisition_payable` | 2105 | liability | Unpaid capitalisation |
+
+Seeded in `prisma/seed.ts`; existing DBs: `npm run seed:asset-coa`.
 
 Category-level overrides win over business defaults; asset-level overrides win over category.
 

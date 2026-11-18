@@ -51,6 +51,42 @@ router.get(
   requirePermission('assets.view', 'assets.depreciation.view'),
   assetController.listDepreciationEntries
 );
+router.get(
+  '/depreciation/runs',
+  requirePermission('assets.view', 'assets.depreciation.view'),
+  assetController.listDepreciationRuns
+);
+router.post(
+  '/depreciation/runs/preview',
+  requirePermission(
+    'assets.depreciation.calculate',
+    'assets.depreciation.post',
+    'assets.post',
+    'assets.create'
+  ),
+  assetController.createDepreciationPreview
+);
+router.get(
+  '/depreciation/runs/:id',
+  requirePermission('assets.view', 'assets.depreciation.view'),
+  assetController.getDepreciationRun
+);
+router.post(
+  '/depreciation/runs/:id/approve',
+  requirePermission('assets.depreciation.approve', 'assets.approve', 'assets.depreciation.post'),
+  assetController.approveDepreciationRun
+);
+router.post(
+  '/depreciation/runs/:id/post',
+  requirePermission('assets.depreciation.post', 'assets.post'),
+  assetController.postDepreciationRun
+);
+router.post(
+  '/depreciation/runs/:id/reverse',
+  requirePermission('assets.depreciation.post', 'assets.post', 'assets.approve'),
+  assetController.reverseDepreciationRun
+);
+/** Legacy one-shot: preview → approve → post */
 router.post(
   '/depreciation/run',
   requirePermission('assets.depreciation.post', 'assets.post', 'assets.create'),
