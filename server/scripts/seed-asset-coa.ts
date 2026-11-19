@@ -63,6 +63,13 @@ const ASSET_LEAVES: Leaf[] = [
     accountType: 'expense',
     key: 'asset_disposal_loss',
     parentCode: '6000'
+  },
+  {
+    code: '3205',
+    name: 'Asset Revaluation Surplus',
+    accountType: 'equity',
+    key: 'asset_revaluation_surplus',
+    parentCode: '3000'
   }
 ];
 

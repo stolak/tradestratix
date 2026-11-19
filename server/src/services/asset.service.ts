@@ -107,9 +107,14 @@ export async function listAssets(user: AuthUser, statusOrFilters?: string | Asse
   return serialize(rows.map((r) => withNbv(r)));
 }
 
-export async function getAsset(businessId: string, id: string) {
+export async function getAsset(userOrBusinessId: AuthUser | string, id: string) {
+  const user = typeof userOrBusinessId === 'string' ? null : userOrBusinessId;
+  const businessId = typeof userOrBusinessId === 'string' ? userOrBusinessId : userOrBusinessId.businessId;
+  const scope = user
+    ? await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true })
+    : {};
   const row = await prisma.fixedAsset.findFirst({
-    where: { id, businessId },
+    where: { id, businessId, ...scope },
     include: assetInclude
   });
   if (!row) throw httpError(404, 'Asset not found');
@@ -160,7 +165,24 @@ export async function createAsset(user: AuthUser, body: Record<string, any>) {
     : purchaseDate;
 
   const payMethod = body.pay_method || body.payMethod || null;
-  const shouldPost = Boolean(payMethod) || body.post === true;
+  const shouldPost =
+    Boolean(payMethod) ||
+    body.post === true ||
+    body.post_acquisition_journal === true ||
+    body.postAcquisitionJournal === true;
+  if (shouldPost) {
+    const { userHasAnyPermission } = await import('./permission.service.js');
+    const canCapitalise = await userHasAnyPermission(user.id, [
+      'assets.capitalise',
+      'assets.post'
+    ]);
+    if (!canCapitalise) {
+      throw httpError(
+        403,
+        'Posting GL on create requires assets.capitalise — use the acquisition workflow instead'
+      );
+    }
+  }
 
   const assetId = shortId('fa');
   let acquisitionJournalEntryId: string | null = null;
@@ -327,8 +349,9 @@ export async function createAsset(user: AuthUser, body: Record<string, any>) {
 
 /** Update non-balance fields only — never allow PATCH of accum. dep. / NBV. */
 export async function updateAsset(user: AuthUser, id: string, body: Record<string, any>) {
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const existing = await prisma.fixedAsset.findFirst({
-    where: { id, businessId: user.businessId }
+    where: { id, businessId: user.businessId, ...scope }
   });
   if (!existing) throw httpError(404, 'Asset not found');
   if (existing.financialStatus === 'disposed' || existing.status === 'disposed') {

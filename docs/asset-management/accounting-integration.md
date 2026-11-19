@@ -32,6 +32,7 @@ Requirements enforced by that engine (do not bypass):
 | `impairment_expense` | 6310 | expense | Impairment loss |
 | `asset_disposal_gain` | 4300 | revenue | Gain on disposal |
 | `asset_disposal_loss` | 6320 | expense | Loss on disposal |
+| `asset_revaluation_surplus` | 3205 | equity | Upward revaluation (Phase 5) |
 | `asset_acquisition_payable` | 2105 | liability | Unpaid capitalisation |
 
 Seeded in `prisma/seed.ts`; existing DBs: `npm run seed:asset-coa`.

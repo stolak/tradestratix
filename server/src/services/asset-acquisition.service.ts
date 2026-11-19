@@ -625,8 +625,8 @@ export async function approveAcquisition(user: AuthUser, id: string) {
     include: { costAdditions: true }
   });
   if (!existing) throw httpError(404, 'Acquisition not found');
-  if (existing.status !== 'pending_approval' && existing.status !== 'draft') {
-    throw httpError(400, 'Acquisition is not awaiting approval');
+  if (existing.status !== 'pending_approval') {
+    throw httpError(400, 'Only submitted acquisitions can be approved');
   }
   if (totalCost(existing) <= 0) throw httpError(400, 'Capitalised cost must be > 0');
 

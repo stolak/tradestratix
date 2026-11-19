@@ -140,6 +140,23 @@ model Business {
   assetDepreciationBooks            AssetDepreciationBook[]
   assetDepreciationRuns             AssetDepreciationRun[]
   assetDepreciationRunLines         AssetDepreciationRunLine[]
+  assetTransfers                    AssetTransfer[]
+  assetTransferLines                AssetTransferLine[]
+  assetMaintenanceRequests          AssetMaintenanceRequest[]
+  assetMaintenanceWorkOrders        AssetMaintenanceWorkOrder[]
+  assetMaintenanceCosts             AssetMaintenanceCost[]
+  assetInsurances                   AssetInsurance[]
+  assetInsuranceClaims              AssetInsuranceClaim[]
+  assetWarranties                   AssetWarranty[]
+  capitalProjects                   CapitalProject[]
+  capitalProjectCosts               CapitalProjectCost[]
+  assetComponents                   AssetComponent[]
+  assetImpairments                  AssetImpairment[]
+  assetRevaluations                 AssetRevaluation[]
+  assetDisposals                    AssetDisposal[]
+  assetAccountingEvents             AssetAccountingEvent[]
+  assetVerificationCampaigns        AssetVerificationCampaign[]
+  assetVerificationResults          AssetVerificationResult[]
   budgets                           Budget[]
   employees                         Employee[]
   attendanceRecords                 AttendanceRecord[]
@@ -212,6 +229,13 @@ model Branch {
   fixedAssets           FixedAsset[]
   assetLocations        AssetLocation[]
   assetAcquisitions     AssetAcquisition[]
+  assetTransfersFrom    AssetTransfer[] @relation("AssetTransferFromBranch")
+  assetTransfersTo      AssetTransfer[] @relation("AssetTransferToBranch")
+  capitalProjects       CapitalProject[]
+  assetImpairments      AssetImpairment[]
+  assetRevaluations     AssetRevaluation[]
+  assetDisposals        AssetDisposal[]
+  assetVerificationCampaigns AssetVerificationCampaign[]
   employees             Employee[]
   deliveryOrders        DeliveryOrder[]
   purchaseOrders        PurchaseOrder[]
@@ -2185,6 +2209,8 @@ model AssetCategory {
   cipAccount          Account?     @relation("AssetCategoryCipAccount", fields: [cipAccountId], references: [id], onDelete: SetNull)
   assets              FixedAsset[]
   acquisitions        AssetAcquisition[]
+  capitalProjects     CapitalProject[]
+  verificationCampaigns AssetVerificationCampaign[]
   budgetLines         BudgetLine[]
 
   @@unique([businessId, code])
@@ -2208,6 +2234,7 @@ model AssetLocation {
   branch       Branch?            @relation(fields: [branchId], references: [id], onDelete: SetNull)
   assets       FixedAsset[]
   acquisitions AssetAcquisition[]
+  verificationCampaigns AssetVerificationCampaign[]
 
   @@unique([businessId, code])
   @@index([businessId, branchId])
@@ -2312,6 +2339,21 @@ model FixedAsset {
   acquisitions        AssetAcquisition[]       @relation("AcquisitionCapitalisedAsset")
   costAdditions       AssetCostAddition[]
   capitalisations     AssetCapitalisation[]
+  transferLines       AssetTransferLine[]
+  maintenanceRequests AssetMaintenanceRequest[]
+  maintenanceWorkOrders AssetMaintenanceWorkOrder[]
+  maintenanceCosts    AssetMaintenanceCost[]
+  insurances          AssetInsurance[]
+  insuranceClaims     AssetInsuranceClaim[]
+  warranties          AssetWarranty[]
+  capitalProjects     CapitalProject[]       @relation("CapitalProjectAsset")
+  componentsAsParent  AssetComponent[]       @relation("ComponentParent")
+  componentsAsChild   AssetComponent[]       @relation("ComponentChild")
+  impairments         AssetImpairment[]
+  revaluations        AssetRevaluation[]
+  disposals           AssetDisposal[]
+  accountingEvents    AssetAccountingEvent[]
+  verificationResults AssetVerificationResult[]
 
   @@unique([businessId, code])
   @@unique([businessId, serialNumber])
@@ -2322,6 +2364,7 @@ model FixedAsset {
   @@index([businessId, model])
   @@index([branchId])
   @@index([custodianEmployeeId])
+  @@index([barcode])
   @@map("fixed_assets")
 }
 
@@ -2438,6 +2481,503 @@ model AssetCapitalisation {
   @@index([businessId, acquisitionId])
   @@index([businessId, assetId])
   @@map("asset_capitalisations")
+}
+
+// --- Phase 4: Operations (transfer / maintenance / insurance / warranty) ----
+
+model AssetTransfer {
+  id              String    @id
+  businessId      String    @map("business_id")
+  transferNumber  String    @map("transfer_number")
+  /// draft | pending_approval | approved | in_transit | received | cancelled
+  status          String    @default("draft")
+  fromBranchId    String?   @map("from_branch_id")
+  toBranchId      String?   @map("to_branch_id")
+  reason          String?   @db.Text
+  notes           String?   @db.Text
+  requestedAt     DateTime  @default(now()) @map("requested_at")
+  approvedAt      DateTime? @map("approved_at")
+  approvedById    String?   @map("approved_by_id")
+  dispatchedAt    DateTime? @map("dispatched_at")
+  dispatchedById  String?   @map("dispatched_by_id")
+  receivedAt      DateTime? @map("received_at")
+  receivedById    String?   @map("received_by_id")
+  createdById     String?   @map("created_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  business   Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  fromBranch Branch?             @relation("AssetTransferFromBranch", fields: [fromBranchId], references: [id], onDelete: SetNull)
+  toBranch   Branch?             @relation("AssetTransferToBranch", fields: [toBranchId], references: [id], onDelete: SetNull)
+  lines      AssetTransferLine[]
+
+  @@unique([businessId, transferNumber])
+  @@index([businessId, status])
+  @@map("asset_transfers")
+}
+
+model AssetTransferLine {
+  id                 String  @id
+  businessId         String  @map("business_id")
+  transferId         String  @map("transfer_id")
+  assetId            String  @map("asset_id")
+  fromLocationId     String? @map("from_location_id")
+  toLocationId       String? @map("to_location_id")
+  fromDepartment     String? @map("from_department")
+  toDepartment       String? @map("to_department")
+  fromCustodianId    String? @map("from_custodian_id")
+  toCustodianId      String? @map("to_custodian_id")
+  notes              String? @db.Text
+
+  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  transfer AssetTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  asset    FixedAsset    @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([transferId, assetId])
+  @@index([businessId, transferId])
+  @@index([assetId])
+  @@map("asset_transfer_lines")
+}
+
+model AssetMaintenanceRequest {
+  id              String    @id
+  businessId      String    @map("business_id")
+  requestNumber   String    @map("request_number")
+  assetId         String    @map("asset_id")
+  /// draft | submitted | approved | rejected | cancelled | converted
+  status          String    @default("draft")
+  /// corrective | preventive | inspection | other
+  requestType     String    @default("corrective") @map("request_type")
+  /// low | medium | high | critical
+  priority        String    @default("medium")
+  title           String
+  description     String?   @db.Text
+  requestedById   String?   @map("requested_by_id")
+  approvedAt      DateTime? @map("approved_at")
+  approvedById    String?   @map("approved_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  business   Business                   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  asset      FixedAsset                 @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  workOrders AssetMaintenanceWorkOrder[]
+
+  @@unique([businessId, requestNumber])
+  @@index([businessId, status])
+  @@index([assetId])
+  @@map("asset_maintenance_requests")
+}
+
+model AssetMaintenanceWorkOrder {
+  id              String    @id
+  businessId      String    @map("business_id")
+  workOrderNumber String    @map("work_order_number")
+  requestId       String?   @map("request_id")
+  assetId         String    @map("asset_id")
+  /// open | in_progress | completed | cancelled
+  status          String    @default("open")
+  title           String
+  description     String?   @db.Text
+  assignedToName  String?   @map("assigned_to_name")
+  startedAt       DateTime? @map("started_at")
+  completedAt     DateTime? @map("completed_at")
+  completedById   String?   @map("completed_by_id")
+  createdById     String?   @map("created_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  business Business               @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  request  AssetMaintenanceRequest? @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  asset    FixedAsset             @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  costs    AssetMaintenanceCost[]
+
+  @@unique([businessId, workOrderNumber])
+  @@index([businessId, status])
+  @@index([assetId])
+  @@map("asset_maintenance_work_orders")
+}
+
+model AssetMaintenanceCost {
+  id           String   @id
+  businessId   String   @map("business_id")
+  workOrderId  String   @map("work_order_id")
+  assetId      String   @map("asset_id")
+  /// labour | parts | external | other
+  costType     String   @default("other") @map("cost_type")
+  description  String
+  amount       Decimal  @db.Decimal(18, 4)
+  /// Optional stock issue for parts
+  productId    String?  @map("product_id")
+  warehouseId  String?  @map("warehouse_id")
+  quantity     Decimal? @db.Decimal(18, 4)
+  stockMovementId String? @map("stock_movement_id")
+  createdById  String?  @map("created_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  business  Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  workOrder AssetMaintenanceWorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  asset     FixedAsset               @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@index([businessId, workOrderId])
+  @@index([assetId])
+  @@map("asset_maintenance_costs")
+}
+
+model AssetInsurance {
+  id              String    @id
+  businessId      String    @map("business_id")
+  assetId         String    @map("asset_id")
+  insurerName     String    @map("insurer_name")
+  policyNumber    String    @map("policy_number")
+  coverageType    String?   @map("coverage_type")
+  sumInsured      Decimal?  @map("sum_insured") @db.Decimal(18, 4)
+  premiumAmount   Decimal?  @map("premium_amount") @db.Decimal(18, 4)
+  startDate       DateTime  @map("start_date")
+  endDate         DateTime  @map("end_date")
+  /// active | expired | cancelled
+  status          String    @default("active")
+  notes           String?   @db.Text
+  createdById     String?   @map("created_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  business Business              @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  asset    FixedAsset            @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  claims   AssetInsuranceClaim[]
+
+  @@index([businessId, assetId])
+  @@index([businessId, status])
+  @@map("asset_insurances")
+}
+
+model AssetInsuranceClaim {
+  id              String    @id
+  businessId      String    @map("business_id")
+  insuranceId     String    @map("insurance_id")
+  assetId         String    @map("asset_id")
+  claimNumber     String    @map("claim_number")
+  /// open | submitted | settled | denied | withdrawn
+  status          String    @default("open")
+  claimDate       DateTime  @map("claim_date")
+  description     String?   @db.Text
+  claimAmount     Decimal   @default(0) @map("claim_amount") @db.Decimal(18, 4)
+  settledAmount   Decimal?  @map("settled_amount") @db.Decimal(18, 4)
+  settledAt       DateTime? @map("settled_at")
+  createdById     String?   @map("created_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  business  Business       @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  insurance AssetInsurance @relation(fields: [insuranceId], references: [id], onDelete: Cascade)
+  asset     FixedAsset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([businessId, claimNumber])
+  @@index([businessId, insuranceId])
+  @@index([assetId])
+  @@map("asset_insurance_claims")
+}
+
+model AssetWarranty {
+  id              String    @id
+  businessId      String    @map("business_id")
+  assetId         String    @map("asset_id")
+  providerName    String    @map("provider_name")
+  warrantyNumber  String?   @map("warranty_number")
+  coverageNotes   String?   @map("coverage_notes") @db.Text
+  startDate       DateTime  @map("start_date")
+  endDate         DateTime  @map("end_date")
+  /// active | expired | void
+  status          String    @default("active")
+  createdById     String?   @map("created_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  asset    FixedAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@index([businessId, assetId])
+  @@index([businessId, status])
+  @@map("asset_warranties")
+}
+
+// --- Phase 5: Advanced accounting (CIP / components / impairment / reval / disposal) ---
+
+model CapitalProject {
+  id               String    @id
+  businessId       String    @map("business_id")
+  branchId         String?   @map("branch_id")
+  projectNumber    String    @map("project_number")
+  name             String
+  description      String?   @db.Text
+  categoryId       String?   @map("category_id")
+  /// draft | active | completed | capitalised | cancelled
+  status           String    @default("draft")
+  totalCost        Decimal   @default(0) @map("total_cost") @db.Decimal(18, 4)
+  startDate        DateTime? @map("start_date")
+  completedAt      DateTime? @map("completed_at")
+  capitalisedAt    DateTime? @map("capitalised_at")
+  capitalisedAssetId String? @map("capitalised_asset_id")
+  journalEntryId   String?   @map("journal_entry_id")
+  notes            String?   @db.Text
+  createdById      String?   @map("created_by_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  business         Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch           Branch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  category         AssetCategory?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  capitalisedAsset FixedAsset?         @relation("CapitalProjectAsset", fields: [capitalisedAssetId], references: [id], onDelete: SetNull)
+  costs            CapitalProjectCost[]
+
+  @@unique([businessId, projectNumber])
+  @@index([businessId, status])
+  @@index([branchId])
+  @@map("capital_projects")
+}
+
+model CapitalProjectCost {
+  id             String   @id
+  businessId     String   @map("business_id")
+  projectId      String   @map("project_id")
+  /// bank | cash | credit | inventory | manual
+  fundingMethod  String   @default("bank") @map("funding_method")
+  description    String?
+  amount         Decimal  @db.Decimal(18, 4)
+  costDate       DateTime @map("cost_date")
+  bankAccountId  String?  @map("bank_account_id")
+  journalEntryId String?  @map("journal_entry_id")
+  createdById    String?  @map("created_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  project  CapitalProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, projectId])
+  @@map("capital_project_costs")
+}
+
+/// Component / sub-asset link (optional child register asset)
+model AssetComponent {
+  id               String   @id
+  businessId       String   @map("business_id")
+  parentAssetId    String   @map("parent_asset_id")
+  childAssetId     String?  @map("child_asset_id")
+  name             String
+  description      String?  @db.Text
+  costAmount       Decimal  @default(0) @map("cost_amount") @db.Decimal(18, 4)
+  usefulLifeMonths Int?     @map("useful_life_months")
+  /// active | retired
+  status           String   @default("active")
+  createdById      String?  @map("created_by_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  business    Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  parentAsset FixedAsset @relation("ComponentParent", fields: [parentAssetId], references: [id], onDelete: Restrict)
+  childAsset  FixedAsset? @relation("ComponentChild", fields: [childAssetId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, parentAssetId])
+  @@index([businessId, childAssetId])
+  @@map("asset_components")
+}
+
+model AssetImpairment {
+  id               String    @id
+  businessId       String    @map("business_id")
+  branchId         String?   @map("branch_id")
+  impairmentNumber String    @map("impairment_number")
+  assetId          String    @map("asset_id")
+  /// draft | posted | reversed
+  status           String    @default("draft")
+  impairmentDate   DateTime  @map("impairment_date")
+  amount           Decimal   @db.Decimal(18, 4)
+  carryingBefore   Decimal   @map("carrying_before") @db.Decimal(18, 4)
+  carryingAfter    Decimal   @map("carrying_after") @db.Decimal(18, 4)
+  reason           String?   @db.Text
+  journalEntryId   String?   @map("journal_entry_id")
+  postedAt         DateTime? @map("posted_at")
+  postedById       String?   @map("posted_by_id")
+  createdById      String?   @map("created_by_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch   Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  asset    FixedAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([businessId, impairmentNumber])
+  @@index([businessId, assetId])
+  @@index([businessId, status])
+  @@map("asset_impairments")
+}
+
+model AssetRevaluation {
+  id                String    @id
+  businessId        String    @map("business_id")
+  branchId          String?   @map("branch_id")
+  revaluationNumber String    @map("revaluation_number")
+  assetId           String    @map("asset_id")
+  /// draft | posted | reversed
+  status            String    @default("draft")
+  revaluationDate   DateTime  @map("revaluation_date")
+  /// Absolute fair / revalued carrying amount after posting
+  newCarryingAmount Decimal   @map("new_carrying_amount") @db.Decimal(18, 4)
+  carryingBefore    Decimal   @map("carrying_before") @db.Decimal(18, 4)
+  adjustmentAmount  Decimal   @map("adjustment_amount") @db.Decimal(18, 4)
+  reason            String?   @db.Text
+  journalEntryId    String?   @map("journal_entry_id")
+  postedAt          DateTime? @map("posted_at")
+  postedById        String?   @map("posted_by_id")
+  createdById       String?   @map("created_by_id")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch   Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  asset    FixedAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([businessId, revaluationNumber])
+  @@index([businessId, assetId])
+  @@index([businessId, status])
+  @@map("asset_revaluations")
+}
+
+model AssetDisposal {
+  id              String    @id
+  businessId      String    @map("business_id")
+  branchId        String?   @map("branch_id")
+  disposalNumber  String    @map("disposal_number")
+  assetId         String    @map("asset_id")
+  /// draft | pending_approval | approved | posted | cancelled
+  status          String    @default("draft")
+  /// sale | scrap | donation | write_off | other
+  disposalType    String    @default("sale") @map("disposal_type")
+  disposalDate    DateTime  @map("disposal_date")
+  proceeds        Decimal   @default(0) @db.Decimal(18, 4)
+  /// bank | cash | none
+  proceedsMethod  String    @default("bank") @map("proceeds_method")
+  bankAccountId   String?   @map("bank_account_id")
+  costAmount      Decimal   @default(0) @map("cost_amount") @db.Decimal(18, 4)
+  accumDepAmount  Decimal   @default(0) @map("accum_dep_amount") @db.Decimal(18, 4)
+  accumImpAmount  Decimal   @default(0) @map("accum_imp_amount") @db.Decimal(18, 4)
+  nbvAmount       Decimal   @default(0) @map("nbv_amount") @db.Decimal(18, 4)
+  gainLossAmount  Decimal   @default(0) @map("gain_loss_amount") @db.Decimal(18, 4)
+  reason          String?   @db.Text
+  journalEntryId  String?   @map("journal_entry_id")
+  approvedAt      DateTime? @map("approved_at")
+  approvedById    String?   @map("approved_by_id")
+  postedAt        DateTime? @map("posted_at")
+  postedById      String?   @map("posted_by_id")
+  createdById     String?   @map("created_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch   Branch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  asset    FixedAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@unique([businessId, disposalNumber])
+  @@index([businessId, assetId])
+  @@index([businessId, status])
+  @@map("asset_disposals")
+}
+
+/// Immutable ledger of posted asset accounting events (audit / reconciliation)
+model AssetAccountingEvent {
+  id             String   @id
+  businessId     String   @map("business_id")
+  assetId        String?  @map("asset_id")
+  /// cip_spend | cip_capitalise | impairment | revaluation | disposal | component
+  eventType      String   @map("event_type")
+  sourceType     String   @map("source_type")
+  sourceId       String   @map("source_id")
+  amount         Decimal  @default(0) @db.Decimal(18, 4)
+  journalEntryId String?  @map("journal_entry_id")
+  summary        String?  @db.Text
+  createdById    String?  @map("created_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  business Business   @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  asset    FixedAsset? @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@index([businessId, eventType])
+  @@index([businessId, assetId])
+  @@index([businessId, sourceType, sourceId])
+  @@map("asset_accounting_events")
+}
+
+// --- Phase 6: Physical verification (QR / barcode campaigns) ----------------
+
+model AssetVerificationCampaign {
+  id              String    @id
+  businessId      String    @map("business_id")
+  branchId        String?   @map("branch_id")
+  locationId      String?   @map("location_id")
+  categoryId      String?   @map("category_id")
+  campaignNumber  String    @map("campaign_number")
+  name            String
+  description     String?   @db.Text
+  /// draft | open | closed | cancelled
+  status          String    @default("draft")
+  expectedCount   Int       @default(0) @map("expected_count")
+  scannedCount    Int       @default(0) @map("scanned_count")
+  matchedCount    Int       @default(0) @map("matched_count")
+  mismatchCount   Int       @default(0) @map("mismatch_count")
+  missingCount    Int       @default(0) @map("missing_count")
+  unexpectedCount Int       @default(0) @map("unexpected_count")
+  openedAt        DateTime? @map("opened_at")
+  closedAt        DateTime? @map("closed_at")
+  createdById     String?   @map("created_by_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  business  Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch    Branch?                   @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  location  AssetLocation?            @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  category  AssetCategory?            @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  results   AssetVerificationResult[]
+
+  @@unique([businessId, campaignNumber])
+  @@index([businessId, status])
+  @@index([branchId])
+  @@map("asset_verification_campaigns")
+}
+
+model AssetVerificationResult {
+  id                   String    @id
+  businessId           String    @map("business_id")
+  campaignId           String    @map("campaign_id")
+  assetId              String?   @map("asset_id")
+  /// expected | matched | mismatch | missing | unexpected | resolved
+  status               String    @default("expected")
+  scannedCode          String?   @map("scanned_code")
+  expectedBranchId     String?   @map("expected_branch_id")
+  foundBranchId        String?   @map("found_branch_id")
+  expectedLocationId   String?   @map("expected_location_id")
+  foundLocationId      String?   @map("found_location_id")
+  expectedCustodianId  String?   @map("expected_custodian_id")
+  foundCustodianId     String?   @map("found_custodian_id")
+  expectedCondition    String?   @map("expected_condition")
+  foundCondition       String?   @map("found_condition")
+  notes                String?   @db.Text
+  scannedAt            DateTime? @map("scanned_at")
+  scannedById          String?   @map("scanned_by_id")
+  /// accept_found | correct_register | ignore | mark_missing
+  resolutionAction     String?   @map("resolution_action")
+  resolvedAt           DateTime? @map("resolved_at")
+  resolvedById         String?   @map("resolved_by_id")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  business Business                  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  campaign AssetVerificationCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  asset    FixedAsset?               @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@unique([campaignId, assetId])
+  @@index([businessId, campaignId])
+  @@index([businessId, status])
+  @@index([assetId])
+  @@map("asset_verification_results")
 }
 
 model AssetAssignmentHistory {

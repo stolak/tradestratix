@@ -2,10 +2,27 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
 
-type Tab = 'register' | 'categories' | 'locations' | 'depreciate' | 'budgets';
+type Tab =
+  | 'dashboard'
+  | 'register'
+  | 'categories'
+  | 'locations'
+  | 'depreciate'
+  | 'operations'
+  | 'accounting'
+  | 'verify'
+  | 'budgets';
+type DashSub = 'overview' | 'register' | 'reconcile' | 'depreciation';
+type OpsSub = 'transfers' | 'maintenance' | 'cover';
+type AcctSub = 'cip' | 'impairment' | 'revaluation' | 'disposal' | 'components';
 
 export const AssetsPage: React.FC = () => {
-  const [tab, setTab] = useState<Tab>('register');
+  const [tab, setTab] = useState<Tab>('dashboard');
+  const [dashSub, setDashSub] = useState<DashSub>('overview');
+  const [dashboard, setDashboard] = useState<any | null>(null);
+  const [registerReport, setRegisterReport] = useState<any | null>(null);
+  const [glRecon, setGlRecon] = useState<any | null>(null);
+  const [depSummary, setDepSummary] = useState<any | null>(null);
   const [assets, setAssets] = useState<any[]>([]);
   const [acquisitions, setAcquisitions] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
@@ -21,6 +38,54 @@ export const AssetsPage: React.FC = () => {
   const [bankAccounts, setBankAccounts] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [vsActual, setVsActual] = useState<any | null>(null);
+  const [opsSub, setOpsSub] = useState<OpsSub>('transfers');
+  const [transfers, setTransfers] = useState<any[]>([]);
+  const [maintRequests, setMaintRequests] = useState<any[]>([]);
+  const [workOrders, setWorkOrders] = useState<any[]>([]);
+  const [insurances, setInsurances] = useState<any[]>([]);
+  const [warranties, setWarranties] = useState<any[]>([]);
+  const [branches, setBranches] = useState<any[]>([]);
+  const [transferForm, setTransferForm] = useState({
+    asset_id: '',
+    to_branch_id: '',
+    to_location_id: '',
+    reason: ''
+  });
+  const [maintForm, setMaintForm] = useState({
+    asset_id: '',
+    title: '',
+    priority: 'medium',
+    description: ''
+  });
+  const [coverForm, setCoverForm] = useState({
+    kind: 'insurance' as 'insurance' | 'warranty',
+    asset_id: '',
+    name: '',
+    number: '',
+    start_date: '',
+    end_date: ''
+  });
+  const [acctSub, setAcctSub] = useState<AcctSub>('cip');
+  const [capitalProjects, setCapitalProjects] = useState<any[]>([]);
+  const [impairments, setImpairments] = useState<any[]>([]);
+  const [revaluations, setRevaluations] = useState<any[]>([]);
+  const [disposals, setDisposals] = useState<any[]>([]);
+  const [components, setComponents] = useState<any[]>([]);
+  const [cipForm, setCipForm] = useState({ name: '', cost_amount: '', funding_method: 'equity' });
+  const [impForm, setImpForm] = useState({ asset_id: '', amount: '', reason: '' });
+  const [revalForm, setRevalForm] = useState({ asset_id: '', new_carrying_amount: '', reason: '' });
+  const [dispForm, setDispForm] = useState({
+    asset_id: '',
+    disposal_type: 'scrap',
+    proceeds: '0',
+    bank_account_id: '',
+    reason: ''
+  });
+  const [compForm, setCompForm] = useState({ parent_asset_id: '', name: '', cost_amount: '' });
+  const [campaigns, setCampaigns] = useState<any[]>([]);
+  const [selectedCampaign, setSelectedCampaign] = useState<any | null>(null);
+  const [verifyForm, setVerifyForm] = useState({ name: '', location_id: '', branch_id: '' });
+  const [scanForm, setScanForm] = useState({ scanned_code: '', found_location_id: '' });
 
   const FUNDING_BY_SOURCE: Record<string, { value: string; label: string }[]> = {
     direct: [
@@ -90,21 +155,64 @@ export const AssetsPage: React.FC = () => {
 
   const load = async () => {
     try {
-      const [a, acqs, cats, locs, d, runs, b, gl, banks, sups] = await Promise.all([
-        api.assets.list({
-          q: nameFilter || undefined,
-          category_id: categoryFilter || undefined
-        }),
-        api.assets.acquisitions().catch(() => []),
-        api.assets.categories().catch(() => []),
-        api.assets.locations().catch(() => []),
-        api.assets.depreciationEntries(),
-        api.assets.depreciationRuns().catch(() => []),
-        api.budgets.list(),
-        api.accounting.accounts(),
-        api.banking.accounts().catch(() => []),
-        api.suppliers.list().catch(() => [])
-      ]);
+      const [
+        a,
+        acqs,
+        cats,
+        locs,
+        d,
+        runs,
+        b,
+        gl,
+        banks,
+        sups,
+        xfers,
+        mreqs,
+        wos,
+        ins,
+        wars,
+        br,
+        cips,
+        imps,
+        revs,
+        disps,
+        comps,
+        camps,
+        dash,
+        regRpt,
+        recon,
+        depSum
+      ] = await Promise.all([
+          api.assets.list({
+            q: nameFilter || undefined,
+            category_id: categoryFilter || undefined
+          }),
+          api.assets.acquisitions().catch(() => []),
+          api.assets.categories().catch(() => []),
+          api.assets.locations().catch(() => []),
+          api.assets.depreciationEntries().catch(() => []),
+          api.assets.depreciationRuns().catch(() => []),
+          api.budgets.list(),
+          api.accounting.accounts(),
+          api.banking.accounts().catch(() => []),
+          api.suppliers.list().catch(() => []),
+          api.assets.transfers().catch(() => []),
+          api.assets.maintenanceRequests().catch(() => []),
+          api.assets.workOrders().catch(() => []),
+          api.assets.insurances().catch(() => []),
+          api.assets.warranties().catch(() => []),
+          api.branches.list().catch(() => []),
+          api.assets.capitalProjects().catch(() => []),
+          api.assets.impairments().catch(() => []),
+          api.assets.revaluations().catch(() => []),
+          api.assets.disposals().catch(() => []),
+          api.assets.components().catch(() => []),
+          api.assets.verificationCampaigns().catch(() => []),
+          api.assets.dashboard().catch(() => null),
+          api.assets.registerReport().catch(() => null),
+          api.assets.glReconciliation().catch(() => null),
+          api.assets.depreciationSummary().catch(() => null)
+        ]);
       setAssets(a);
       setAcquisitions(acqs);
       setCategories(cats);
@@ -112,6 +220,22 @@ export const AssetsPage: React.FC = () => {
       setLocations(locs);
       setDeps(d);
       setBudgets(b);
+      setTransfers(Array.isArray(xfers) ? xfers : []);
+      setMaintRequests(Array.isArray(mreqs) ? mreqs : []);
+      setWorkOrders(Array.isArray(wos) ? wos : []);
+      setInsurances(Array.isArray(ins) ? ins : []);
+      setWarranties(Array.isArray(wars) ? wars : []);
+      setBranches(Array.isArray(br) ? br : []);
+      setCapitalProjects(Array.isArray(cips) ? cips : []);
+      setImpairments(Array.isArray(imps) ? imps : []);
+      setRevaluations(Array.isArray(revs) ? revs : []);
+      setDisposals(Array.isArray(disps) ? disps : []);
+      setComponents(Array.isArray(comps) ? comps : []);
+      setCampaigns(Array.isArray(camps) ? camps : []);
+      setDashboard(dash || null);
+      setRegisterReport(regRpt || null);
+      setGlRecon(recon || null);
+      setDepSummary(depSum || null);
       const activeBanks = (banks || []).filter((x: any) => x.is_active !== false);
       setBankAccounts(activeBanks);
       setSuppliers(sups || []);
@@ -438,6 +562,250 @@ export const AssetsPage: React.FC = () => {
     }
   };
 
+  const createTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.assets.createTransfer({
+        to_branch_id: transferForm.to_branch_id || undefined,
+        reason: transferForm.reason || undefined,
+        lines: [
+          {
+            asset_id: transferForm.asset_id,
+            to_location_id: transferForm.to_location_id || undefined
+          }
+        ]
+      });
+      await alertSuccess('Transfer draft created');
+      setTransferForm({ asset_id: '', to_branch_id: '', to_location_id: '', reason: '' });
+      await load();
+    } catch (err: any) {
+      await alertError('Transfer failed', err.message);
+    }
+  };
+
+  const runTransferAction = async (
+    id: string,
+    action: 'submit' | 'approve' | 'dispatch' | 'receive' | 'cancel'
+  ) => {
+    try {
+      if (action === 'submit') await api.assets.submitTransfer(id);
+      else if (action === 'approve') await api.assets.approveTransfer(id);
+      else if (action === 'dispatch') await api.assets.dispatchTransfer(id);
+      else if (action === 'receive') await api.assets.receiveTransfer(id);
+      else await api.assets.cancelTransfer(id);
+      await alertSuccess(`Transfer ${action}`);
+      await load();
+    } catch (err: any) {
+      await alertError('Transfer action failed', err.message);
+    }
+  };
+
+  const createMaintRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const req = await api.assets.createMaintenanceRequest({
+        asset_id: maintForm.asset_id,
+        title: maintForm.title,
+        priority: maintForm.priority,
+        description: maintForm.description || undefined
+      });
+      await alertSuccess('Maintenance request created');
+      setMaintForm({ asset_id: '', title: '', priority: 'medium', description: '' });
+      await load();
+      if (req?.id) {
+        // keep listed
+      }
+    } catch (err: any) {
+      await alertError('Request failed', err.message);
+    }
+  };
+
+  const convertToWorkOrder = async (requestId: string) => {
+    try {
+      await api.assets.createWorkOrder({ request_id: requestId });
+      await alertSuccess('Work order created');
+      await load();
+    } catch (err: any) {
+      await alertError('Work order failed', err.message);
+    }
+  };
+
+  const createCover = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (coverForm.kind === 'insurance') {
+        await api.assets.createInsurance({
+          asset_id: coverForm.asset_id,
+          insurer_name: coverForm.name,
+          policy_number: coverForm.number,
+          start_date: coverForm.start_date,
+          end_date: coverForm.end_date
+        });
+      } else {
+        await api.assets.createWarranty({
+          asset_id: coverForm.asset_id,
+          provider_name: coverForm.name,
+          warranty_number: coverForm.number || undefined,
+          start_date: coverForm.start_date,
+          end_date: coverForm.end_date
+        });
+      }
+      await alertSuccess(coverForm.kind === 'insurance' ? 'Insurance added' : 'Warranty added');
+      setCoverForm({
+        kind: coverForm.kind,
+        asset_id: '',
+        name: '',
+        number: '',
+        start_date: '',
+        end_date: ''
+      });
+      await load();
+    } catch (err: any) {
+      await alertError('Cover failed', err.message);
+    }
+  };
+
+  const createCip = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const project = await api.assets.createCapitalProject({ name: cipForm.name });
+      if (Number(cipForm.cost_amount) > 0) {
+        await api.assets.addCapitalProjectCost(project.id, {
+          amount: Number(cipForm.cost_amount),
+          funding_method: cipForm.funding_method
+        });
+      }
+      await alertSuccess('CIP project created');
+      setCipForm({ name: '', cost_amount: '', funding_method: 'equity' });
+      await load();
+    } catch (err: any) {
+      await alertError('CIP failed', err.message);
+    }
+  };
+
+  const createImpairment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const row = await api.assets.createImpairment({
+        asset_id: impForm.asset_id,
+        amount: Number(impForm.amount),
+        reason: impForm.reason || undefined
+      });
+      await api.assets.postImpairment(row.id);
+      await alertSuccess('Impairment posted');
+      setImpForm({ asset_id: '', amount: '', reason: '' });
+      await load();
+    } catch (err: any) {
+      await alertError('Impairment failed', err.message);
+    }
+  };
+
+  const createRevaluation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const row = await api.assets.createRevaluation({
+        asset_id: revalForm.asset_id,
+        new_carrying_amount: Number(revalForm.new_carrying_amount),
+        reason: revalForm.reason || undefined
+      });
+      await api.assets.postRevaluation(row.id);
+      await alertSuccess('Revaluation posted');
+      setRevalForm({ asset_id: '', new_carrying_amount: '', reason: '' });
+      await load();
+    } catch (err: any) {
+      await alertError('Revaluation failed', err.message);
+    }
+  };
+
+  const createDisposal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const proceeds = Number(dispForm.proceeds || 0);
+      if (proceeds > 0 && !dispForm.bank_account_id) {
+        await alertError('Disposal', 'Select a bank/cash account when proceeds are greater than zero');
+        return;
+      }
+      const row = await api.assets.createDisposal({
+        asset_id: dispForm.asset_id,
+        disposal_type: dispForm.disposal_type,
+        proceeds,
+        proceeds_method: proceeds > 0 ? 'bank' : 'none',
+        bank_account_id: proceeds > 0 ? dispForm.bank_account_id : undefined,
+        reason: dispForm.reason || undefined
+      });
+      await api.assets.submitDisposal(row.id);
+      await api.assets.approveDisposal(row.id);
+      await api.assets.postDisposal(row.id);
+      await alertSuccess('Disposal posted');
+      setDispForm({
+        asset_id: '',
+        disposal_type: 'scrap',
+        proceeds: '0',
+        bank_account_id: '',
+        reason: ''
+      });
+      await load();
+    } catch (err: any) {
+      await alertError('Disposal failed', err.message);
+    }
+  };
+
+  const createComponent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.assets.createComponent({
+        parent_asset_id: compForm.parent_asset_id,
+        name: compForm.name,
+        cost_amount: Number(compForm.cost_amount || 0)
+      });
+      await alertSuccess('Component added');
+      setCompForm({ parent_asset_id: '', name: '', cost_amount: '' });
+      await load();
+    } catch (err: any) {
+      await alertError('Component failed', err.message);
+    }
+  };
+
+  const createCampaign = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const row = await api.assets.createVerificationCampaign({
+        name: verifyForm.name,
+        location_id: verifyForm.location_id || undefined,
+        branch_id: verifyForm.branch_id || undefined
+      });
+      await alertSuccess('Campaign created');
+      setVerifyForm({ name: '', location_id: '', branch_id: '' });
+      await load();
+      const full = await api.assets.getVerificationCampaign(row.id);
+      setSelectedCampaign(full);
+    } catch (err: any) {
+      await alertError('Campaign failed', err.message);
+    }
+  };
+
+  const refreshCampaign = async (id: string) => {
+    const full = await api.assets.getVerificationCampaign(id);
+    setSelectedCampaign(full);
+    await load();
+  };
+
+  const scanAsset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCampaign?.id) return;
+    try {
+      const result = await api.assets.scanVerificationCampaign(selectedCampaign.id, {
+        scanned_code: scanForm.scanned_code,
+        found_location_id: scanForm.found_location_id || undefined
+      });
+      await alertSuccess(`Scan: ${result.status}`);
+      setScanForm({ scanned_code: '', found_location_id: '' });
+      await refreshCampaign(selectedCampaign.id);
+    } catch (err: any) {
+      await alertError('Scan failed', err.message);
+    }
+  };
+
   return (
     <div className="page-stack">
       <header>
@@ -445,17 +813,21 @@ export const AssetsPage: React.FC = () => {
           Asset Management
         </h1>
         <p style={{ color: 'var(--ink-muted)', margin: '0.35rem 0 0' }}>
-          Acquire via draft → approve → capitalise (or classify a posted GRN line from Purchases), then manage the register, depreciation, and budgets.
+          Acquire → capitalise → depreciate; operations; CIP, impairment, revaluation and disposal.
         </p>
       </header>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {(
           [
+            ['dashboard', 'Dashboard'],
             ['register', 'Register'],
             ['categories', 'Categories'],
             ['locations', 'Locations'],
             ['depreciate', 'Depreciate'],
+            ['operations', 'Operations'],
+            ['accounting', 'Accounting'],
+            ['verify', 'Verify'],
             ['budgets', 'Budgets']
           ] as const
         ).map(([key, label]) => (
@@ -472,6 +844,250 @@ export const AssetsPage: React.FC = () => {
           Refresh
         </button>
       </div>
+
+      {tab === 'dashboard' ? (
+        <>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {(
+              [
+                ['overview', 'Overview'],
+                ['register', 'Register report'],
+                ['reconcile', 'GL reconciliation'],
+                ['depreciation', 'Depreciation summary']
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={dashSub === key ? 'btn btn-primary' : 'btn btn-ghost'}
+                onClick={() => setDashSub(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {dashSub === 'overview' ? (
+            <>
+              <div
+                className="card-surface"
+                style={{
+                  padding: '1.25rem',
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+                  gap: 12
+                }}
+              >
+                {[
+                  ['Active assets', dashboard?.summary?.active_count],
+                  ['Disposed', dashboard?.summary?.disposed_count],
+                  ['Total cost', Number(dashboard?.summary?.total_cost || 0).toLocaleString()],
+                  [
+                    'Accum. dep.',
+                    Number(dashboard?.summary?.accumulated_depreciation || 0).toLocaleString()
+                  ],
+                  [
+                    'Accum. impairment',
+                    Number(dashboard?.summary?.accumulated_impairment || 0).toLocaleString()
+                  ],
+                  ['NBV', Number(dashboard?.summary?.net_book_value || 0).toLocaleString()]
+                ].map(([label, value]) => (
+                  <div key={String(label)}>
+                    <div style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}>{label}</div>
+                    <div style={{ fontWeight: 700, fontSize: '1.25rem' }}>{value ?? '—'}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
+                  gap: 12
+                }}
+              >
+                <div className="card-surface" style={{ padding: '1rem' }}>
+                  <div style={{ fontWeight: 700, marginBottom: 8 }}>Open workflows</div>
+                  <ul style={{ margin: 0, paddingLeft: '1.1rem', color: 'var(--ink-muted)' }}>
+                    <li>Depreciation runs: {dashboard?.workflow?.open_depreciation_runs ?? 0}</li>
+                    <li>CIP projects: {dashboard?.workflow?.open_cip_projects ?? 0}</li>
+                    <li>Disposals: {dashboard?.workflow?.open_disposals ?? 0}</li>
+                    <li>
+                      Verification campaigns: {dashboard?.workflow?.open_verification_campaigns ?? 0}
+                    </li>
+                  </ul>
+                </div>
+                <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                  <div style={{ fontWeight: 700, padding: '0.5rem 1rem' }}>By category</div>
+                  <div className="table-wrap">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Category</th>
+                          <th>Count</th>
+                          <th>Cost</th>
+                          <th>NBV</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(dashboard?.by_category || []).length ? (
+                          (dashboard?.by_category || []).map((c: any) => (
+                            <tr key={c.category_id || c.code}>
+                              <td>
+                                {c.code} — {c.name}
+                              </td>
+                              <td>{c.count}</td>
+                              <td>{Number(c.cost).toLocaleString()}</td>
+                              <td>{Number(c.nbv).toLocaleString()}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={4} style={{ color: 'var(--ink-muted)' }}>
+                              No active assets yet.
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {dashSub === 'register' ? (
+            <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+              <div style={{ fontWeight: 700, padding: '0.5rem 1rem' }}>
+                Register report — total NBV{' '}
+                {Number(registerReport?.totals?.net_book_value || 0).toLocaleString()}
+              </div>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Code</th>
+                      <th>Name</th>
+                      <th>Category</th>
+                      <th>Status</th>
+                      <th>Cost</th>
+                      <th>Accum. dep.</th>
+                      <th>NBV</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(registerReport?.lines || []).length ? (
+                      (registerReport?.lines || []).map((l: any) => (
+                        <tr key={l.id}>
+                          <td>{l.code || '—'}</td>
+                          <td>{l.name}</td>
+                          <td>{l.category?.name || '—'}</td>
+                          <td>{l.financial_status}</td>
+                          <td>{Number(l.cost).toLocaleString()}</td>
+                          <td>{Number(l.accumulated_depreciation).toLocaleString()}</td>
+                          <td>{Number(l.net_book_value).toLocaleString()}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={7} style={{ color: 'var(--ink-muted)' }}>
+                          No register lines.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          {dashSub === 'reconcile' ? (
+            <div className="card-surface" style={{ padding: '1rem' }}>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>
+                GL reconciliation{' '}
+                {glRecon?.balanced ? (
+                  <span style={{ color: 'var(--success, #1a7f37)' }}>— balanced</span>
+                ) : (
+                  <span style={{ color: 'var(--danger, #b42318)' }}>
+                    — max diff {Number(glRecon?.max_abs_difference || 0).toLocaleString()}
+                  </span>
+                )}
+              </div>
+              <p style={{ margin: '0 0 12px', color: 'var(--ink-muted)', fontSize: '0.85rem' }}>
+                {glRecon?.note ||
+                  'Register totals vs default asset account balances on the trial balance.'}
+              </p>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Line</th>
+                      <th>Account</th>
+                      <th>Register</th>
+                      <th>GL</th>
+                      <th>Difference</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(glRecon?.lines || []).map((l: any) => (
+                      <tr key={l.key}>
+                        <td>{l.label}</td>
+                        <td>{l.account_code || '—'}</td>
+                        <td>{Number(l.register_amount).toLocaleString()}</td>
+                        <td>{Number(l.gl_amount).toLocaleString()}</td>
+                        <td>{Number(l.difference).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          {dashSub === 'depreciation' ? (
+            <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+              <div style={{ fontWeight: 700, padding: '0.5rem 1rem' }}>
+                Depreciation — {depSummary?.period_label || '—'} · posted{' '}
+                {Number(depSummary?.posted_total || 0).toLocaleString()}
+              </div>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Run</th>
+                      <th>Book</th>
+                      <th>Status</th>
+                      <th>Lines</th>
+                      <th>Included</th>
+                      <th>Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(depSummary?.runs || []).length ? (
+                      (depSummary?.runs || []).map((r: any) => (
+                        <tr key={r.id}>
+                          <td>{r.run_number || r.id?.slice(0, 8)}</td>
+                          <td>{r.book?.name || r.book?.code || '—'}</td>
+                          <td>{r.status}</td>
+                          <td>{r.line_count}</td>
+                          <td>{r.included_count}</td>
+                          <td>{Number(r.total_amount).toLocaleString()}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={6} style={{ color: 'var(--ink-muted)' }}>
+                          No depreciation runs for this period.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
 
       {tab === 'register' ? (
         <>
@@ -756,13 +1372,6 @@ export const AssetsPage: React.FC = () => {
                                     onClick={() => void runAcqAction(row.id, 'submit')}
                                   >
                                     Submit
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn btn-ghost"
-                                    onClick={() => void runAcqAction(row.id, 'approve')}
-                                  >
-                                    Approve
                                   </button>
                                   <button
                                     type="button"
@@ -1327,6 +1936,1242 @@ export const AssetsPage: React.FC = () => {
               </table>
             </div>
           </div>
+        </>
+      ) : null}
+
+      {tab === 'operations' ? (
+        <>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {(
+              [
+                ['transfers', 'Transfers'],
+                ['maintenance', 'Maintenance'],
+                ['cover', 'Insurance / warranty']
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={opsSub === key ? 'btn btn-primary' : 'btn btn-ghost'}
+                onClick={() => setOpsSub(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {opsSub === 'transfers' ? (
+            <>
+              <form
+                onSubmit={createTransfer}
+                className="card-surface"
+                style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
+              >
+                <div style={{ fontWeight: 700 }}>New transfer</div>
+                <div className="form-grid">
+                  <div className="field">
+                    <label>Asset</label>
+                    <select
+                      value={transferForm.asset_id}
+                      onChange={(e) => setTransferForm({ ...transferForm, asset_id: e.target.value })}
+                      required
+                    >
+                      <option value="">Select…</option>
+                      {assets
+                        .filter((a) => a.financial_status !== 'disposed')
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.code ? `${a.code} — ` : ''}
+                            {a.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>To branch</label>
+                    <select
+                      value={transferForm.to_branch_id}
+                      onChange={(e) =>
+                        setTransferForm({ ...transferForm, to_branch_id: e.target.value })
+                      }
+                    >
+                      <option value="">Same / unchanged</option>
+                      {branches.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.code} — {b.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>To location</label>
+                    <select
+                      value={transferForm.to_location_id}
+                      onChange={(e) =>
+                        setTransferForm({ ...transferForm, to_location_id: e.target.value })
+                      }
+                    >
+                      <option value="">Unchanged</option>
+                      {locations.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.code} — {l.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Reason</label>
+                    <input
+                      value={transferForm.reason}
+                      onChange={(e) => setTransferForm({ ...transferForm, reason: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-grid--actions">
+                    <button className="btn btn-primary" type="submit">
+                      Create draft
+                    </button>
+                  </div>
+                </div>
+              </form>
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Transfer</th>
+                        <th>Status</th>
+                        <th>From → To</th>
+                        <th>Assets</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transfers.map((t) => (
+                        <tr key={t.id}>
+                          <td>{t.transfer_number}</td>
+                          <td>{t.status}</td>
+                          <td>
+                            {t.from_branch?.code || '—'} → {t.to_branch?.code || '—'}
+                          </td>
+                          <td>{t.lines?.length ?? 0}</td>
+                          <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {t.status === 'draft' ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => void runTransferAction(t.id, 'submit')}
+                              >
+                                Submit
+                              </button>
+                            ) : null}
+                            {t.status === 'pending_approval' ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => void runTransferAction(t.id, 'approve')}
+                              >
+                                Approve
+                              </button>
+                            ) : null}
+                            {t.status === 'approved' ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => void runTransferAction(t.id, 'dispatch')}
+                              >
+                                Dispatch
+                              </button>
+                            ) : null}
+                            {t.status === 'in_transit' ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => void runTransferAction(t.id, 'receive')}
+                              >
+                                Receive
+                              </button>
+                            ) : null}
+                            {!['received', 'cancelled'].includes(t.status) ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => void runTransferAction(t.id, 'cancel')}
+                              >
+                                Cancel
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                      {!transfers.length ? (
+                        <tr>
+                          <td colSpan={5} style={{ color: 'var(--ink-muted)' }}>
+                            No transfers yet
+                          </td>
+                        </tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {opsSub === 'maintenance' ? (
+            <>
+              <form
+                onSubmit={createMaintRequest}
+                className="card-surface"
+                style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
+              >
+                <div style={{ fontWeight: 700 }}>New maintenance request</div>
+                <div className="form-grid">
+                  <div className="field">
+                    <label>Asset</label>
+                    <select
+                      value={maintForm.asset_id}
+                      onChange={(e) => setMaintForm({ ...maintForm, asset_id: e.target.value })}
+                      required
+                    >
+                      <option value="">Select…</option>
+                      {assets.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.code ? `${a.code} — ` : ''}
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Title</label>
+                    <input
+                      value={maintForm.title}
+                      onChange={(e) => setMaintForm({ ...maintForm, title: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Priority</label>
+                    <select
+                      value={maintForm.priority}
+                      onChange={(e) => setMaintForm({ ...maintForm, priority: e.target.value })}
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                      <option value="critical">Critical</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Description</label>
+                    <input
+                      value={maintForm.description}
+                      onChange={(e) => setMaintForm({ ...maintForm, description: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-grid--actions">
+                    <button className="btn btn-primary" type="submit">
+                      Create request
+                    </button>
+                  </div>
+                </div>
+              </form>
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div style={{ fontWeight: 700, padding: '0.5rem 1rem' }}>Requests</div>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Request</th>
+                        <th>Asset</th>
+                        <th>Status</th>
+                        <th>Priority</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {maintRequests.map((r) => (
+                        <tr key={r.id}>
+                          <td>
+                            {r.request_number} — {r.title}
+                          </td>
+                          <td>{r.asset?.name}</td>
+                          <td>{r.status}</td>
+                          <td>{r.priority}</td>
+                          <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {r.status === 'draft' ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() =>
+                                  void api.assets
+                                    .submitMaintenanceRequest(r.id)
+                                    .then(() => load())
+                                    .catch((err: any) => alertError('Submit failed', err.message))
+                                }
+                              >
+                                Submit
+                              </button>
+                            ) : null}
+                            {['draft', 'submitted'].includes(r.status) ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() =>
+                                  void api.assets
+                                    .approveMaintenanceRequest(r.id)
+                                    .then(() => load())
+                                    .catch((err: any) => alertError('Approve failed', err.message))
+                                }
+                              >
+                                Approve
+                              </button>
+                            ) : null}
+                            {r.status === 'approved' ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => void convertToWorkOrder(r.id)}
+                              >
+                                Create WO
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div style={{ fontWeight: 700, padding: '0.5rem 1rem' }}>Work orders</div>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>WO</th>
+                        <th>Asset</th>
+                        <th>Status</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {workOrders.map((w) => (
+                        <tr key={w.id}>
+                          <td>
+                            {w.work_order_number} — {w.title}
+                          </td>
+                          <td>{w.asset?.name}</td>
+                          <td>{w.status}</td>
+                          <td style={{ display: 'flex', gap: 6 }}>
+                            {w.status === 'open' ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() =>
+                                  void api.assets
+                                    .startWorkOrder(w.id)
+                                    .then(() => load())
+                                    .catch((err: any) => alertError('Start failed', err.message))
+                                }
+                              >
+                                Start
+                              </button>
+                            ) : null}
+                            {['open', 'in_progress'].includes(w.status) ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() =>
+                                  void api.assets
+                                    .completeWorkOrder(w.id)
+                                    .then(() => load())
+                                    .catch((err: any) => alertError('Complete failed', err.message))
+                                }
+                              >
+                                Complete
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {opsSub === 'cover' ? (
+            <>
+              <form
+                onSubmit={createCover}
+                className="card-surface"
+                style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
+              >
+                <div style={{ fontWeight: 700 }}>Add cover</div>
+                <div className="form-grid">
+                  <div className="field">
+                    <label>Type</label>
+                    <select
+                      value={coverForm.kind}
+                      onChange={(e) =>
+                        setCoverForm({
+                          ...coverForm,
+                          kind: e.target.value as 'insurance' | 'warranty'
+                        })
+                      }
+                    >
+                      <option value="insurance">Insurance</option>
+                      <option value="warranty">Warranty</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Asset</label>
+                    <select
+                      value={coverForm.asset_id}
+                      onChange={(e) => setCoverForm({ ...coverForm, asset_id: e.target.value })}
+                      required
+                    >
+                      <option value="">Select…</option>
+                      {assets.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.code ? `${a.code} — ` : ''}
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>{coverForm.kind === 'insurance' ? 'Insurer' : 'Provider'}</label>
+                    <input
+                      value={coverForm.name}
+                      onChange={(e) => setCoverForm({ ...coverForm, name: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label>{coverForm.kind === 'insurance' ? 'Policy #' : 'Warranty #'}</label>
+                    <input
+                      value={coverForm.number}
+                      onChange={(e) => setCoverForm({ ...coverForm, number: e.target.value })}
+                      required={coverForm.kind === 'insurance'}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Start</label>
+                    <input
+                      type="date"
+                      value={coverForm.start_date}
+                      onChange={(e) => setCoverForm({ ...coverForm, start_date: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label>End</label>
+                    <input
+                      type="date"
+                      value={coverForm.end_date}
+                      onChange={(e) => setCoverForm({ ...coverForm, end_date: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="form-grid--actions">
+                    <button className="btn btn-primary" type="submit">
+                      Save
+                    </button>
+                  </div>
+                </div>
+              </form>
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div style={{ fontWeight: 700, padding: '0.5rem 1rem' }}>Insurance</div>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Asset</th>
+                        <th>Insurer</th>
+                        <th>Policy</th>
+                        <th>Ends</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {insurances.map((i) => (
+                        <tr key={i.id}>
+                          <td>{i.asset?.name}</td>
+                          <td>{i.insurer_name}</td>
+                          <td>{i.policy_number}</td>
+                          <td>{String(i.end_date).slice(0, 10)}</td>
+                          <td>{i.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div style={{ fontWeight: 700, padding: '0.5rem 1rem' }}>Warranties</div>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Asset</th>
+                        <th>Provider</th>
+                        <th>Ends</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {warranties.map((w) => (
+                        <tr key={w.id}>
+                          <td>{w.asset?.name}</td>
+                          <td>{w.provider_name}</td>
+                          <td>{String(w.end_date).slice(0, 10)}</td>
+                          <td>{w.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : null}
+        </>
+      ) : null}
+
+      {tab === 'accounting' ? (
+        <>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {(
+              [
+                ['cip', 'CIP'],
+                ['impairment', 'Impairment'],
+                ['revaluation', 'Revaluation'],
+                ['disposal', 'Disposal'],
+                ['components', 'Components']
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={acctSub === key ? 'btn btn-primary' : 'btn btn-ghost'}
+                onClick={() => setAcctSub(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {acctSub === 'cip' ? (
+            <>
+              <form
+                onSubmit={createCip}
+                className="card-surface"
+                style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
+              >
+                <div style={{ fontWeight: 700 }}>New CIP project</div>
+                <div className="form-grid">
+                  <div className="field">
+                    <label>Name</label>
+                    <input
+                      value={cipForm.name}
+                      onChange={(e) => setCipForm({ ...cipForm, name: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label>First cost</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={cipForm.cost_amount}
+                      onChange={(e) => setCipForm({ ...cipForm, cost_amount: e.target.value })}
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Funding</label>
+                    <select
+                      value={cipForm.funding_method}
+                      onChange={(e) => setCipForm({ ...cipForm, funding_method: e.target.value })}
+                    >
+                      <option value="equity">Equity</option>
+                      <option value="bank">Bank</option>
+                      <option value="cash">Cash</option>
+                      <option value="credit">Credit</option>
+                    </select>
+                  </div>
+                  <div className="form-grid--actions">
+                    <button className="btn btn-primary" type="submit">
+                      Create
+                    </button>
+                  </div>
+                </div>
+              </form>
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Project</th>
+                        <th>Status</th>
+                        <th>Total</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {capitalProjects.map((p) => (
+                        <tr key={p.id}>
+                          <td>
+                            {p.project_number} — {p.name}
+                          </td>
+                          <td>{p.status}</td>
+                          <td>{Number(p.total_cost || 0).toLocaleString()}</td>
+                          <td style={{ display: 'flex', gap: 6 }}>
+                            {['active', 'draft'].includes(p.status) && Number(p.total_cost) > 0 ? (
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={async () => {
+                                  try {
+                                    await api.assets.completeCapitalProject(p.id);
+                                    await load();
+                                  } catch (err: any) {
+                                    await alertError('Complete failed', err.message);
+                                  }
+                                }}
+                              >
+                                Complete
+                              </button>
+                            ) : null}
+                            {['completed', 'active'].includes(p.status) && !p.capitalised_asset_id ? (
+                              <button
+                                type="button"
+                                className="btn btn-primary"
+                                onClick={async () => {
+                                  try {
+                                    await api.assets.capitaliseCapitalProject(p.id, {
+                                      asset_name: p.name
+                                    });
+                                    await alertSuccess('Capitalised');
+                                    await load();
+                                  } catch (err: any) {
+                                    await alertError('Capitalise failed', err.message);
+                                  }
+                                }}
+                              >
+                                Capitalise
+                              </button>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {acctSub === 'impairment' ? (
+            <>
+              <form
+                onSubmit={createImpairment}
+                className="card-surface"
+                style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
+              >
+                <div style={{ fontWeight: 700 }}>Post impairment</div>
+                <div className="form-grid">
+                  <div className="field">
+                    <label>Asset</label>
+                    <select
+                      value={impForm.asset_id}
+                      onChange={(e) => setImpForm({ ...impForm, asset_id: e.target.value })}
+                      required
+                    >
+                      <option value="">Select…</option>
+                      {assets
+                        .filter((a) => a.financial_status !== 'disposed')
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.code ? `${a.code} — ` : ''}
+                            {a.name} (NBV {Number(a.net_book_value ?? 0).toLocaleString()})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Amount</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={impForm.amount}
+                      onChange={(e) => setImpForm({ ...impForm, amount: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Reason</label>
+                    <input
+                      value={impForm.reason}
+                      onChange={(e) => setImpForm({ ...impForm, reason: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-grid--actions">
+                    <button className="btn btn-primary" type="submit">
+                      Post
+                    </button>
+                  </div>
+                </div>
+              </form>
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Asset</th>
+                        <th>Amount</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {impairments.map((r) => (
+                        <tr key={r.id}>
+                          <td>{r.impairment_number}</td>
+                          <td>{r.asset?.name}</td>
+                          <td>{Number(r.amount).toLocaleString()}</td>
+                          <td>{r.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {acctSub === 'revaluation' ? (
+            <>
+              <form
+                onSubmit={createRevaluation}
+                className="card-surface"
+                style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
+              >
+                <div style={{ fontWeight: 700 }}>Post revaluation</div>
+                <div className="form-grid">
+                  <div className="field">
+                    <label>Asset</label>
+                    <select
+                      value={revalForm.asset_id}
+                      onChange={(e) => setRevalForm({ ...revalForm, asset_id: e.target.value })}
+                      required
+                    >
+                      <option value="">Select…</option>
+                      {assets
+                        .filter((a) => a.financial_status !== 'disposed')
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.code ? `${a.code} — ` : ''}
+                            {a.name} (NBV {Number(a.net_book_value ?? 0).toLocaleString()})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>New carrying amount</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={revalForm.new_carrying_amount}
+                      onChange={(e) =>
+                        setRevalForm({ ...revalForm, new_carrying_amount: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Reason</label>
+                    <input
+                      value={revalForm.reason}
+                      onChange={(e) => setRevalForm({ ...revalForm, reason: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-grid--actions">
+                    <button className="btn btn-primary" type="submit">
+                      Post
+                    </button>
+                  </div>
+                </div>
+              </form>
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Asset</th>
+                        <th>Adjustment</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {revaluations.map((r) => (
+                        <tr key={r.id}>
+                          <td>{r.revaluation_number}</td>
+                          <td>{r.asset?.name}</td>
+                          <td>{Number(r.adjustment_amount).toLocaleString()}</td>
+                          <td>{r.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {acctSub === 'disposal' ? (
+            <>
+              <form
+                onSubmit={createDisposal}
+                className="card-surface"
+                style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
+              >
+                <div style={{ fontWeight: 700 }}>Dispose asset</div>
+                <div className="form-grid">
+                  <div className="field">
+                    <label>Asset</label>
+                    <select
+                      value={dispForm.asset_id}
+                      onChange={(e) => setDispForm({ ...dispForm, asset_id: e.target.value })}
+                      required
+                    >
+                      <option value="">Select…</option>
+                      {assets
+                        .filter((a) => a.financial_status !== 'disposed')
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.code ? `${a.code} — ` : ''}
+                            {a.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Type</label>
+                    <select
+                      value={dispForm.disposal_type}
+                      onChange={(e) => setDispForm({ ...dispForm, disposal_type: e.target.value })}
+                    >
+                      <option value="scrap">Scrap</option>
+                      <option value="sale">Sale</option>
+                      <option value="donation">Donation</option>
+                      <option value="write_off">Write-off</option>
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Proceeds</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={dispForm.proceeds}
+                      onChange={(e) => setDispForm({ ...dispForm, proceeds: e.target.value })}
+                    />
+                  </div>
+                  {Number(dispForm.proceeds || 0) > 0 ? (
+                    <div className="field">
+                      <label>Bank / cash account</label>
+                      <select
+                        value={dispForm.bank_account_id}
+                        onChange={(e) =>
+                          setDispForm({ ...dispForm, bank_account_id: e.target.value })
+                        }
+                        required
+                      >
+                        <option value="">Select…</option>
+                        {bankAccounts.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+                  <div className="field">
+                    <label>Reason</label>
+                    <input
+                      value={dispForm.reason}
+                      onChange={(e) => setDispForm({ ...dispForm, reason: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-grid--actions">
+                    <button className="btn btn-primary" type="submit">
+                      Approve &amp; post
+                    </button>
+                  </div>
+                </div>
+              </form>
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Asset</th>
+                        <th>NBV</th>
+                        <th>Gain/(Loss)</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {disposals.map((r) => (
+                        <tr key={r.id}>
+                          <td>{r.disposal_number}</td>
+                          <td>{r.asset?.name}</td>
+                          <td>{Number(r.nbv_amount).toLocaleString()}</td>
+                          <td>{Number(r.gain_loss_amount).toLocaleString()}</td>
+                          <td>{r.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : null}
+
+          {acctSub === 'components' ? (
+            <>
+              <form
+                onSubmit={createComponent}
+                className="card-surface"
+                style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
+              >
+                <div style={{ fontWeight: 700 }}>Add component</div>
+                <div className="form-grid">
+                  <div className="field">
+                    <label>Parent asset</label>
+                    <select
+                      value={compForm.parent_asset_id}
+                      onChange={(e) =>
+                        setCompForm({ ...compForm, parent_asset_id: e.target.value })
+                      }
+                      required
+                    >
+                      <option value="">Select…</option>
+                      {assets
+                        .filter((a) => a.financial_status !== 'disposed')
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.code ? `${a.code} — ` : ''}
+                            {a.name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="field">
+                    <label>Name</label>
+                    <input
+                      value={compForm.name}
+                      onChange={(e) => setCompForm({ ...compForm, name: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="field">
+                    <label>Cost (memo)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={compForm.cost_amount}
+                      onChange={(e) => setCompForm({ ...compForm, cost_amount: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-grid--actions">
+                    <button className="btn btn-primary" type="submit">
+                      Add
+                    </button>
+                  </div>
+                </div>
+              </form>
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Parent</th>
+                        <th>Component</th>
+                        <th>Cost</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {components.map((c) => (
+                        <tr key={c.id}>
+                          <td>{c.parent_asset?.name}</td>
+                          <td>{c.name}</td>
+                          <td>{Number(c.cost_amount).toLocaleString()}</td>
+                          <td>{c.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : null}
+        </>
+      ) : null}
+
+      {tab === 'verify' ? (
+        <>
+          <form
+            onSubmit={createCampaign}
+            className="card-surface"
+            style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
+          >
+            <div style={{ fontWeight: 700 }}>New verification campaign</div>
+            <div className="form-grid">
+              <div className="field">
+                <label>Name</label>
+                <input
+                  value={verifyForm.name}
+                  onChange={(e) => setVerifyForm({ ...verifyForm, name: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="field">
+                <label>Branch (optional)</label>
+                <select
+                  value={verifyForm.branch_id}
+                  onChange={(e) => setVerifyForm({ ...verifyForm, branch_id: e.target.value })}
+                >
+                  <option value="">All</option>
+                  {branches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.code} — {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>Location (optional)</label>
+                <select
+                  value={verifyForm.location_id}
+                  onChange={(e) => setVerifyForm({ ...verifyForm, location_id: e.target.value })}
+                >
+                  <option value="">All</option>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.code} — {l.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="form-grid--actions">
+                <button className="btn btn-primary" type="submit">
+                  Create
+                </button>
+              </div>
+            </div>
+          </form>
+
+          <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Campaign</th>
+                    <th>Status</th>
+                    <th>Expected</th>
+                    <th>Matched</th>
+                    <th>Mismatch</th>
+                    <th>Missing</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {campaigns.map((c) => (
+                    <tr key={c.id}>
+                      <td>
+                        {c.campaign_number} — {c.name}
+                      </td>
+                      <td>{c.status}</td>
+                      <td>{c.expected_count}</td>
+                      <td>{c.matched_count}</td>
+                      <td>{c.mismatch_count}</td>
+                      <td>{c.missing_count}</td>
+                      <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          onClick={async () => {
+                            try {
+                              await refreshCampaign(c.id);
+                            } catch (err: any) {
+                              await alertError('Load failed', err.message);
+                            }
+                          }}
+                        >
+                          Open
+                        </button>
+                        {c.status === 'draft' ? (
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            onClick={async () => {
+                              try {
+                                await api.assets.openVerificationCampaign(c.id);
+                                await alertSuccess('Campaign opened');
+                                await refreshCampaign(c.id);
+                              } catch (err: any) {
+                                await alertError('Open failed', err.message);
+                              }
+                            }}
+                          >
+                            Start
+                          </button>
+                        ) : null}
+                        {c.status === 'open' ? (
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={async () => {
+                              try {
+                                await api.assets.closeVerificationCampaign(c.id);
+                                await alertSuccess('Campaign closed');
+                                await refreshCampaign(c.id);
+                              } catch (err: any) {
+                                await alertError('Close failed', err.message);
+                              }
+                            }}
+                          >
+                            Close
+                          </button>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {selectedCampaign ? (
+            <>
+              <div className="card-surface" style={{ padding: '1rem' }}>
+                <div style={{ fontWeight: 700 }}>
+                  {selectedCampaign.campaign_number} — {selectedCampaign.name} (
+                  {selectedCampaign.status})
+                </div>
+                <p style={{ margin: '0.35rem 0 0', color: 'var(--ink-muted)', fontSize: '0.85rem' }}>
+                  Scans never change the register. Resolve mismatches with “Correct register” to
+                  apply found location/branch.
+                </p>
+              </div>
+
+              {selectedCampaign.status === 'open' ? (
+                <form
+                  onSubmit={scanAsset}
+                  className="card-surface"
+                  style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
+                >
+                  <div style={{ fontWeight: 700 }}>Scan code / barcode / QR</div>
+                  <div className="form-grid">
+                    <div className="field">
+                      <label>Scanned code</label>
+                      <input
+                        value={scanForm.scanned_code}
+                        onChange={(e) =>
+                          setScanForm({ ...scanForm, scanned_code: e.target.value })
+                        }
+                        required
+                        placeholder="Asset code, barcode, serial, or QR"
+                      />
+                    </div>
+                    <div className="field">
+                      <label>Found location (optional)</label>
+                      <select
+                        value={scanForm.found_location_id}
+                        onChange={(e) =>
+                          setScanForm({ ...scanForm, found_location_id: e.target.value })
+                        }
+                      >
+                        <option value="">As registered</option>
+                        {locations.map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.code} — {l.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-grid--actions">
+                      <button className="btn btn-primary" type="submit">
+                        Record scan
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              ) : null}
+
+              <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+                <div className="table-wrap">
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Asset</th>
+                        <th>Status</th>
+                        <th>Scanned</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(selectedCampaign.results || []).map((r: any) => (
+                        <tr key={r.id}>
+                          <td>
+                            {r.asset
+                              ? `${r.asset.code ? `${r.asset.code} — ` : ''}${r.asset.name}`
+                              : r.scanned_code || '—'}
+                          </td>
+                          <td>{r.status}</td>
+                          <td>{r.scanned_code || '—'}</td>
+                          <td>
+                            {['mismatch', 'missing', 'unexpected'].includes(r.status) ? (
+                              <select
+                                defaultValue=""
+                                onChange={async (e) => {
+                                  const action = e.target.value;
+                                  e.target.value = '';
+                                  if (!action) return;
+                                  try {
+                                    await api.assets.resolveVerificationResult(r.id, {
+                                      resolution_action: action
+                                    });
+                                    await alertSuccess(`Resolved (${action})`);
+                                    await refreshCampaign(selectedCampaign.id);
+                                  } catch (err: any) {
+                                    await alertError('Resolve failed', err.message);
+                                  }
+                                }}
+                              >
+                                <option value="">Resolve…</option>
+                                {r.status === 'mismatch' ? (
+                                  <option value="correct_register">Correct register</option>
+                                ) : null}
+                                <option value="accept_found">Accept found</option>
+                                <option value="ignore">Ignore</option>
+                                <option value="mark_missing">Mark missing</option>
+                              </select>
+                            ) : null}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>
+          ) : null}
         </>
       ) : null}
 

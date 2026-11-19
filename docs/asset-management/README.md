@@ -8,7 +8,11 @@ Enterprise Fixed Asset Lifecycle Management for TradeStratix ERP.
 **Phase 1 (Foundation) — complete.**  
 **Phase 2 (Acquisition & capitalisation) — complete.**  
 **Phase 3 (Depreciation engine) — complete.**  
-**Phase 4 (Operations) — next.**
+**Phase 4 (Operations) — complete.**  
+**Phase 5 (Advanced accounting) — complete.**  
+**Phase 6 (Physical verification) — complete.**  
+**Phase 7 (Dashboard & reports) — complete.**  
+**Phase 8 (Hardening) — next.**
 
 ## Existing foothold (do not discard)
 
@@ -20,7 +24,7 @@ TradeStratix already has a **Phase 6 starter**:
 | `DepreciationEntry` | `schema.prisma` | Per-asset period label + amount + journal link |
 | `asset.service.ts` | services | Create (+ optional GL acquisition), run straight-line dep, list |
 | `/api/v1/assets` | routes | list/create/get/depreciation |
-| `AssetsPage` | client | Register / Depreciate / Budgets (budgets stay separate) |
+| `AssetsPage` | client | Register / Operations / Depreciate / Budgets (budgets stay separate) |
 | Default accounts | `fixed_assets`, `accumulated_depreciation`, `depreciation_expense` | Global keys only |
 | Permissions | `assets.view`, `assets.create`, `assets.post`, `assets.*` | Minimal |
 
@@ -36,10 +40,15 @@ This module **extends and hardens** that foothold into a full lifecycle product.
 | [depreciation.md](./depreciation.md) | Methods, runs, controls |
 | [acquisition-and-capitalisation.md](./acquisition-and-capitalisation.md) | Procurement link, CIP hand-off |
 | [permissions.md](./permissions.md) | RBAC matrix |
+| [operations.md](./operations.md) | Transfers, maintenance, insurance/warranty |
+| [advanced-accounting.md](./advanced-accounting.md) | CIP, components, impairment, revaluation, disposal |
+| [verification.md](./verification.md) | Physical verification campaigns |
+| [phase0-6-review.md](./phase0-6-review.md) | Pre–Phase 7 smoke + best-practice review |
+| [reports.md](./reports.md) | Dashboard, register, GL recon, dep summary |
 | [testing.md](./testing.md) | Test plan |
 | [../implementation-progress.md](../implementation-progress.md) | Live progress log |
 
-Further topic docs (transfers, maintenance, disposal, verification, reports, API, deployment) are added as each phase lands.
+Further topic docs (API, deployment) are added as Phase 8 lands.
 
 ## Implementation sequence
 
@@ -47,11 +56,11 @@ Further topic docs (transfers, maintenance, disposal, verification, reports, API
 1. Foundation (categories, locations, enriched register, history, permissions) ← done  
 2. Acquisition & capitalisation (+ procurement classification) ← done  
 3. Depreciation engine (books, preview, approve, post, reverse) ← done  
-4. Operations (transfers, maintenance+inventory, insurance/warranty) ← **next**  
-5. Advanced accounting (CIP, components, impairment, revaluation, disposal)  
-6. Physical verification (QR/barcode campaigns)  
-7. Dashboard & reports (+ GL reconciliation)  
-8. Hardening (full tests, docs, production readiness)
+4. Operations (transfers, maintenance+inventory, insurance/warranty) ← done  
+5. Advanced accounting (CIP, components, impairment, revaluation, disposal) ← done  
+6. Physical verification (QR/barcode campaigns) ← done  
+7. Dashboard & reports (+ GL reconciliation) ← done  
+8. Hardening (full tests, docs, production readiness) ← **next**
 
 ## Non-negotiables
 

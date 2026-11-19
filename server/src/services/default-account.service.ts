@@ -288,6 +288,14 @@ export const DEFAULT_ACCOUNT_CATALOG: DefaultAccountKeyMeta[] = [
     category: 'assets'
   },
   {
+    key: 'asset_revaluation_surplus',
+    label: 'Asset Revaluation Surplus',
+    description: 'Equity surplus from upward asset revaluations',
+    accountTypes: ['equity', 'liability'],
+    category: 'assets'
+  },
+
+  {
     key: 'salary_expense',
     label: 'Salary Expense',
     description: 'Payroll gross salary expense',

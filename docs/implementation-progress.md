@@ -39,9 +39,55 @@ Updated: 2026-11-18
 - Permissions: `assets.depreciation.calculate` / `.approve` / `.post` / `.view`
 - Tests: `npm run test:assets:phase3`
 
-**Next:** Phase 4 — Operations (transfers, maintenance, insurance/warranty)
+**Phase 4 — Operations: COMPLETE**
 
-**Outstanding (module):** Phases 4–8
+- Models: `AssetTransfer` / `AssetTransferLine`, `AssetMaintenanceRequest` / `WorkOrder` / `Cost`, `AssetInsurance` / `Claim`, `AssetWarranty`
+- Transfers: draft → submit → approve → dispatch → receive; assignment history; no GL on location move
+- Maintenance: request → WO; parts via inventory stock issue (`asset_maintenance`)
+- Insurance/warranty cover + claims; summary fields synced on `FixedAsset`
+- UI: Assets → Operations
+- Permissions: `assets.transfer.*`, `assets.maintenance.*` (`npm run seed:ops-perms`)
+- Tests: `npm run test:assets:phase4`
+- Doc: `docs/asset-management/operations.md`
+
+**Phase 5 — Advanced accounting: COMPLETE**
+
+- Models: `CapitalProject` / `CapitalProjectCost`, `AssetComponent`, `AssetImpairment`, `AssetRevaluation`, `AssetDisposal`, `AssetAccountingEvent`
+- CIP spend → complete → capitalise (Dr FA / Cr CIP); components; impairment; revaluation surplus (CoA 3205); disposal gain/loss
+- UI: Assets → Accounting
+- Permissions: `assets.impairment.manage`, `assets.revaluation.manage`, `assets.disposal.*`, `assets.accounting.view`
+- Tests: `npm run test:assets:phase5`
+- Doc: `docs/asset-management/advanced-accounting.md`
+
+**Phase 6 — Physical verification: COMPLETE**
+
+- Models: `AssetVerificationCampaign`, `AssetVerificationResult`
+- Workflow: create → open (snapshot expected) → scan → close (missing) → resolve
+- Scan never mutates register; `correct_register` writes location/branch/custodian + assignment history
+- UI: Assets → Verify
+- Permissions: `assets.verification.view|manage|resolve` (`npm run seed:phase6-perms`)
+- Tests: `npm run test:assets:phase6`
+- Doc: `docs/asset-management/verification.md`
+
+**Phase 0–6 review (2026-11-19): COMPLETE**
+
+- Smoke: 109 passed across phase 1–6 scripts
+- Hardened: create-GL needs capitalise perm; acquisition approve only after submit; asset get/update branch scope; verification scan RBAC; disposal bank picker; resolve action picker; missing permission rows seeded
+- Doc: `docs/asset-management/phase0-6-review.md`
+- Remaining polish deferred to Phase 8
+
+**Phase 7 — Dashboard & reports: COMPLETE**
+
+- Aggregates only (no new models): dashboard, register report, GL reconciliation vs default accounts, depreciation summary
+- Service: `asset-dashboard.service.ts`; routes before `/:id`
+- Permissions: `assets.reports.view` (`npm run seed:phase7-perms`)
+- UI: Assets → Dashboard (Overview / Register / GL recon / Dep summary)
+- Tests: `npm run test:assets:phase7`
+- Doc: `docs/asset-management/reports.md`
+
+**Next:** Phase 8 — Hardening (full tests, docs, production readiness)
+
+**Outstanding (module):** Phase 8
 
 ---
 

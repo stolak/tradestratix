@@ -857,7 +857,226 @@ export const api = {
         body: JSON.stringify(body)
       }),
     cancelAcquisition: (id: string) =>
-      request<any>(`/assets/acquisitions/${id}/cancel`, { method: 'POST', body: '{}' })
+      request<any>(`/assets/acquisitions/${id}/cancel`, { method: 'POST', body: '{}' }),
+    transfers: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/transfers${q ? `?${q}` : ''}`);
+    },
+    createTransfer: (body: Record<string, unknown>) =>
+      request<any>('/assets/transfers', { method: 'POST', body: JSON.stringify(body) }),
+    submitTransfer: (id: string) =>
+      request<any>(`/assets/transfers/${id}/submit`, { method: 'POST', body: '{}' }),
+    approveTransfer: (id: string) =>
+      request<any>(`/assets/transfers/${id}/approve`, { method: 'POST', body: '{}' }),
+    dispatchTransfer: (id: string) =>
+      request<any>(`/assets/transfers/${id}/dispatch`, { method: 'POST', body: '{}' }),
+    receiveTransfer: (id: string) =>
+      request<any>(`/assets/transfers/${id}/receive`, { method: 'POST', body: '{}' }),
+    cancelTransfer: (id: string) =>
+      request<any>(`/assets/transfers/${id}/cancel`, { method: 'POST', body: '{}' }),
+    maintenanceRequests: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/maintenance/requests${q ? `?${q}` : ''}`);
+    },
+    createMaintenanceRequest: (body: Record<string, unknown>) =>
+      request<any>('/assets/maintenance/requests', { method: 'POST', body: JSON.stringify(body) }),
+    submitMaintenanceRequest: (id: string) =>
+      request<any>(`/assets/maintenance/requests/${id}/submit`, { method: 'POST', body: '{}' }),
+    approveMaintenanceRequest: (id: string) =>
+      request<any>(`/assets/maintenance/requests/${id}/approve`, { method: 'POST', body: '{}' }),
+    workOrders: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/maintenance/work-orders${q ? `?${q}` : ''}`);
+    },
+    createWorkOrder: (body: Record<string, unknown>) =>
+      request<any>('/assets/maintenance/work-orders', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    startWorkOrder: (id: string) =>
+      request<any>(`/assets/maintenance/work-orders/${id}/start`, { method: 'POST', body: '{}' }),
+    completeWorkOrder: (id: string) =>
+      request<any>(`/assets/maintenance/work-orders/${id}/complete`, {
+        method: 'POST',
+        body: '{}'
+      }),
+    addWorkOrderCost: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/assets/maintenance/work-orders/${id}/costs`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    insurances: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/insurances${q ? `?${q}` : ''}`);
+    },
+    createInsurance: (body: Record<string, unknown>) =>
+      request<any>('/assets/insurances', { method: 'POST', body: JSON.stringify(body) }),
+    createInsuranceClaim: (body: Record<string, unknown>) =>
+      request<any>('/assets/insurance-claims', { method: 'POST', body: JSON.stringify(body) }),
+    settleInsuranceClaim: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/assets/insurance-claims/${id}/settle`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    warranties: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/warranties${q ? `?${q}` : ''}`);
+    },
+    createWarranty: (body: Record<string, unknown>) =>
+      request<any>('/assets/warranties', { method: 'POST', body: JSON.stringify(body) }),
+    capitalProjects: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/capital-projects${q ? `?${q}` : ''}`);
+    },
+    createCapitalProject: (body: Record<string, unknown>) =>
+      request<any>('/assets/capital-projects', { method: 'POST', body: JSON.stringify(body) }),
+    addCapitalProjectCost: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/assets/capital-projects/${id}/costs`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    completeCapitalProject: (id: string) =>
+      request<any>(`/assets/capital-projects/${id}/complete`, { method: 'POST', body: '{}' }),
+    capitaliseCapitalProject: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/assets/capital-projects/${id}/capitalise`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    impairments: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/impairments${q ? `?${q}` : ''}`);
+    },
+    createImpairment: (body: Record<string, unknown>) =>
+      request<any>('/assets/impairments', { method: 'POST', body: JSON.stringify(body) }),
+    postImpairment: (id: string) =>
+      request<any>(`/assets/impairments/${id}/post`, { method: 'POST', body: '{}' }),
+    revaluations: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/revaluations${q ? `?${q}` : ''}`);
+    },
+    createRevaluation: (body: Record<string, unknown>) =>
+      request<any>('/assets/revaluations', { method: 'POST', body: JSON.stringify(body) }),
+    postRevaluation: (id: string) =>
+      request<any>(`/assets/revaluations/${id}/post`, { method: 'POST', body: '{}' }),
+    disposals: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/disposals${q ? `?${q}` : ''}`);
+    },
+    createDisposal: (body: Record<string, unknown>) =>
+      request<any>('/assets/disposals', { method: 'POST', body: JSON.stringify(body) }),
+    submitDisposal: (id: string) =>
+      request<any>(`/assets/disposals/${id}/submit`, { method: 'POST', body: '{}' }),
+    approveDisposal: (id: string) =>
+      request<any>(`/assets/disposals/${id}/approve`, { method: 'POST', body: '{}' }),
+    postDisposal: (id: string) =>
+      request<any>(`/assets/disposals/${id}/post`, { method: 'POST', body: '{}' }),
+    components: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/components${q ? `?${q}` : ''}`);
+    },
+    createComponent: (body: Record<string, unknown>) =>
+      request<any>('/assets/components', { method: 'POST', body: JSON.stringify(body) }),
+    verificationCampaigns: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any[]>(`/assets/verification/campaigns${q ? `?${q}` : ''}`);
+    },
+    createVerificationCampaign: (body: Record<string, unknown>) =>
+      request<any>('/assets/verification/campaigns', {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    getVerificationCampaign: (id: string) =>
+      request<any>(`/assets/verification/campaigns/${id}`),
+    openVerificationCampaign: (id: string) =>
+      request<any>(`/assets/verification/campaigns/${id}/open`, { method: 'POST', body: '{}' }),
+    scanVerificationCampaign: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/assets/verification/campaigns/${id}/scan`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    closeVerificationCampaign: (id: string) =>
+      request<any>(`/assets/verification/campaigns/${id}/close`, { method: 'POST', body: '{}' }),
+    resolveVerificationResult: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/assets/verification/results/${id}/resolve`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    dashboard: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any>(`/assets/dashboard${q ? `?${q}` : ''}`);
+    },
+    registerReport: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any>(`/assets/reports/register${q ? `?${q}` : ''}`);
+    },
+    glReconciliation: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any>(`/assets/reports/gl-reconciliation${q ? `?${q}` : ''}`);
+    },
+    depreciationSummary: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams();
+      Object.entries(params).forEach(([k, v]) => {
+        if (v) qs.set(k, v);
+      });
+      const q = qs.toString();
+      return request<any>(`/assets/reports/depreciation-summary${q ? `?${q}` : ''}`);
+    }
   },
   budgets: {
     list: () => request<any[]>('/budgets'),

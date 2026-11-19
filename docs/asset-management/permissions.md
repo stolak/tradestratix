@@ -16,12 +16,12 @@ Enforce with `requirePermission` on every route; never trust the client.
 | `assets.depreciation.calculate` | Generate preview |
 | `assets.depreciation.approve` | Approve run |
 | `assets.depreciation.post` | Post run (maps from legacy `assets.post`) |
-| `assets.transfer.view` / `.create` / `.approve` / `.dispatch` / `.receive` | Transfer workflow |
-| `assets.maintenance.view` / `.create` / `.manage` / `.approve` | Maintenance |
+| `assets.transfer.view` / `.create` / `.approve` / `.dispatch` / `.receive` | Transfer workflow (Phase 4 — seeded) |
+| `assets.maintenance.view` / `.create` / `.manage` / `.approve` | Maintenance + insurance/warranty manage (Phase 4 — seeded) |
 | `assets.impairment.manage` | Impairment |
 | `assets.revaluation.manage` | Revaluation |
 | `assets.disposal.request` / `.approve` / `.post` | Disposal |
-| `assets.verification.view` / `.manage` / `.resolve` | Physical verification |
+| `assets.verification.view` / `.manage` / `.resolve` | Physical verification (Phase 6 — seeded) |
 | `assets.reports.view` | Reports |
 | `assets.accounting.view` | Journals / reconciliation |
 | `assets.settings.manage` | Categories, locations, books, thresholds |
