@@ -36,6 +36,8 @@
     "test:assets:phase5": "tsx scripts/test-assets-phase5.ts",
     "test:assets:phase6": "tsx scripts/test-assets-phase6.ts",
     "test:assets:phase7": "tsx scripts/test-assets-phase7.ts",
+    "test:assets:phase8": "tsx scripts/test-assets-phase8.ts",
+    "test:assets:all": "tsx scripts/test-assets-phase1.ts && tsx scripts/test-assets-phase2.ts && tsx scripts/test-assets-bulk.ts && tsx scripts/test-assets-phase3.ts && tsx scripts/test-assets-phase4.ts && tsx scripts/test-assets-phase5.ts && tsx scripts/test-assets-phase6.ts && tsx scripts/test-assets-phase7.ts && tsx scripts/test-assets-phase8.ts",
     "seed:ops-perms": "tsx scripts/seed-ops-perms.ts",
     "seed:phase5-perms": "tsx scripts/seed-phase5-perms.ts",
     "seed:phase6-perms": "tsx scripts/seed-phase6-perms.ts",

@@ -9,6 +9,7 @@ import {
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
+import { createNotification } from './notification.service.js';
 
 const transferInclude = {
   fromBranch: { select: { id: true, code: true, name: true } },
@@ -178,6 +179,14 @@ export async function submitTransfer(user: AuthUser, id: string) {
     entityId: id,
     summary: `Submitted transfer ${existing.transferNumber}`
   });
+  await createNotification({
+    businessId: user.businessId,
+    title: `Transfer pending approval — ${existing.transferNumber}`,
+    body: 'An asset transfer was submitted and needs approval.',
+    module: 'assets',
+    entityType: 'AssetTransfer',
+    entityId: id
+  }).catch(() => undefined);
   return serialize(updated);
 }
 
@@ -206,6 +215,15 @@ export async function approveTransfer(user: AuthUser, id: string) {
     entityId: id,
     summary: `Approved transfer ${existing.transferNumber}`
   });
+  await createNotification({
+    businessId: user.businessId,
+    userId: existing.createdById,
+    title: `Transfer approved — ${existing.transferNumber}`,
+    body: 'Transfer approved and ready to dispatch.',
+    module: 'assets',
+    entityType: 'AssetTransfer',
+    entityId: id
+  }).catch(() => undefined);
   return serialize(updated);
 }
 

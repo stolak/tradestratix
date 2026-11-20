@@ -5,6 +5,7 @@ import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import { createStockMovement } from './inventory.service.js';
 import * as branchAccess from './branch-access.service.js';
+import { createNotification } from './notification.service.js';
 
 const acqInclude = {
   branch: true,
@@ -616,6 +617,14 @@ export async function submitAcquisition(user: AuthUser, id: string) {
     entityId: id,
     summary: `Submitted acquisition ${row.acquisitionNumber}`
   });
+  await createNotification({
+    businessId: user.businessId,
+    title: `Acquisition pending approval — ${row.acquisitionNumber}`,
+    body: `${row.assetName || 'Asset'} submitted for capitalisation approval.`,
+    module: 'assets',
+    entityType: 'AssetAcquisition',
+    entityId: id
+  }).catch(() => undefined);
   return serialize({ ...row, capitalised_cost: totalCost(row) });
 }
 
@@ -649,6 +658,15 @@ export async function approveAcquisition(user: AuthUser, id: string) {
     entityId: id,
     summary: `Approved acquisition ${row.acquisitionNumber}`
   });
+  await createNotification({
+    businessId: user.businessId,
+    userId: existing.createdById,
+    title: `Acquisition approved — ${row.acquisitionNumber}`,
+    body: 'Acquisition approved and ready to capitalise.',
+    module: 'assets',
+    entityType: 'AssetAcquisition',
+    entityId: id
+  }).catch(() => undefined);
   return serialize({ ...row, capitalised_cost: totalCost(row) });
 }
 

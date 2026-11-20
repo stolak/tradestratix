@@ -12,6 +12,7 @@ import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import { netBookValue } from './asset.service.js';
+import * as branchAccess from './branch-access.service.js';
 
 const projectInclude = {
   category: { select: { id: true, code: true, name: true, costAccountId: true, cipAccountId: true } },
@@ -53,9 +54,11 @@ async function recordEvent(opts: {
 }
 
 export async function listProjects(user: AuthUser, opts?: { status?: string }) {
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const rows = await prisma.capitalProject.findMany({
     where: {
       businessId: user.businessId,
+      ...scope,
       ...(opts?.status ? { status: opts.status } : {})
     },
     include: projectInclude,

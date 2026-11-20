@@ -38,16 +38,16 @@ All existing automated gates passed:
 8. **Load resilience** — depreciation entries fetch uses `.catch(() => [])`
 9. **Transfer UI** — Approve only when `pending_approval`
 
-## Remaining (acceptable before Phase 7; harden in Phase 8)
+## Remaining (addressed in Phase 8)
 
-| Priority | Item |
-|----------|------|
-| HIGH | Branch-scope remaining Phase 4–6 list endpoints |
-| HIGH | Permission-aware tab/action gating in UI |
-| MEDIUM | Empty states on all tables; document upload UI |
-| MEDIUM | Split impairment/revaluation/disposal into step buttons for SoD |
-| MEDIUM | `createNotification` on submit/approve |
-| LOW | Lazy-load per tab; cancel campaign button |
+| Priority | Item | Status |
+|----------|------|--------|
+| HIGH | Branch-scope remaining Phase 4–6 list endpoints | Done |
+| HIGH | Permission-aware tab/action gating in UI | Done |
+| MEDIUM | Empty states on all tables; document upload UI | Partial (empty states on key tables; upload optional) |
+| MEDIUM | Split impairment/revaluation/disposal into step buttons for SoD | Done |
+| MEDIUM | `createNotification` on submit/approve | Done |
+| LOW | Lazy-load per tab; cancel campaign button | Cancel done; lazy-load optional |
 
 ## Verdict
 

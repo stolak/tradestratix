@@ -12,6 +12,7 @@ import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import { netBookValue } from './asset.service.js';
+import * as branchAccess from './branch-access.service.js';
 
 const include = {
   asset: { select: { id: true, code: true, name: true, financialStatus: true } }
@@ -22,9 +23,11 @@ async function nextNumber(businessId: string) {
 }
 
 export async function listRevaluations(user: AuthUser, opts?: { asset_id?: string; status?: string }) {
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const rows = await prisma.assetRevaluation.findMany({
     where: {
       businessId: user.businessId,
+      ...scope,
       ...(opts?.asset_id ? { assetId: opts.asset_id } : {}),
       ...(opts?.status ? { status: opts.status } : {})
     },

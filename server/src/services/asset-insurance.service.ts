@@ -10,6 +10,7 @@ import {
 } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import * as branchAccess from './branch-access.service.js';
 
 const insuranceInclude = {
   asset: { select: { id: true, code: true, name: true } },
@@ -52,9 +53,11 @@ async function syncAssetWarrantySummary(assetId: string) {
 }
 
 export async function listInsurances(user: AuthUser, opts?: { asset_id?: string; status?: string }) {
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const rows = await prisma.assetInsurance.findMany({
     where: {
       businessId: user.businessId,
+      asset: scope,
       ...(opts?.asset_id ? { assetId: opts.asset_id } : {}),
       ...(opts?.status ? { status: opts.status } : {})
     },
@@ -230,9 +233,11 @@ export async function denyClaim(user: AuthUser, id: string) {
 }
 
 export async function listWarranties(user: AuthUser, opts?: { asset_id?: string; status?: string }) {
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const rows = await prisma.assetWarranty.findMany({
     where: {
       businessId: user.businessId,
+      asset: scope,
       ...(opts?.asset_id ? { assetId: opts.asset_id } : {}),
       ...(opts?.status ? { status: opts.status } : {})
     },

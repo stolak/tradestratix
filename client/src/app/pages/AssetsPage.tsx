@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
+import { useAuth } from '../context/AuthContext';
 
 type Tab =
   | 'dashboard'
@@ -17,6 +18,7 @@ type OpsSub = 'transfers' | 'maintenance' | 'cover';
 type AcctSub = 'cip' | 'impairment' | 'revaluation' | 'disposal' | 'components';
 
 export const AssetsPage: React.FC = () => {
+  const { can } = useAuth();
   const [tab, setTab] = useState<Tab>('dashboard');
   const [dashSub, setDashSub] = useState<DashSub>('overview');
   const [dashboard, setDashboard] = useState<any | null>(null);
@@ -686,13 +688,12 @@ export const AssetsPage: React.FC = () => {
   const createImpairment = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const row = await api.assets.createImpairment({
+      await api.assets.createImpairment({
         asset_id: impForm.asset_id,
         amount: Number(impForm.amount),
         reason: impForm.reason || undefined
       });
-      await api.assets.postImpairment(row.id);
-      await alertSuccess('Impairment posted');
+      await alertSuccess('Impairment draft saved');
       setImpForm({ asset_id: '', amount: '', reason: '' });
       await load();
     } catch (err: any) {
@@ -703,13 +704,12 @@ export const AssetsPage: React.FC = () => {
   const createRevaluation = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const row = await api.assets.createRevaluation({
+      await api.assets.createRevaluation({
         asset_id: revalForm.asset_id,
         new_carrying_amount: Number(revalForm.new_carrying_amount),
         reason: revalForm.reason || undefined
       });
-      await api.assets.postRevaluation(row.id);
-      await alertSuccess('Revaluation posted');
+      await alertSuccess('Revaluation draft saved');
       setRevalForm({ asset_id: '', new_carrying_amount: '', reason: '' });
       await load();
     } catch (err: any) {
@@ -725,7 +725,7 @@ export const AssetsPage: React.FC = () => {
         await alertError('Disposal', 'Select a bank/cash account when proceeds are greater than zero');
         return;
       }
-      const row = await api.assets.createDisposal({
+      await api.assets.createDisposal({
         asset_id: dispForm.asset_id,
         disposal_type: dispForm.disposal_type,
         proceeds,
@@ -733,10 +733,7 @@ export const AssetsPage: React.FC = () => {
         bank_account_id: proceeds > 0 ? dispForm.bank_account_id : undefined,
         reason: dispForm.reason || undefined
       });
-      await api.assets.submitDisposal(row.id);
-      await api.assets.approveDisposal(row.id);
-      await api.assets.postDisposal(row.id);
-      await alertSuccess('Disposal posted');
+      await alertSuccess('Disposal draft saved');
       setDispForm({
         asset_id: '',
         disposal_type: 'scrap',
@@ -820,26 +817,42 @@ export const AssetsPage: React.FC = () => {
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {(
           [
-            ['dashboard', 'Dashboard'],
-            ['register', 'Register'],
-            ['categories', 'Categories'],
-            ['locations', 'Locations'],
-            ['depreciate', 'Depreciate'],
-            ['operations', 'Operations'],
-            ['accounting', 'Accounting'],
-            ['verify', 'Verify'],
-            ['budgets', 'Budgets']
+            ['dashboard', 'Dashboard', ['assets.view', 'assets.reports.view']],
+            ['register', 'Register', ['assets.view']],
+            ['categories', 'Categories', ['assets.settings.manage', 'assets.view']],
+            ['locations', 'Locations', ['assets.settings.manage', 'assets.view']],
+            ['depreciate', 'Depreciate', ['assets.depreciation.view', 'assets.view']],
+            [
+              'operations',
+              'Operations',
+              ['assets.transfer.view', 'assets.maintenance.view', 'assets.view']
+            ],
+            [
+              'accounting',
+              'Accounting',
+              [
+                'assets.accounting.view',
+                'assets.impairment.manage',
+                'assets.revaluation.manage',
+                'assets.disposal.request',
+                'assets.view'
+              ]
+            ],
+            ['verify', 'Verify', ['assets.verification.view', 'assets.view']],
+            ['budgets', 'Budgets', ['budgets.view', 'assets.view']]
           ] as const
-        ).map(([key, label]) => (
-          <button
-            key={key}
-            type="button"
-            className={tab === key ? 'btn btn-primary' : 'btn btn-ghost'}
-            onClick={() => setTab(key)}
-          >
-            {label}
-          </button>
-        ))}
+        )
+          .filter(([, , perms]) => can(...perms))
+          .map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              className={tab === key ? 'btn btn-primary' : 'btn btn-ghost'}
+              onClick={() => setTab(key)}
+            >
+              {label}
+            </button>
+          ))}
         <button type="button" className="btn btn-ghost" onClick={() => void load()}>
           Refresh
         </button>
@@ -2213,7 +2226,7 @@ export const AssetsPage: React.FC = () => {
                                 Submit
                               </button>
                             ) : null}
-                            {['draft', 'submitted'].includes(r.status) ? (
+                            {r.status === 'submitted' && can('assets.maintenance.approve') ? (
                               <button
                                 type="button"
                                 className="btn btn-ghost"
@@ -2580,7 +2593,7 @@ export const AssetsPage: React.FC = () => {
                 className="card-surface"
                 style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
               >
-                <div style={{ fontWeight: 700 }}>Post impairment</div>
+                <div style={{ fontWeight: 700 }}>Draft impairment</div>
                 <div className="form-grid">
                   <div className="field">
                     <label>Asset</label>
@@ -2618,9 +2631,11 @@ export const AssetsPage: React.FC = () => {
                     />
                   </div>
                   <div className="form-grid--actions">
-                    <button className="btn btn-primary" type="submit">
-                      Post
-                    </button>
+                    {can('assets.impairment.manage') ? (
+                      <button className="btn btn-primary" type="submit">
+                        Save draft
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </form>
@@ -2633,17 +2648,45 @@ export const AssetsPage: React.FC = () => {
                         <th>Asset</th>
                         <th>Amount</th>
                         <th>Status</th>
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {impairments.map((r) => (
-                        <tr key={r.id}>
-                          <td>{r.impairment_number}</td>
-                          <td>{r.asset?.name}</td>
-                          <td>{Number(r.amount).toLocaleString()}</td>
-                          <td>{r.status}</td>
+                      {impairments.length ? (
+                        impairments.map((r) => (
+                          <tr key={r.id}>
+                            <td>{r.impairment_number}</td>
+                            <td>{r.asset?.name}</td>
+                            <td>{Number(r.amount).toLocaleString()}</td>
+                            <td>{r.status}</td>
+                            <td>
+                              {r.status === 'draft' && can('assets.impairment.manage') ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-primary"
+                                  onClick={async () => {
+                                    try {
+                                      await api.assets.postImpairment(r.id);
+                                      await alertSuccess('Impairment posted');
+                                      await load();
+                                    } catch (err: any) {
+                                      await alertError('Post failed', err.message);
+                                    }
+                                  }}
+                                >
+                                  Post
+                                </button>
+                              ) : null}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={5} style={{ color: 'var(--ink-muted)' }}>
+                            No impairments yet.
+                          </td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -2658,7 +2701,7 @@ export const AssetsPage: React.FC = () => {
                 className="card-surface"
                 style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
               >
-                <div style={{ fontWeight: 700 }}>Post revaluation</div>
+                <div style={{ fontWeight: 700 }}>Draft revaluation</div>
                 <div className="form-grid">
                   <div className="field">
                     <label>Asset</label>
@@ -2698,9 +2741,11 @@ export const AssetsPage: React.FC = () => {
                     />
                   </div>
                   <div className="form-grid--actions">
-                    <button className="btn btn-primary" type="submit">
-                      Post
-                    </button>
+                    {can('assets.revaluation.manage') ? (
+                      <button className="btn btn-primary" type="submit">
+                        Save draft
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </form>
@@ -2713,17 +2758,45 @@ export const AssetsPage: React.FC = () => {
                         <th>Asset</th>
                         <th>Adjustment</th>
                         <th>Status</th>
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {revaluations.map((r) => (
-                        <tr key={r.id}>
-                          <td>{r.revaluation_number}</td>
-                          <td>{r.asset?.name}</td>
-                          <td>{Number(r.adjustment_amount).toLocaleString()}</td>
-                          <td>{r.status}</td>
+                      {revaluations.length ? (
+                        revaluations.map((r) => (
+                          <tr key={r.id}>
+                            <td>{r.revaluation_number}</td>
+                            <td>{r.asset?.name}</td>
+                            <td>{Number(r.adjustment_amount).toLocaleString()}</td>
+                            <td>{r.status}</td>
+                            <td>
+                              {r.status === 'draft' && can('assets.revaluation.manage') ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-primary"
+                                  onClick={async () => {
+                                    try {
+                                      await api.assets.postRevaluation(r.id);
+                                      await alertSuccess('Revaluation posted');
+                                      await load();
+                                    } catch (err: any) {
+                                      await alertError('Post failed', err.message);
+                                    }
+                                  }}
+                                >
+                                  Post
+                                </button>
+                              ) : null}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={5} style={{ color: 'var(--ink-muted)' }}>
+                            No revaluations yet.
+                          </td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -2738,7 +2811,7 @@ export const AssetsPage: React.FC = () => {
                 className="card-surface"
                 style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
               >
-                <div style={{ fontWeight: 700 }}>Dispose asset</div>
+                <div style={{ fontWeight: 700 }}>Draft disposal</div>
                 <div className="form-grid">
                   <div className="field">
                     <label>Asset</label>
@@ -2806,9 +2879,11 @@ export const AssetsPage: React.FC = () => {
                     />
                   </div>
                   <div className="form-grid--actions">
-                    <button className="btn btn-primary" type="submit">
-                      Approve &amp; post
-                    </button>
+                    {can('assets.disposal.request') ? (
+                      <button className="btn btn-primary" type="submit">
+                        Save draft
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               </form>
@@ -2822,18 +2897,81 @@ export const AssetsPage: React.FC = () => {
                         <th>NBV</th>
                         <th>Gain/(Loss)</th>
                         <th>Status</th>
+                        <th></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {disposals.map((r) => (
-                        <tr key={r.id}>
-                          <td>{r.disposal_number}</td>
-                          <td>{r.asset?.name}</td>
-                          <td>{Number(r.nbv_amount).toLocaleString()}</td>
-                          <td>{Number(r.gain_loss_amount).toLocaleString()}</td>
-                          <td>{r.status}</td>
+                      {disposals.length ? (
+                        disposals.map((r) => (
+                          <tr key={r.id}>
+                            <td>{r.disposal_number}</td>
+                            <td>{r.asset?.name}</td>
+                            <td>{Number(r.nbv_amount).toLocaleString()}</td>
+                            <td>{Number(r.gain_loss_amount).toLocaleString()}</td>
+                            <td>{r.status}</td>
+                            <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                              {r.status === 'draft' && can('assets.disposal.request') ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  onClick={async () => {
+                                    try {
+                                      await api.assets.submitDisposal(r.id);
+                                      await alertSuccess('Disposal submitted');
+                                      await load();
+                                    } catch (err: any) {
+                                      await alertError('Submit failed', err.message);
+                                    }
+                                  }}
+                                >
+                                  Submit
+                                </button>
+                              ) : null}
+                              {r.status === 'pending_approval' &&
+                              can('assets.disposal.approve') ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  onClick={async () => {
+                                    try {
+                                      await api.assets.approveDisposal(r.id);
+                                      await alertSuccess('Disposal approved');
+                                      await load();
+                                    } catch (err: any) {
+                                      await alertError('Approve failed', err.message);
+                                    }
+                                  }}
+                                >
+                                  Approve
+                                </button>
+                              ) : null}
+                              {r.status === 'approved' && can('assets.disposal.post') ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-primary"
+                                  onClick={async () => {
+                                    try {
+                                      await api.assets.postDisposal(r.id);
+                                      await alertSuccess('Disposal posted');
+                                      await load();
+                                    } catch (err: any) {
+                                      await alertError('Post failed', err.message);
+                                    }
+                                  }}
+                                >
+                                  Post
+                                </button>
+                              ) : null}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={6} style={{ color: 'var(--ink-muted)' }}>
+                            No disposals yet.
+                          </td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -3049,9 +3187,34 @@ export const AssetsPage: React.FC = () => {
                             Close
                           </button>
                         ) : null}
+                        {['draft', 'open'].includes(c.status) &&
+                        can('assets.verification.manage') ? (
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={async () => {
+                              try {
+                                await api.assets.cancelVerificationCampaign(c.id);
+                                await alertSuccess('Campaign cancelled');
+                                await load();
+                              } catch (err: any) {
+                                await alertError('Cancel failed', err.message);
+                              }
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        ) : null}
                       </td>
                     </tr>
                   ))}
+                  {!campaigns.length ? (
+                    <tr>
+                      <td colSpan={7} style={{ color: 'var(--ink-muted)' }}>
+                        No verification campaigns yet.
+                      </td>
+                    </tr>
+                  ) : null}
                 </tbody>
               </table>
             </div>

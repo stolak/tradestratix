@@ -17,7 +17,7 @@
 | 5 | Impairment/disposal gain-loss; CIP transfer; no delete disposed — `npm run test:assets:phase5` |
 | 6 | Verification mismatch does not mutate register without resolve — `npm run test:assets:phase6` |
 | 7 | Dashboard totals match DB aggregates; register + GL recon + dep summary — `npm run test:assets:phase7` |
-| 8 | Regression: existing sales/banking/accounting tests still pass |
+| 8 | Branch-scoped lists, disposal SoD, cancel campaign, notifications — `npm run test:assets:phase8`; full gate `npm run test:assets:all` |
 
 ## Manual / UAT
 

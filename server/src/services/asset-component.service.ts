@@ -9,6 +9,7 @@ import {
 } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import * as branchAccess from './branch-access.service.js';
 
 const include = {
   parentAsset: { select: { id: true, code: true, name: true } },
@@ -16,9 +17,11 @@ const include = {
 };
 
 export async function listComponents(user: AuthUser, opts?: { parent_asset_id?: string }) {
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const rows = await prisma.assetComponent.findMany({
     where: {
       businessId: user.businessId,
+      parentAsset: scope,
       ...(opts?.parent_asset_id ? { parentAssetId: opts.parent_asset_id } : {})
     },
     include,

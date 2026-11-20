@@ -85,9 +85,17 @@ Updated: 2026-11-18
 - Tests: `npm run test:assets:phase7`
 - Doc: `docs/asset-management/reports.md`
 
-**Next:** Phase 8 — Hardening (full tests, docs, production readiness)
+**Phase 8 — Hardening: COMPLETE**
 
-**Outstanding (module):** Phase 8
+- Branch-scoped Phase 4–6 lists (CIP, impairment, reval, disposal, maintenance, insurance/warranty, components, verification)
+- SoD: disposal approve only after submit; maintenance approve only after submit; accounting UI draft → step actions
+- Notifications on acquisition / transfer / disposal submit & approve
+- UI tab RBAC via `can(...)`; verification cancel in API + UI
+- Docs: `api.md`, `hardening.md`; regression `npm run test:assets:all` / `test:assets:phase8`
+
+**Next:** Module complete — operate & polish as needed
+
+**Outstanding (module):** none (optional: document upload UI, lazy-load tabs)
 
 ---
 

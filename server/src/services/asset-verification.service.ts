@@ -8,6 +8,7 @@ import {
 } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import * as branchAccess from './branch-access.service.js';
 
 const campaignInclude = {
   branch: { select: { id: true, code: true, name: true } },
@@ -61,9 +62,11 @@ function ensureQrPayload(asset: { id: string; code: string | null; qrPayload: st
 }
 
 export async function listCampaigns(user: AuthUser, opts?: { status?: string }) {
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const rows = await prisma.assetVerificationCampaign.findMany({
     where: {
       businessId: user.businessId,
+      ...scope,
       ...(opts?.status ? { status: opts.status } : {})
     },
     include: {

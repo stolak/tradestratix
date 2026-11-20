@@ -11,6 +11,7 @@ import {
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createStockMovement } from './inventory.service.js';
+import * as branchAccess from './branch-access.service.js';
 
 const requestInclude = {
   asset: { select: { id: true, code: true, name: true, operationalStatus: true } },
@@ -41,9 +42,11 @@ async function requireAsset(businessId: string, assetId: string) {
 }
 
 export async function listRequests(user: AuthUser, opts?: { status?: string; asset_id?: string }) {
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const rows = await prisma.assetMaintenanceRequest.findMany({
     where: {
       businessId: user.businessId,
+      asset: scope,
       ...(opts?.status ? { status: opts.status } : {}),
       ...(opts?.asset_id ? { assetId: opts.asset_id } : {})
     },
@@ -104,8 +107,8 @@ export async function approveRequest(user: AuthUser, id: string) {
     where: { id, businessId: user.businessId }
   });
   if (!existing) throw httpError(404, 'Maintenance request not found');
-  if (!['submitted', 'draft'].includes(existing.status)) {
-    throw httpError(400, 'Request cannot be approved in current status');
+  if (existing.status !== 'submitted') {
+    throw httpError(400, 'Only submitted requests can be approved');
   }
   const updated = await prisma.assetMaintenanceRequest.update({
     where: { id },
@@ -144,9 +147,11 @@ export async function rejectRequest(user: AuthUser, id: string) {
 }
 
 export async function listWorkOrders(user: AuthUser, opts?: { status?: string; asset_id?: string }) {
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const rows = await prisma.assetMaintenanceWorkOrder.findMany({
     where: {
       businessId: user.businessId,
+      asset: scope,
       ...(opts?.status ? { status: opts.status } : {}),
       ...(opts?.asset_id ? { assetId: opts.asset_id } : {})
     },

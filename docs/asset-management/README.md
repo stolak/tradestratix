@@ -12,7 +12,7 @@ Enterprise Fixed Asset Lifecycle Management for TradeStratix ERP.
 **Phase 5 (Advanced accounting) — complete.**  
 **Phase 6 (Physical verification) — complete.**  
 **Phase 7 (Dashboard & reports) — complete.**  
-**Phase 8 (Hardening) — next.**
+**Phase 8 (Hardening) — complete.**
 
 ## Existing foothold (do not discard)
 
@@ -45,10 +45,10 @@ This module **extends and hardens** that foothold into a full lifecycle product.
 | [verification.md](./verification.md) | Physical verification campaigns |
 | [phase0-6-review.md](./phase0-6-review.md) | Pre–Phase 7 smoke + best-practice review |
 | [reports.md](./reports.md) | Dashboard, register, GL recon, dep summary |
+| [api.md](./api.md) | Route index |
+| [hardening.md](./hardening.md) | Phase 8 controls + go-live checklist |
 | [testing.md](./testing.md) | Test plan |
 | [../implementation-progress.md](../implementation-progress.md) | Live progress log |
-
-Further topic docs (API, deployment) are added as Phase 8 lands.
 
 ## Implementation sequence
 
@@ -60,7 +60,7 @@ Further topic docs (API, deployment) are added as Phase 8 lands.
 5. Advanced accounting (CIP, components, impairment, revaluation, disposal) ← done  
 6. Physical verification (QR/barcode campaigns) ← done  
 7. Dashboard & reports (+ GL reconciliation) ← done  
-8. Hardening (full tests, docs, production readiness) ← **next**
+8. Hardening (full tests, docs, production readiness) ← done
 
 ## Non-negotiables
 

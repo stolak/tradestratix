@@ -12,6 +12,8 @@ import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
 import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import { netBookValue } from './asset.service.js';
+import * as branchAccess from './branch-access.service.js';
+import { createNotification } from './notification.service.js';
 
 const include = {
   asset: { select: { id: true, code: true, name: true, financialStatus: true, operationalStatus: true } }
@@ -45,9 +47,11 @@ function snapshotFromAsset(asset: any, proceeds: number) {
 }
 
 export async function listDisposals(user: AuthUser, opts?: { asset_id?: string; status?: string }) {
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const rows = await prisma.assetDisposal.findMany({
     where: {
       businessId: user.businessId,
+      ...scope,
       ...(opts?.asset_id ? { assetId: opts.asset_id } : {}),
       ...(opts?.status ? { status: opts.status } : {})
     },
@@ -134,6 +138,14 @@ export async function submitDisposal(user: AuthUser, id: string) {
     data: { status: 'pending_approval' },
     include
   });
+  await createNotification({
+    businessId: user.businessId,
+    title: `Disposal pending approval — ${existing.disposalNumber}`,
+    body: 'An asset disposal was submitted and needs approval before posting.',
+    module: 'assets',
+    entityType: 'AssetDisposal',
+    entityId: id
+  }).catch(() => undefined);
   return serialize(updated);
 }
 
@@ -142,8 +154,8 @@ export async function approveDisposal(user: AuthUser, id: string) {
     where: { id, businessId: user.businessId }
   });
   if (!existing) throw httpError(404, 'Disposal not found');
-  if (!['draft', 'pending_approval'].includes(existing.status)) {
-    throw httpError(400, 'Disposal cannot be approved in this status');
+  if (existing.status !== 'pending_approval') {
+    throw httpError(400, 'Only pending_approval disposals can be approved');
   }
   const updated = await prisma.assetDisposal.update({
     where: { id },
@@ -154,6 +166,15 @@ export async function approveDisposal(user: AuthUser, id: string) {
     },
     include
   });
+  await createNotification({
+    businessId: user.businessId,
+    userId: existing.createdById,
+    title: `Disposal approved — ${existing.disposalNumber}`,
+    body: 'Disposal approved and ready to post.',
+    module: 'assets',
+    entityType: 'AssetDisposal',
+    entityId: id
+  }).catch(() => undefined);
   return serialize(updated);
 }
 

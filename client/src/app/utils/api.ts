@@ -1040,6 +1040,8 @@ export const api = {
       }),
     closeVerificationCampaign: (id: string) =>
       request<any>(`/assets/verification/campaigns/${id}/close`, { method: 'POST', body: '{}' }),
+    cancelVerificationCampaign: (id: string) =>
+      request<any>(`/assets/verification/campaigns/${id}/cancel`, { method: 'POST', body: '{}' }),
     resolveVerificationResult: (id: string, body: Record<string, unknown>) =>
       request<any>(`/assets/verification/results/${id}/resolve`, {
         method: 'POST',
