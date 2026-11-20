@@ -833,8 +833,6 @@ export const api = {
       request<any>(`/assets/depreciation/runs/${id}/post`, { method: 'POST', body: '{}' }),
     reverseDepreciationRun: (id: string) =>
       request<any>(`/assets/depreciation/runs/${id}/reverse`, { method: 'POST', body: '{}' }),
-    runDepreciation: (body: Record<string, unknown> = {}) =>
-      request<any>('/assets/depreciation/run', { method: 'POST', body: JSON.stringify(body) }),
     acquisitions: (params: Record<string, string | undefined> = {}) => {
       const qs = new URLSearchParams();
       Object.entries(params).forEach(([k, v]) => {

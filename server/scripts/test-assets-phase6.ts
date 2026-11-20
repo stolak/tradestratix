@@ -95,7 +95,7 @@ async function main() {
           location_id: locA?.id,
           source: 'other',
           funding_method: 'equity',
-          post_acquisition_journal: true
+          post_acquisition_journal: false
         }
       });
       assert(asset.status === 201 || asset.status === 200, `create asset ${asset.status}`);
@@ -141,7 +141,7 @@ async function main() {
           location_id: locA?.id,
           source: 'other',
           funding_method: 'equity',
-          post_acquisition_journal: true
+          post_acquisition_journal: false
         }
       });
       const asset2Id = asset2.data?.id as string;

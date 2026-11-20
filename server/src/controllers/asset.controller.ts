@@ -73,7 +73,7 @@ export async function update(req: Request, res: Response, next: NextFunction) {
 export async function listDepreciationEntries(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(
-      await depreciationService.listDepreciationEntries(req.user!.businessId, {
+      await depreciationService.listDepreciationEntries(req.user!, {
         asset_id: typeof req.query.asset_id === 'string' ? req.query.asset_id : undefined,
         period_label:
           typeof req.query.period_label === 'string' ? req.query.period_label : undefined,

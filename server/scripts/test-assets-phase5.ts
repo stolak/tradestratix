@@ -122,11 +122,15 @@ async function main() {
           purchase_date: today,
           source: 'other',
           funding_method: 'equity',
-          post_acquisition_journal: true
+          post_acquisition_journal: false
         }
       });
       assert(asset.status === 201 || asset.status === 200, `create asset ${asset.status}`);
       const assetId = asset.data?.id as string;
+      await prisma.fixedAsset.update({
+        where: { id: assetId },
+        data: { financialStatus: 'capitalised', status: 'active', operationalStatus: 'in_use' }
+      });
 
       const imp = await api('/assets/impairments', {
         method: 'POST',
@@ -188,10 +192,14 @@ async function main() {
           purchase_date: today,
           source: 'other',
           funding_method: 'equity',
-          post_acquisition_journal: true
+          post_acquisition_journal: false
         }
       });
       const disposeId = dispAsset.data?.id as string;
+      await prisma.fixedAsset.update({
+        where: { id: disposeId },
+        data: { financialStatus: 'capitalised', status: 'active', operationalStatus: 'in_use' }
+      });
       const disp = await api('/assets/disposals', {
         method: 'POST',
         token,

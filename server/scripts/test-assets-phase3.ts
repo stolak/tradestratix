@@ -114,7 +114,7 @@ async function main() {
           purchase_date: avail,
           source: 'other',
           funding_method: 'equity',
-          post_acquisition_journal: true
+          post_acquisition_journal: false
         }
       });
       assert(created.status === 201 || created.status === 200, `create asset ${created.status}`);

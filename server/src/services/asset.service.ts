@@ -2,7 +2,6 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, roundMoney, serialize, shortId, toDec } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
-import { createJournal, getDefaultAccountMap } from './accounting.service.js';
 import * as branchAccess from './branch-access.service.js';
 
 type BranchListOpts = {
@@ -164,28 +163,20 @@ export async function createAsset(user: AuthUser, body: Record<string, any>) {
     ? new Date(body.available_for_use_date || body.availableForUseDate)
     : purchaseDate;
 
-  const payMethod = body.pay_method || body.payMethod || null;
-  const shouldPost =
-    Boolean(payMethod) ||
+  if (
+    body.pay_method ||
+    body.payMethod ||
     body.post === true ||
     body.post_acquisition_journal === true ||
-    body.postAcquisitionJournal === true;
-  if (shouldPost) {
-    const { userHasAnyPermission } = await import('./permission.service.js');
-    const canCapitalise = await userHasAnyPermission(user.id, [
-      'assets.capitalise',
-      'assets.post'
-    ]);
-    if (!canCapitalise) {
-      throw httpError(
-        403,
-        'Posting GL on create requires assets.capitalise — use the acquisition workflow instead'
-      );
-    }
+    body.postAcquisitionJournal === true
+  ) {
+    throw httpError(
+      400,
+      'GL posting on asset create is disabled — use Assets → Register acquisition (submit → approve → capitalise) or CIP capitalise'
+    );
   }
 
   const assetId = shortId('fa');
-  let acquisitionJournalEntryId: string | null = null;
   const branchId = await branchAccess.resolveWriteBranchId(
     user,
     body.branch_id || body.branchId || user.activeBranchId
@@ -216,58 +207,6 @@ export async function createAsset(user: AuthUser, body: Record<string, any>) {
   }
 
   const created = await prisma.$transaction(async (tx) => {
-    if (shouldPost) {
-      const map = await getDefaultAccountMap(user.businessId);
-      let costAccountId = map.fixed_assets;
-      if (categoryId) {
-        const cat = await tx.assetCategory.findFirst({ where: { id: categoryId } });
-        if (cat?.costAccountId) costAccountId = cat.costAccountId;
-      }
-      if (body.cost_account_id || body.costAccountId) {
-        costAccountId = body.cost_account_id || body.costAccountId;
-      }
-      if (!costAccountId) throw httpError(400, 'fixed_assets GL account is not configured');
-
-      const method = String(payMethod || 'bank').toLowerCase();
-      let creditAccountId =
-        method === 'cash' ? map.cash : method === 'equity' ? map.equity : map.bank;
-      if (method === 'bank' && (body.bank_account_id || body.bankAccountId)) {
-        const bank = await tx.bankAccount.findFirst({
-          where: { id: body.bank_account_id || body.bankAccountId, businessId: user.businessId }
-        });
-        if (!bank) throw httpError(400, 'Invalid bank_account_id');
-        creditAccountId = bank.glAccountId;
-      }
-      if (!creditAccountId) throw httpError(400, 'Credit GL account is not configured for acquisition');
-
-      const journal = await createJournal(
-        user,
-        {
-          entry_date: purchaseDate,
-          memo: `Asset acquisition — ${name}`,
-          source_type: 'asset_acquisition',
-          source_id: assetId,
-          idempotency_key: `asset_acquisition:${assetId}`,
-          branch_id: branchId,
-          post: true,
-          lines: [
-            {
-              account_id: costAccountId,
-              debit: capitalisedCost,
-              description: `Acquire ${name}`
-            },
-            {
-              account_id: creditAccountId,
-              credit: capitalisedCost,
-              description: `Pay ${method} for ${name}`
-            }
-          ]
-        },
-        tx
-      );
-      acquisitionJournalEntryId = (journal as any).id;
-    }
-
     const row = await tx.fixedAsset.create({
       data: {
         id: assetId,
@@ -286,7 +225,7 @@ export async function createAsset(user: AuthUser, body: Record<string, any>) {
         acquisitionSource: body.acquisition_source || body.acquisitionSource || 'direct',
         supplierId: body.supplier_id || body.supplierId || null,
         purchaseDate,
-        capitalisationDate: shouldPost ? purchaseDate : null,
+        capitalisationDate: null,
         availableForUseDate,
         depreciationStartDate: availableForUseDate,
         purchaseCost: toDec(purchaseCost),
@@ -299,7 +238,7 @@ export async function createAsset(user: AuthUser, body: Record<string, any>) {
         accumulatedDepreciation: toDec(0),
         status: 'active',
         operationalStatus: body.operational_status || body.operationalStatus || 'in_use',
-        financialStatus: shouldPost ? 'capitalised' : 'not_capitalised',
+        financialStatus: 'not_capitalised',
         condition: body.condition || 'good',
         department: body.department || null,
         locationId,
@@ -307,7 +246,7 @@ export async function createAsset(user: AuthUser, body: Record<string, any>) {
         costCentre: body.cost_centre || body.costCentre || null,
         custodianEmployeeId,
         notes: body.notes || null,
-        acquisitionJournalEntryId,
+        acquisitionJournalEntryId: null,
         createdById: user.id
       },
       include: {
@@ -552,11 +491,11 @@ export async function runDepreciation(
 }
 
 export async function listDepreciationEntries(
-  businessId: string,
+  user: AuthUser,
   opts: { asset_id?: string; period_label?: string; run_id?: string } = {}
 ) {
   const dep = await import('./asset-depreciation.service.js');
-  return dep.listDepreciationEntries(businessId, opts);
+  return dep.listDepreciationEntries(user, opts);
 }
 
 export async function uploadAssetDocument(

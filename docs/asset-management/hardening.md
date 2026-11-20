@@ -35,8 +35,9 @@ Seed missing permissions if needed: `seed:phase5-perms` … `seed:phase7-perms`,
 
 - Never hard-delete disposed / posted history.
 - Money via `roundMoney` / `toDec`; GL only via `createJournal` / `reverseJournal`.
-- Document upload UI remains optional polish (API/storage pattern already shared with proofs).
+- Document upload UI remains optional polish (API `POST /assets/:id/documents` exists; needs S3 + UI).
 - Lazy-load per tab is optional UX; current page loads with `.catch(() => [])` resilience.
+- Legacy create+GL and one-shot `POST /depreciation/run` are disabled (see [full-review.md](./full-review.md)).
 
 ## Go-live checklist
 

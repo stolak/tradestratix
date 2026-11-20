@@ -47,6 +47,7 @@ This module **extends and hardens** that foothold into a full lifecycle product.
 | [reports.md](./reports.md) | Dashboard, register, GL recon, dep summary |
 | [api.md](./api.md) | Route index |
 | [hardening.md](./hardening.md) | Phase 8 controls + go-live checklist |
+| [full-review.md](./full-review.md) | Post–Phase 8 smoke + polish pass |
 | [testing.md](./testing.md) | Test plan |
 | [../implementation-progress.md](../implementation-progress.md) | Live progress log |
 

@@ -231,9 +231,11 @@ export async function listRuns(
   opts?: { period_label?: string; status?: string; limit?: number }
 ) {
   await ensureDefaultBook(user.businessId);
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const rows = await prisma.assetDepreciationRun.findMany({
     where: {
       businessId: user.businessId,
+      OR: [{ lines: { some: scope } }, { lines: { none: {} } }],
       ...(opts?.period_label ? { periodLabel: opts.period_label } : {}),
       ...(opts?.status ? { status: opts.status } : {})
     },
@@ -669,46 +671,26 @@ export async function reverseRun(user: AuthUser, id: string) {
   return getRun(user, id);
 }
 
-/** Legacy one-shot: preview → approve → post for a period. */
+/** @deprecated Removed — use createPreviewRun → approveRun → postRun (SoD). */
 export async function runDepreciationImmediate(
-  user: AuthUser,
-  opts: { period_label?: string; asset_ids?: string[]; units?: Record<string, number> } = {}
+  _user: AuthUser,
+  _opts: { period_label?: string; asset_ids?: string[]; units?: Record<string, number> } = {}
 ) {
-  const preview = await createPreviewRun(user, {
-    period_label: opts.period_label,
-    asset_ids: opts.asset_ids,
-    units: opts.units
-  });
-  if (!preview.included_count) {
-    return {
-      period_label: preview.period_label,
-      run: preview,
-      count: 0,
-      entries: [],
-      message: 'No assets to depreciate for this period'
-    };
-  }
-  await approveRun(user, preview.id);
-  const posted = await postRun(user, preview.id);
-  const entries = await prisma.depreciationEntry.findMany({
-    where: { runId: preview.id },
-    include: { asset: true }
-  });
-  return {
-    period_label: posted.period_label,
-    run: posted,
-    count: entries.length,
-    entries: serialize(entries)
-  };
+  throw httpError(
+    410,
+    'One-shot depreciation is removed — use preview → approve → post on /assets/depreciation/runs'
+  );
 }
 
 export async function listDepreciationEntries(
-  businessId: string,
+  user: AuthUser,
   opts: { asset_id?: string; period_label?: string; run_id?: string } = {}
 ) {
+  const scope = await branchAccess.branchScopeWhereLoose(user, { allowConsolidated: true });
   const rows = await prisma.depreciationEntry.findMany({
     where: {
-      businessId,
+      businessId: user.businessId,
+      asset: scope,
       ...(opts.asset_id ? { assetId: opts.asset_id } : {}),
       ...(opts.period_label ? { periodLabel: opts.period_label } : {}),
       ...(opts.run_id ? { runId: opts.run_id } : {})

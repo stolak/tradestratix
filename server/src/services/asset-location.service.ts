@@ -5,10 +5,15 @@ import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
 
 export async function listLocations(user: AuthUser, opts?: { branchId?: string; activeOnly?: boolean }) {
+  // Unassigned (null branch) locations are shared master data — always include them.
+  const scope = await branchAccess.branchScopeWhere(user, {
+    branchId: opts?.branchId,
+    allowConsolidated: !opts?.branchId
+  });
   const rows = await prisma.assetLocation.findMany({
     where: {
       businessId: user.businessId,
-      ...(opts?.branchId ? { branchId: opts.branchId } : {}),
+      OR: [{ branchId: scope.branchId as any }, { branchId: null }],
       ...(opts?.activeOnly ? { isActive: true } : {})
     },
     include: { branch: true },

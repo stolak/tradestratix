@@ -93,9 +93,15 @@ Updated: 2026-11-18
 - UI tab RBAC via `can(...)`; verification cancel in API + UI
 - Docs: `api.md`, `hardening.md`; regression `npm run test:assets:all` / `test:assets:phase8`
 
-**Next:** Module complete — operate & polish as needed
+**Full review (2026-11-20): COMPLETE**
 
-**Outstanding (module):** none (optional: document upload UI, lazy-load tabs)
+- Regression: 153 passed (`test:assets:all`)
+- Polish: block create+GL; remove one-shot dep; branch-scope locations/dep lists; CIP capitalise only when completed; more UI `can()` gates + empty states
+- Doc: `docs/asset-management/full-review.md`
+
+**Next:** Module complete — optional polish only (document upload UI, lazy-load tabs)
+
+**Outstanding (module):** optional only (see full-review.md)
 
 ---
 

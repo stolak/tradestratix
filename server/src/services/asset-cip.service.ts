@@ -283,8 +283,8 @@ export async function capitaliseProject(user: AuthUser, id: string, body: Record
     include: { category: true, costs: true }
   });
   if (!project) throw httpError(404, 'Capital project not found');
-  if (!['completed', 'active'].includes(project.status)) {
-    throw httpError(400, 'Project must be completed (or active) before capitalisation');
+  if (project.status !== 'completed') {
+    throw httpError(400, 'Project must be completed before capitalisation');
   }
   if (project.capitalisedAssetId) throw httpError(400, 'Project already capitalised');
   const total = roundMoney(Number(project.totalCost));

@@ -1377,7 +1377,7 @@ export const AssetsPage: React.FC = () => {
                           <td>{row.status}</td>
                           <td>
                             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                              {row.status === 'draft' ? (
+                              {row.status === 'draft' && can('assets.acquire') ? (
                                 <>
                                   <button
                                     type="button"
@@ -1395,7 +1395,7 @@ export const AssetsPage: React.FC = () => {
                                   </button>
                                 </>
                               ) : null}
-                              {row.status === 'pending_approval' ? (
+                              {row.status === 'pending_approval' && can('assets.approve') ? (
                                 <>
                                   <button
                                     type="button"
@@ -1413,7 +1413,8 @@ export const AssetsPage: React.FC = () => {
                                   </button>
                                 </>
                               ) : null}
-                              {row.status === 'approved' ? (
+                              {row.status === 'approved' &&
+                              can('assets.capitalise', 'assets.post') ? (
                                 <button
                                   type="button"
                                   className="btn btn-primary"
@@ -1843,7 +1844,8 @@ export const AssetsPage: React.FC = () => {
                         <button type="button" className="btn btn-ghost" onClick={() => void openRun(r.id)}>
                           Open
                         </button>
-                        {r.status === 'previewed' ? (
+                        {r.status === 'previewed' &&
+                        can('assets.depreciation.approve', 'assets.approve') ? (
                           <button
                             type="button"
                             className="btn btn-ghost"
@@ -1852,7 +1854,8 @@ export const AssetsPage: React.FC = () => {
                             Approve
                           </button>
                         ) : null}
-                        {r.status === 'approved' ? (
+                        {r.status === 'approved' &&
+                        can('assets.depreciation.post', 'assets.post') ? (
                           <button
                             type="button"
                             className="btn btn-ghost"
@@ -1861,7 +1864,8 @@ export const AssetsPage: React.FC = () => {
                             Post
                           </button>
                         ) : null}
-                        {r.status === 'posted' ? (
+                        {r.status === 'posted' &&
+                        can('assets.depreciation.post', 'assets.post') ? (
                           <button
                             type="button"
                             className="btn btn-ghost"
@@ -2068,7 +2072,7 @@ export const AssetsPage: React.FC = () => {
                           </td>
                           <td>{t.lines?.length ?? 0}</td>
                           <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {t.status === 'draft' ? (
+                            {t.status === 'draft' && can('assets.transfer.create') ? (
                               <button
                                 type="button"
                                 className="btn btn-ghost"
@@ -2077,7 +2081,8 @@ export const AssetsPage: React.FC = () => {
                                 Submit
                               </button>
                             ) : null}
-                            {t.status === 'pending_approval' ? (
+                            {t.status === 'pending_approval' &&
+                            can('assets.transfer.approve', 'assets.approve') ? (
                               <button
                                 type="button"
                                 className="btn btn-ghost"
@@ -2086,7 +2091,8 @@ export const AssetsPage: React.FC = () => {
                                 Approve
                               </button>
                             ) : null}
-                            {t.status === 'approved' ? (
+                            {t.status === 'approved' &&
+                            can('assets.transfer.dispatch', 'assets.update') ? (
                               <button
                                 type="button"
                                 className="btn btn-ghost"
@@ -2095,7 +2101,8 @@ export const AssetsPage: React.FC = () => {
                                 Dispatch
                               </button>
                             ) : null}
-                            {t.status === 'in_transit' ? (
+                            {t.status === 'in_transit' &&
+                            can('assets.transfer.receive', 'assets.update') ? (
                               <button
                                 type="button"
                                 className="btn btn-ghost"
@@ -2104,7 +2111,8 @@ export const AssetsPage: React.FC = () => {
                                 Receive
                               </button>
                             ) : null}
-                            {!['received', 'cancelled'].includes(t.status) ? (
+                            {!['received', 'cancelled'].includes(t.status) &&
+                            can('assets.transfer.create', 'assets.update') ? (
                               <button
                                 type="button"
                                 className="btn btn-ghost"
@@ -2203,55 +2211,65 @@ export const AssetsPage: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {maintRequests.map((r) => (
-                        <tr key={r.id}>
-                          <td>
-                            {r.request_number} — {r.title}
-                          </td>
-                          <td>{r.asset?.name}</td>
-                          <td>{r.status}</td>
-                          <td>{r.priority}</td>
-                          <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                            {r.status === 'draft' ? (
-                              <button
-                                type="button"
-                                className="btn btn-ghost"
-                                onClick={() =>
-                                  void api.assets
-                                    .submitMaintenanceRequest(r.id)
-                                    .then(() => load())
-                                    .catch((err: any) => alertError('Submit failed', err.message))
-                                }
-                              >
-                                Submit
-                              </button>
-                            ) : null}
-                            {r.status === 'submitted' && can('assets.maintenance.approve') ? (
-                              <button
-                                type="button"
-                                className="btn btn-ghost"
-                                onClick={() =>
-                                  void api.assets
-                                    .approveMaintenanceRequest(r.id)
-                                    .then(() => load())
-                                    .catch((err: any) => alertError('Approve failed', err.message))
-                                }
-                              >
-                                Approve
-                              </button>
-                            ) : null}
-                            {r.status === 'approved' ? (
-                              <button
-                                type="button"
-                                className="btn btn-ghost"
-                                onClick={() => void convertToWorkOrder(r.id)}
-                              >
-                                Create WO
-                              </button>
-                            ) : null}
+                      {maintRequests.length ? (
+                        maintRequests.map((r) => (
+                          <tr key={r.id}>
+                            <td>
+                              {r.request_number} — {r.title}
+                            </td>
+                            <td>{r.asset?.name}</td>
+                            <td>{r.status}</td>
+                            <td>{r.priority}</td>
+                            <td style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                              {r.status === 'draft' && can('assets.maintenance.create') ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  onClick={() =>
+                                    void api.assets
+                                      .submitMaintenanceRequest(r.id)
+                                      .then(() => load())
+                                      .catch((err: any) => alertError('Submit failed', err.message))
+                                  }
+                                >
+                                  Submit
+                                </button>
+                              ) : null}
+                              {r.status === 'submitted' && can('assets.maintenance.approve') ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  onClick={() =>
+                                    void api.assets
+                                      .approveMaintenanceRequest(r.id)
+                                      .then(() => load())
+                                      .catch((err: any) =>
+                                        alertError('Approve failed', err.message)
+                                      )
+                                  }
+                                >
+                                  Approve
+                                </button>
+                              ) : null}
+                              {r.status === 'approved' && can('assets.maintenance.manage') ? (
+                                <button
+                                  type="button"
+                                  className="btn btn-ghost"
+                                  onClick={() => void convertToWorkOrder(r.id)}
+                                >
+                                  Create WO
+                                </button>
+                              ) : null}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={5} style={{ color: 'var(--ink-muted)' }}>
+                            No maintenance requests yet.
                           </td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -2541,7 +2559,9 @@ export const AssetsPage: React.FC = () => {
                           <td>{p.status}</td>
                           <td>{Number(p.total_cost || 0).toLocaleString()}</td>
                           <td style={{ display: 'flex', gap: 6 }}>
-                            {['active', 'draft'].includes(p.status) && Number(p.total_cost) > 0 ? (
+                            {['active', 'draft'].includes(p.status) &&
+                            Number(p.total_cost) > 0 &&
+                            can('assets.acquire', 'assets.capitalise') ? (
                               <button
                                 type="button"
                                 className="btn btn-ghost"
@@ -2557,7 +2577,9 @@ export const AssetsPage: React.FC = () => {
                                 Complete
                               </button>
                             ) : null}
-                            {['completed', 'active'].includes(p.status) && !p.capitalised_asset_id ? (
+                            {p.status === 'completed' &&
+                            !p.capitalised_asset_id &&
+                            can('assets.capitalise', 'assets.approve') ? (
                               <button
                                 type="button"
                                 className="btn btn-primary"
@@ -2579,6 +2601,13 @@ export const AssetsPage: React.FC = () => {
                           </td>
                         </tr>
                       ))}
+                      {!capitalProjects.length ? (
+                        <tr>
+                          <td colSpan={4} style={{ color: 'var(--ink-muted)' }}>
+                            No CIP projects yet.
+                          </td>
+                        </tr>
+                      ) : null}
                     </tbody>
                   </table>
                 </div>
@@ -3044,14 +3073,22 @@ export const AssetsPage: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {components.map((c) => (
-                        <tr key={c.id}>
-                          <td>{c.parent_asset?.name}</td>
-                          <td>{c.name}</td>
-                          <td>{Number(c.cost_amount).toLocaleString()}</td>
-                          <td>{c.status}</td>
+                      {components.length ? (
+                        components.map((c) => (
+                          <tr key={c.id}>
+                            <td>{c.parent_asset?.name}</td>
+                            <td>{c.name}</td>
+                            <td>{Number(c.cost_amount).toLocaleString()}</td>
+                            <td>{c.status}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={4} style={{ color: 'var(--ink-muted)' }}>
+                            No components yet.
+                          </td>
                         </tr>
-                      ))}
+                      )}
                     </tbody>
                   </table>
                 </div>
@@ -3299,7 +3336,8 @@ export const AssetsPage: React.FC = () => {
                           <td>{r.status}</td>
                           <td>{r.scanned_code || '—'}</td>
                           <td>
-                            {['mismatch', 'missing', 'unexpected'].includes(r.status) ? (
+                            {['mismatch', 'missing', 'unexpected'].includes(r.status) &&
+                            can('assets.verification.resolve', 'assets.approve') ? (
                               <select
                                 defaultValue=""
                                 onChange={async (e) => {

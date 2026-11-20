@@ -71,7 +71,7 @@ async function main() {
           purchase_date: today,
           source: 'other',
           funding_method: 'equity',
-          post_acquisition_journal: true
+          post_acquisition_journal: false
         }
       });
       assert(asset.status === 201 || asset.status === 200, `create asset ${asset.status}`);
