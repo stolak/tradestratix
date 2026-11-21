@@ -6,10 +6,10 @@
  * memberships / overrides, bank accounts, vehicles, SaaS plans/subscriptions, settings.
  *
  * Cleared: sales / purchases / stock movements, lots & serials / journals / banking txns /
- * expenses / fixed assets & acquisitions / budgets / payroll & attendance / deliveries /
- * audit & sessions / notifications / customer notes.
+ * expenses / fixed assets & full asset lifecycle (acq, dep runs, transfers, CIP, verify, …) /
+ * budgets / payroll & attendance / deliveries / audit & sessions / notifications / customer notes.
  *
- * Asset masters kept: asset_categories, asset_locations.
+ * Asset masters kept: asset_categories, asset_locations, asset_depreciation_books.
  *
  * Usage (from server/):
  *   npm run reset:transactions
@@ -63,20 +63,41 @@ const TRANSACTION_TABLES = [
   'stock_serials',
   'stock_lots',
 
-  // Banking / expenses / assets / budgets
+  // Banking / expenses / budgets
   'bank_transactions',
   'expense_bill_lines',
   'expense_bills',
+  'budget_lines',
+  'budgets',
+
+  // Fixed assets — lifecycle (categories / locations / dep books kept)
+  'asset_verification_results',
+  'asset_verification_campaigns',
+  'asset_accounting_events',
+  'asset_disposals',
+  'asset_revaluations',
+  'asset_impairments',
+  'asset_components',
+  'capital_project_costs',
+  'capital_projects',
+  'asset_insurance_claims',
+  'asset_insurances',
+  'asset_warranties',
+  'asset_maintenance_costs',
+  'asset_maintenance_work_orders',
+  'asset_maintenance_requests',
+  'asset_transfer_lines',
+  'asset_transfers',
+  'asset_depreciation_run_lines',
+  'asset_depreciation_runs',
+  'depreciation_entries',
   'asset_capitalisations',
   'asset_cost_additions',
   'asset_acquisitions',
   'asset_documents',
   'asset_assignment_history',
   'asset_status_history',
-  'depreciation_entries',
   'fixed_assets',
-  'budget_lines',
-  'budgets',
 
   // HR transactional (employees kept — sales reps depend on them)
   'payroll_items',
