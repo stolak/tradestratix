@@ -1,8 +1,12 @@
-import dotenv from 'dotenv';
-dotenv.config();
+import 'dotenv/config';
 
 import app from './app.js';
 import { expireReservations } from './services/sales-order.service.js';
+
+if (!process.env.JWT_SECRET?.trim()) {
+  console.error('Fatal: JWT_SECRET environment variable is required');
+  process.exit(1);
+}
 
 const PORT = Number(process.env.PORT) || 5009;
 const RESERVATION_SWEEP_MS = Number(process.env.RESERVATION_SWEEP_MS) || 15 * 60 * 1000;

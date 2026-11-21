@@ -1,10 +1,16 @@
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import swaggerUi from 'swagger-ui-express';
 import apiRouter from './routes/index.js';
 import { swaggerSpec } from './utils/swagger.js';
 
 const app = express();
+
+// Needed so express-rate-limit sees the real client IP behind nginx/CDN.
+if (process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1') {
+  app.set('trust proxy', 1);
+}
 
 const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5177,http://localhost:5009')
   .split(',')
@@ -12,13 +18,20 @@ const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5177,http://lo
   .filter(Boolean);
 
 app.use(
+  helmet({
+    // Swagger UI needs inline scripts/styles; API JSON responses don't need CSP.
+    contentSecurityPolicy: false
+  })
+);
+
+app.use(
   cors({
     origin: (origin, callback) => {
       if (!origin || corsOrigins.includes('*') || corsOrigins.includes(origin)) {
         callback(null, true);
-      } else {
-        callback(null, true);
+        return;
       }
+      callback(null, false);
     },
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Branch-Id']

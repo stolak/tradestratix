@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import * as authController from '../controllers/auth.controller.js';
 import { authenticateStrict } from '../middlewares/auth.js';
+import { loginRateLimiter } from '../middlewares/login-rate-limit.js';
+import { isDemoLoginEnabled } from '../utils/demo-login.js';
 
 const router = Router();
 
@@ -12,7 +14,7 @@ const router = Router();
  *     security: []
  *     summary: Login with username and password
  */
-router.post('/login', authController.login);
+router.post('/login', loginRateLimiter, authController.login);
 
 /**
  * @openapi
@@ -20,9 +22,14 @@ router.post('/login', authController.login);
  *   get:
  *     tags: [Auth]
  *     security: []
- *     summary: List seeded demo accounts for one-click login
+ *     summary: List seeded demo accounts for one-click login (non-production unless ENABLE_DEMO_LOGIN=true)
  */
-router.get('/demo-users', authController.demoUsers);
+router.get('/demo-users', (req, res, next) => {
+  if (!isDemoLoginEnabled()) {
+    return res.status(404).json({ error: 'Not found' });
+  }
+  return authController.demoUsers(req, res, next);
+});
 
 /**
  * @openapi

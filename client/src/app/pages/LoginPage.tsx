@@ -12,23 +12,12 @@ type DemoAccount = {
   password: string;
 };
 
-const FALLBACK_DEMOS: DemoAccount[] = [
-  { username: 'owner', fullName: 'Ada Okoro', label: 'Super Admin', role: 'business_owner', password: 'password123' },
-  { username: 'hr', fullName: 'Peace HR', label: 'HR', role: 'hr_manager', password: 'password123' },
-  { username: 'amaka.sales', fullName: 'Amaka Sales', label: 'Sales Rep', role: 'sales_representative', password: 'password123' },
-  { username: 'accountant', fullName: 'Sade Books', label: 'Accountant', role: 'accountant', password: 'password123' },
-  { username: 'tunde', fullName: 'Tunde Warehouse', label: 'Store Keeper', role: 'inventory_officer', password: 'password123' },
-  { username: 'branch.mgr', fullName: 'Ifeanyi Branch', label: 'Branch Manager', role: 'branch_manager', password: 'password123' },
-  { username: 'customer', fullName: 'City Mart Contact', label: 'Customer', role: 'customer_portal', password: 'password123' },
-  { username: 'supplier', fullName: 'Acme Supply Contact', label: 'Supplier', role: 'supplier_portal', password: 'password123' }
-];
-
 export const LoginPage: React.FC = () => {
   const { login } = useAuth();
-  const [username, setUsername] = useState('owner');
-  const [password, setPassword] = useState('password123');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
-  const [demos, setDemos] = useState<DemoAccount[]>(FALLBACK_DEMOS);
+  const [demos, setDemos] = useState<DemoAccount[]>([]);
   const [activeUsername, setActiveUsername] = useState<string | null>(null);
 
   useEffect(() => {
@@ -39,7 +28,7 @@ export const LoginPage: React.FC = () => {
         if (!cancelled && res.accounts?.length) setDemos(res.accounts);
       })
       .catch(() => {
-        /* keep fallback chips */
+        if (!cancelled) setDemos([]);
       });
     return () => {
       cancelled = true;
@@ -112,32 +101,34 @@ export const LoginPage: React.FC = () => {
             {busy && !activeUsername ? 'Signing in…' : 'Sign in'}
           </button>
 
-          <div className="login-demo">
-            <div className="login-demo__head">
-              <span className="login-demo__title">Demo users</span>
-              <span className="login-demo__hint">password123</span>
+          {demos.length > 0 && (
+            <div className="login-demo">
+              <div className="login-demo__head">
+                <span className="login-demo__title">Demo users</span>
+                <span className="login-demo__hint">password123</span>
+              </div>
+              <div className="login-demo__grid">
+                {demos.map((account) => {
+                  const loading = busy && activeUsername === account.username;
+                  return (
+                    <button
+                      key={account.username}
+                      type="button"
+                      className="login-demo__chip"
+                      disabled={busy}
+                      onClick={() => onDemoClick(account)}
+                      title={`${account.fullName} · ${account.username}`}
+                    >
+                      <span className="login-demo__label">{account.label}</span>
+                      <span className="login-demo__meta">
+                        {loading ? 'Signing in…' : account.username}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-            <div className="login-demo__grid">
-              {demos.map((account) => {
-                const loading = busy && activeUsername === account.username;
-                return (
-                  <button
-                    key={account.username}
-                    type="button"
-                    className="login-demo__chip"
-                    disabled={busy}
-                    onClick={() => onDemoClick(account)}
-                    title={`${account.fullName} · ${account.username}`}
-                  >
-                    <span className="login-demo__label">{account.label}</span>
-                    <span className="login-demo__meta">
-                      {loading ? 'Signing in…' : account.username}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          )}
         </form>
       </section>
     </div>
