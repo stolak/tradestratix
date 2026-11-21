@@ -1,6 +1,16 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../utils/api';
 import { alertError, alertSuccess } from '../utils/alerts';
+
+const DEFAULT_MFA_ROLES = [
+  'business_owner',
+  'managing_director',
+  'finance_manager',
+  'accountant',
+  'payroll_officer',
+  'hr_manager',
+  'auditor'
+];
 
 function settingValue(biz: any, key: string, fallback = '') {
   const rows: any[] = biz?.settings || [];
@@ -8,31 +18,65 @@ function settingValue(biz: any, key: string, fallback = '') {
   return hit?.value != null ? String(hit.value) : fallback;
 }
 
+function parseMfaRoles(raw: string): string[] {
+  if (!raw.trim()) return [...DEFAULT_MFA_ROLES];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [...DEFAULT_MFA_ROLES];
+    return [...new Set(parsed.map((r) => String(r).trim().toLowerCase()).filter(Boolean))];
+  } catch {
+    return [...DEFAULT_MFA_ROLES];
+  }
+}
+
 export const SettingsPage: React.FC = () => {
   const [form, setForm] = useState<any>(null);
   const [vatRate, setVatRate] = useState('7.5');
+  const [roles, setRoles] = useState<Array<{ code: string; name: string }>>([]);
+  const [mfaRoles, setMfaRoles] = useState<string[]>([...DEFAULT_MFA_ROLES]);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    api.businesses
-      .current()
-      .then((biz) => {
+    Promise.all([api.businesses.current(), api.rbac.roles()])
+      .then(([biz, roleRows]) => {
         setForm(biz);
         setVatRate(settingValue(biz, 'vat_rate_percent', '7.5'));
+        const list = (Array.isArray(roleRows) ? roleRows : []).map((r: any) => ({
+          code: String(r.code || '').toLowerCase(),
+          name: String(r.name || r.code || '')
+        }));
+        setRoles(list);
+        setMfaRoles(parseMfaRoles(settingValue(biz, 'mfa_required_roles', '')));
       })
       .catch((e) => alertError('Settings', e.message));
   }, []);
 
+  const roleOptions = useMemo(() => {
+    const byCode = new Map(roles.map((r) => [r.code, r]));
+    for (const code of mfaRoles) {
+      if (!byCode.has(code)) byCode.set(code, { code, name: code });
+    }
+    return [...byCode.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [roles, mfaRoles]);
+
   if (!form) return <p>Loading business profile…</p>;
+
+  const toggleMfaRole = (code: string) => {
+    setMfaRoles((prev) =>
+      prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code]
+    );
+  };
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
+    setSaving(true);
     try {
       const rate = Number(vatRate);
       if (!Number.isFinite(rate) || rate < 0 || rate > 100) {
         await alertError('Invalid VAT %', 'Enter a VAT percentage between 0 and 100.');
         return;
       }
-      const updated = await api.businesses.update({
+      await api.businesses.update({
         name: form.name,
         legal_name: form.legal_name,
         email: form.email,
@@ -45,12 +89,16 @@ export const SettingsPage: React.FC = () => {
         address_line1: form.address_line1
       });
       await api.businesses.upsertSetting('vat_rate_percent', String(rate));
+      await api.businesses.upsertSetting('mfa_required_roles', JSON.stringify(mfaRoles));
       const refreshed = await api.businesses.current();
       setForm(refreshed);
       setVatRate(settingValue(refreshed, 'vat_rate_percent', String(rate)));
+      setMfaRoles(parseMfaRoles(settingValue(refreshed, 'mfa_required_roles', '[]')));
       await alertSuccess('Business updated');
     } catch (err: any) {
       await alertError('Update failed', err.message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -138,9 +186,42 @@ export const SettingsPage: React.FC = () => {
               onChange={(e) => setForm({ ...form, address_line1: e.target.value })}
             />
           </div>
+
+          <div className="field" style={{ gridColumn: '1 / -1' }}>
+            <label>MFA required roles</label>
+            <div style={{ color: 'var(--ink-muted)', fontSize: '0.82rem', marginBottom: 8 }}>
+              Users with any of these roles must enter a second factor after password login. Uncheck all
+              to disable MFA for every role.
+            </div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+                gap: '0.5rem 1rem'
+              }}
+            >
+              {roleOptions.map((role) => (
+                <label
+                  key={role.code}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={mfaRoles.includes(role.code)}
+                    onChange={() => toggleMfaRole(role.code)}
+                  />
+                  <span>
+                    {role.name}
+                    <span style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }}> ({role.code})</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+
           <div className="form-grid--actions">
-            <button className="btn btn-primary" type="submit">
-              Save settings
+            <button className="btn btn-primary" type="submit" disabled={saving}>
+              {saving ? 'Saving…' : 'Save settings'}
             </button>
           </div>
         </div>

@@ -18,6 +18,16 @@ router.post('/login', loginRateLimiter, authController.login);
 
 /**
  * @openapi
+ * /api/v1/auth/mfa/verify:
+ *   post:
+ *     tags: [Auth]
+ *     security: []
+ *     summary: Complete login with MFA code
+ */
+router.post('/mfa/verify', loginRateLimiter, authController.verifyMfa);
+
+/**
+ * @openapi
  * /api/v1/auth/demo-users:
  *   get:
  *     tags: [Auth]

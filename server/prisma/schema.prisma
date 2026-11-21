@@ -362,6 +362,7 @@ model User {
   userWarehouses      UserWarehouse[]
   loginHistory        LoginHistory[]
   refreshTokens       RefreshToken[]
+  mfaChallenges       MfaChallenge[]
   employees           Employee[]
   notifications       AppNotification[]
 
@@ -534,6 +535,23 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+/// Short-lived login MFA challenge (email/OTP-style code; demo uses fixed code).
+model MfaChallenge {
+  id         String    @id
+  businessId String    @map("business_id")
+  userId     String    @map("user_id")
+  codeHash   String    @map("code_hash") @db.VarChar(255)
+  expiresAt  DateTime  @map("expires_at")
+  consumedAt DateTime? @map("consumed_at")
+  attempts   Int       @default(0)
+  createdAt  DateTime  @default(now()) @map("created_at")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("mfa_challenges")
 }
 
 // ─── Accounting ──────────────────────────────────────────────────────────────

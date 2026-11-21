@@ -6,6 +6,7 @@ import { getUserPermissionCodes } from './permission.service.js';
 import { writeAudit } from './audit.service.js';
 import type { AuthUser } from '../types/express/index.js';
 import * as branchAccess from './branch-access.service.js';
+import * as mfa from './mfa.service.js';
 
 async function toAuthUser(userId: string, preferredBranchId?: string | null): Promise<AuthUser> {
   const user = await prisma.user.findUnique({
@@ -31,28 +32,16 @@ async function toAuthUser(userId: string, preferredBranchId?: string | null): Pr
   return branchAccess.hydrateBranchContext(base, preferredBranchId || user.defaultBranchId);
 }
 
-export async function login(
-  username: string,
-  password: string,
-  meta?: { ipAddress?: string; userAgent?: string }
+async function buildSessionPayload(
+  userId: string,
+  meta?: { ipAddress?: string; auditAction?: string; auditSummary?: string }
 ) {
-  const user = await prisma.user.findFirst({
-    where: { username, status: 'active' },
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
     include: { business: true, userBranches: true }
   });
-  if (!user) throw httpError(401, 'Invalid username or password');
-
-  const ok = await bcrypt.compare(password, user.passwordHash);
-  await prisma.loginHistory.create({
-    data: {
-      id: shortId('lgh'),
-      userId: user.id,
-      ipAddress: meta?.ipAddress ?? null,
-      userAgent: meta?.userAgent ?? null,
-      success: ok
-    }
-  });
-  if (!ok) throw httpError(401, 'Invalid username or password');
+  if (!user) throw httpError(401, 'User not found');
+  if (user.status !== 'active') throw httpError(403, 'User account is not active');
   if (user.business.status !== 'active') throw httpError(403, 'Business account is not active');
 
   const defaultBranch = await branchAccess.ensureDefaultBranch(user.businessId, user.id);
@@ -82,9 +71,9 @@ export async function login(
 
   await writeAudit({
     user: authUser,
-    action: 'login',
+    action: meta?.auditAction || 'login',
     module: 'auth',
-    summary: `User ${user.username} logged in`,
+    summary: meta?.auditSummary || `User ${user.username} logged in`,
     ipAddress: meta?.ipAddress
   });
 
@@ -115,6 +104,65 @@ export async function login(
       : null,
     is_sales_rep: !!salesRep
   };
+}
+
+export async function login(
+  username: string,
+  password: string,
+  meta?: { ipAddress?: string; userAgent?: string }
+) {
+  const user = await prisma.user.findFirst({
+    where: { username, status: 'active' },
+    include: { business: true, userBranches: true }
+  });
+  if (!user) throw httpError(401, 'Invalid username or password');
+
+  const ok = await bcrypt.compare(password, user.passwordHash);
+  await prisma.loginHistory.create({
+    data: {
+      id: shortId('lgh'),
+      userId: user.id,
+      ipAddress: meta?.ipAddress ?? null,
+      userAgent: meta?.userAgent ?? null,
+      success: ok
+    }
+  });
+  if (!ok) throw httpError(401, 'Invalid username or password');
+  if (user.business.status !== 'active') throw httpError(403, 'Business account is not active');
+
+  const needsMfa = await mfa.userRequiresMfa(user.businessId, user.id, user.role);
+  if (needsMfa) {
+    return mfa.startMfaChallenge({
+      businessId: user.businessId,
+      userId: user.id,
+      username: user.username,
+      email: user.email
+    });
+  }
+
+  return buildSessionPayload(user.id, { ipAddress: meta?.ipAddress });
+}
+
+export async function verifyMfa(
+  mfaToken: string,
+  code: string,
+  meta?: { ipAddress?: string; userAgent?: string }
+) {
+  const { userId } = await mfa.consumeMfaChallenge(mfaToken, code);
+  await prisma.loginHistory.create({
+    data: {
+      id: shortId('lgh'),
+      userId,
+      ipAddress: meta?.ipAddress ?? null,
+      userAgent: meta?.userAgent ?? null,
+      success: true
+    }
+  });
+  return buildSessionPayload(userId, {
+    ipAddress: meta?.ipAddress,
+    auditAction: 'login_mfa',
+    auditSummary: 'User completed MFA and logged in'
+  });
 }
 
 export async function me(user: AuthUser) {

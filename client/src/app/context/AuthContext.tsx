@@ -31,6 +31,16 @@ export type BranchOption = {
   is_active?: boolean;
 };
 
+export type LoginOutcome =
+  | { status: 'authenticated'; user: AuthUser }
+  | {
+      status: 'mfa_required';
+      mfa_token: string;
+      message?: string;
+      demo_code?: string;
+      expires_in_seconds?: number;
+    };
+
 interface AuthContextValue {
   user: AuthUser | null;
   token: string | null;
@@ -40,7 +50,8 @@ interface AuthContextValue {
   permissions: string[];
   branches: BranchOption[];
   activeBranchId: string | null;
-  login: (username: string, password: string) => Promise<AuthUser>;
+  login: (username: string, password: string) => Promise<LoginOutcome>;
+  verifyMfa: (mfaToken: string, code: string) => Promise<AuthUser>;
   logout: () => void;
   setUser: (user: AuthUser) => void;
   switchBranch: (branchId: string) => Promise<void>;
@@ -148,8 +159,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [applySession]);
 
   const login = useCallback(
-    async (username: string, password: string) => {
+    async (username: string, password: string): Promise<LoginOutcome> => {
       const result = await api.auth.login(username, password);
+      if ('mfa_required' in result && result.mfa_required) {
+        return {
+          status: 'mfa_required',
+          mfa_token: result.mfa_token,
+          message: result.message,
+          demo_code: result.demo_code,
+          expires_in_seconds: result.expires_in_seconds
+        };
+      }
+      const user = applySession({
+        user: { ...result.user, business: result.business },
+        token: result.token,
+        permissions: result.permissions,
+        branches: result.branches,
+        active_branch_id: result.active_branch_id,
+        is_sales_rep: result.is_sales_rep,
+        sales_rep: result.sales_rep
+      });
+      return { status: 'authenticated', user };
+    },
+    [applySession]
+  );
+
+  const verifyMfa = useCallback(
+    async (mfaToken: string, code: string) => {
+      const result = await api.auth.verifyMfa(mfaToken, code);
       return applySession({
         user: { ...result.user, business: result.business },
         token: result.token,
@@ -230,6 +267,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       branches,
       activeBranchId,
       login,
+      verifyMfa,
       logout,
       setUser,
       switchBranch,
@@ -246,6 +284,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       branches,
       activeBranchId,
       login,
+      verifyMfa,
       logout,
       setUser,
       switchBranch,

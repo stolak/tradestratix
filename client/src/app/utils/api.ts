@@ -37,6 +37,29 @@ async function uploadForm<T>(path: string, form: FormData): Promise<T> {
 export const api = {
   auth: {
     login: (username: string, password: string) =>
+      request<
+        | {
+            mfa_required: true;
+            mfa_token: string;
+            expires_in_seconds?: number;
+            message?: string;
+            demo_code?: string;
+          }
+        | {
+            token: string;
+            user: any;
+            business: any;
+            permissions: string[];
+            branches?: any[];
+            active_branch_id?: string;
+            is_sales_rep?: boolean;
+            sales_rep?: any;
+          }
+      >('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ username, password })
+      }),
+    verifyMfa: (mfaToken: string, code: string) =>
       request<{
         token: string;
         user: any;
@@ -46,9 +69,9 @@ export const api = {
         active_branch_id?: string;
         is_sales_rep?: boolean;
         sales_rep?: any;
-      }>('/auth/login', {
+      }>('/auth/mfa/verify', {
         method: 'POST',
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ mfa_token: mfaToken, code })
       }),
     me: () => request<any>('/auth/me'),
     demoUsers: () =>

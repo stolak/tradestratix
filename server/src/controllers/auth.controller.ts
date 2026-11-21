@@ -18,6 +18,23 @@ export async function login(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+export async function verifyMfa(req: Request, res: Response, next: NextFunction) {
+  try {
+    const mfaToken = req.body?.mfa_token || req.body?.mfaToken;
+    const code = req.body?.code;
+    if (!mfaToken || !code) {
+      return res.status(400).json({ error: 'mfa_token and code are required' });
+    }
+    const result = await authService.verifyMfa(String(mfaToken), String(code), {
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent') || undefined
+    });
+    return res.json(result);
+  } catch (err) {
+    return next(err);
+  }
+}
+
 /** Public list of seeded demo accounts for one-click login (demo / local only UX). */
 export async function demoUsers(_req: Request, res: Response, next: NextFunction) {
   try {

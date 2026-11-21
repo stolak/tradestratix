@@ -1276,6 +1276,28 @@ async function main() {
     },
     update: {}
   });
+
+  // Roles that must complete MFA after password login (configurable in Business settings)
+  await prisma.businessSetting.upsert({
+    where: {
+      businessId_settingKey: { businessId: business.id, settingKey: 'mfa_required_roles' }
+    },
+    create: {
+      id: id('bst'),
+      businessId: business.id,
+      settingKey: 'mfa_required_roles',
+      value: JSON.stringify([
+        'business_owner',
+        'managing_director',
+        'finance_manager',
+        'accountant',
+        'payroll_officer',
+        'hr_manager',
+        'auditor'
+      ])
+    },
+    update: {}
+  });
   await prisma.businessSubscription.create({
     data: {
       id: id('sub'),

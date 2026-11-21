@@ -2,6 +2,10 @@ import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, serialize, shortId } from '../utils/helpers.js';
 import type { AuthUser } from '../types/express/index.js';
 import { writeAudit } from './audit.service.js';
+import {
+  MFA_REQUIRED_ROLES_KEY,
+  normalizeRoleCodes
+} from './mfa.service.js';
 
 export async function getCurrentBusiness(businessId: string) {
   const biz = await prisma.business.findUnique({
@@ -100,6 +104,28 @@ export async function upsertSetting(user: AuthUser, key: string, value: string) 
       throw httpError(400, 'vat_rate_percent must be a number between 0 and 100');
     }
     value = String(n);
+  }
+  if (settingKey === MFA_REQUIRED_ROLES_KEY) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      throw httpError(400, 'mfa_required_roles must be a JSON array of role codes');
+    }
+    const roles = normalizeRoleCodes(parsed);
+    const known = await prisma.role.findMany({
+      where: {
+        OR: [{ businessId: null }, { businessId: user.businessId }],
+        code: { in: roles.length ? roles : ['__none__'] }
+      },
+      select: { code: true }
+    });
+    const knownSet = new Set(known.map((r) => r.code.toLowerCase()));
+    const unknown = roles.filter((r) => !knownSet.has(r));
+    if (unknown.length) {
+      throw httpError(400, `Unknown role code(s): ${unknown.join(', ')}`);
+    }
+    value = JSON.stringify(roles);
   }
 
   const existing = await prisma.businessSetting.findUnique({
