@@ -10,6 +10,7 @@ Dynamic, configurable payroll for TradeStratix — modeled on school-app, improv
 **H3 — Compute engine — complete** (component resolution, commission injection, draft recompute, item lines).  
 **H4 — Approve → post → pay — complete** (SoD approve, component-aware journals, override deplete on post).  
 **H5 — Payslip & reports — complete** (period matrix, employee payslip + YTD).  
+**Statutory UI** — progressive tax bands + flat rates configurable under Payroll → Statutory.  
 **H6 — Optional (attendance factors, loans) — pending.**
 
 ## H0 decisions (locked)

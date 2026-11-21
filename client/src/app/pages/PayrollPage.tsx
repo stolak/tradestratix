@@ -80,6 +80,17 @@ export const PayrollPage: React.FC = () => {
   const [compForm, setCompForm] = useState(emptyCompForm);
   const [compModalOpen, setCompModalOpen] = useState(false);
   const [editingCompId, setEditingCompId] = useState<string | null>(null);
+  const [statutoryModalOpen, setStatutoryModalOpen] = useState(false);
+  const [statutoryForm, setStatutoryForm] = useState({
+    key: '',
+    name: '',
+    method: 'progressive_brackets',
+    rate: '',
+    base_key: 'taxable',
+    is_active: true,
+    brackets: [] as { upper_limit: string; rate: string; open_ended: boolean }[]
+  });
+  const [taxPreviewMonthly, setTaxPreviewMonthly] = useState('500000');
   const [gradeForm, setGradeForm] = useState({ code: '', name: '', max_step: '10' });
   const [chartForm, setChartForm] = useState({
     pay_grade_id: '',
@@ -439,6 +450,167 @@ export const PayrollPage: React.FC = () => {
     }
   };
 
+  const emptyBracketRow = () => ({
+    upper_limit: '',
+    rate: '',
+    open_ended: false
+  });
+
+  const openEditStatutory = (row: any) => {
+    const brackets = (row.brackets || [])
+      .slice()
+      .sort(
+        (a: any, b: any) =>
+          Number(a.sort_order ?? a.sortOrder ?? 0) - Number(b.sort_order ?? b.sortOrder ?? 0)
+      )
+      .map((b: any) => ({
+        upper_limit:
+          b.upper_limit != null && b.upper_limit !== ''
+            ? String(b.upper_limit)
+            : '',
+        rate: b.rate != null ? String(b.rate) : '',
+        open_ended: b.upper_limit == null || b.upper_limit === ''
+      }));
+    setStatutoryForm({
+      key: row.key || '',
+      name: row.name || '',
+      method: row.method || 'flat_rate',
+      rate: row.rate != null ? String(row.rate) : '',
+      base_key: row.base_key || 'taxable',
+      is_active: row.is_active !== false,
+      brackets: brackets.length
+        ? brackets
+        : row.method === 'progressive_brackets'
+          ? [emptyBracketRow(), { upper_limit: '', rate: '', open_ended: true }]
+          : []
+    });
+    setStatutoryModalOpen(true);
+  };
+
+  const closeStatutoryModal = () => {
+    setStatutoryModalOpen(false);
+  };
+
+  const updateBracket = (
+    index: number,
+    patch: Partial<{ upper_limit: string; rate: string; open_ended: boolean }>
+  ) => {
+    setStatutoryForm((f) => {
+      const brackets = f.brackets.map((b, i) => (i === index ? { ...b, ...patch } : b));
+      if (patch.open_ended) {
+        for (let i = 0; i < brackets.length; i++) {
+          if (i !== index) brackets[i] = { ...brackets[i], open_ended: false };
+          else brackets[i] = { ...brackets[i], open_ended: true, upper_limit: '' };
+        }
+      }
+      return { ...f, brackets };
+    });
+  };
+
+  const addBracket = () => {
+    setStatutoryForm((f) => {
+      const closed = f.brackets.filter((b) => !b.open_ended);
+      const open = f.brackets.filter((b) => b.open_ended);
+      return {
+        ...f,
+        brackets: [
+          ...closed,
+          emptyBracketRow(),
+          ...(open.length ? open : [{ upper_limit: '', rate: '', open_ended: true }])
+        ]
+      };
+    });
+  };
+
+  const removeBracket = (index: number) => {
+    setStatutoryForm((f) => ({
+      ...f,
+      brackets: f.brackets.filter((_, i) => i !== index)
+    }));
+  };
+
+  /** Client-side preview matching server progressiveMonthlyTax. */
+  const previewProgressiveTax = (monthlyTaxable: number) => {
+    if (monthlyTaxable <= 0 || !statutoryForm.brackets.length) return 0;
+    const annual = monthlyTaxable * 12;
+    const sorted = statutoryForm.brackets
+      .map((b) => ({
+        upperLimit: b.open_ended || !b.upper_limit ? null : Number(b.upper_limit),
+        rate: Number(b.rate || 0)
+      }))
+      .sort((a, b) => {
+        if (a.upperLimit == null) return 1;
+        if (b.upperLimit == null) return -1;
+        return a.upperLimit - b.upperLimit;
+      });
+    let tax = 0;
+    let prev = 0;
+    for (const b of sorted) {
+      const top = b.upperLimit == null ? Number.POSITIVE_INFINITY : b.upperLimit;
+      const slice = Math.max(0, Math.min(annual, top) - prev);
+      if (slice > 0) tax += slice * (b.rate / 100);
+      prev = top;
+      if (annual <= top) break;
+    }
+    return Math.round((tax / 12 + Number.EPSILON) * 100) / 100;
+  };
+
+  const saveStatutory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (statutoryForm.method === 'progressive_brackets') {
+        if (statutoryForm.brackets.length < 1) {
+          await alertError('Statutory', 'Add at least one tax band');
+          return;
+        }
+        const openCount = statutoryForm.brackets.filter((b) => b.open_ended).length;
+        if (openCount !== 1) {
+          await alertError(
+            'Statutory',
+            'Exactly one band must be open-ended (no upper limit) for income above the last band'
+          );
+          return;
+        }
+        for (const b of statutoryForm.brackets) {
+          if (b.rate === '' || Number.isNaN(Number(b.rate))) {
+            await alertError('Statutory', 'Each band needs a rate %');
+            return;
+          }
+          if (!b.open_ended && (!b.upper_limit || Number(b.upper_limit) <= 0)) {
+            await alertError('Statutory', 'Each closed band needs a positive annual upper limit');
+            return;
+          }
+        }
+      } else if (statutoryForm.rate === '' || Number.isNaN(Number(statutoryForm.rate))) {
+        await alertError('Statutory', 'Enter a flat rate %');
+        return;
+      }
+
+      await api.payroll.upsertStatutory({
+        key: statutoryForm.key,
+        name: statutoryForm.name,
+        method: statutoryForm.method,
+        rate:
+          statutoryForm.method === 'flat_rate' ? Number(statutoryForm.rate) : undefined,
+        base_key: statutoryForm.base_key || null,
+        is_active: statutoryForm.is_active,
+        brackets:
+          statutoryForm.method === 'progressive_brackets'
+            ? statutoryForm.brackets.map((b, i) => ({
+                sort_order: i,
+                upper_limit: b.open_ended ? null : Number(b.upper_limit),
+                rate: Number(b.rate)
+              }))
+            : []
+      });
+      await alertSuccess('Statutory rule saved');
+      closeStatutoryModal();
+      await loadConfig();
+    } catch (err: any) {
+      await alertError('Statutory', err.message);
+    }
+  };
+
   const toggleStatutory = async (row: any) => {
     try {
       await api.payroll.upsertStatutory({
@@ -448,13 +620,23 @@ export const PayrollPage: React.FC = () => {
         rate: row.rate != null ? Number(row.rate) : undefined,
         base_key: row.base_key,
         is_active: !row.is_active,
-        brackets: row.brackets
+        brackets: (row.brackets || []).map((b: any, i: number) => ({
+          sort_order: b.sort_order ?? i,
+          upper_limit: b.upper_limit,
+          rate: Number(b.rate)
+        }))
       });
       await loadConfig();
     } catch (err: any) {
       await alertError('Statutory', err.message);
     }
   };
+
+  useEffect(() => {
+    if (!statutoryModalOpen) return;
+    document.body.classList.add('modal-open');
+    return () => document.body.classList.remove('modal-open');
+  }, [statutoryModalOpen]);
 
   const savePeriod = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1462,55 +1644,362 @@ export const PayrollPage: React.FC = () => {
       ) : null}
 
       {tab === 'statutory' ? (
-        <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Key</th>
-                  <th>Name</th>
-                  <th>Method</th>
-                  <th>Rate / brackets</th>
-                  <th>Base</th>
-                  <th>Active</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {statutory.map((s) => (
-                  <tr key={s.id}>
-                    <td>{s.key}</td>
-                    <td>{s.name}</td>
-                    <td>{s.method}</td>
-                    <td>
-                      {s.method === 'progressive_brackets'
-                        ? `${s.brackets?.length || 0} brackets`
-                        : s.rate != null
-                          ? `${Number(s.rate)}%`
-                          : '—'}
-                    </td>
-                    <td>{s.base_key || '—'}</td>
-                    <td>{s.is_active ? 'Yes' : 'No'}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={() => void toggleStatutory(s)}
-                      >
-                        {s.is_active ? 'Disable' : 'Enable'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {!statutory.length ? (
-                  <tr>
-                    <td colSpan={7}>No statutory rules — seed starter config first</td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
+        <>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <div style={{ fontWeight: 700 }}>Statutory rules</div>
+            <p style={{ margin: 0, color: 'var(--ink-muted)', fontSize: 13, maxWidth: 720 }}>
+              Progressive tax (PAYE) uses <strong>annual</strong> income bands. Monthly tax = annual
+              tax ÷ 12. Flat rules (pension, NHF) use a single %. Link a component to a rule via
+              Calculation → Statutory rule.
+            </p>
           </div>
-        </div>
+
+          <div className="card-surface" style={{ padding: '0.5rem 0' }}>
+            <div className="table-wrap">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Rule</th>
+                    <th>Method</th>
+                    <th>Config</th>
+                    <th>Base</th>
+                    <th>Active</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {statutory.map((s) => (
+                    <tr key={s.id}>
+                      <td>
+                        <div style={{ fontWeight: 600 }}>{s.name}</div>
+                        <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>{s.key}</div>
+                      </td>
+                      <td>
+                        {s.method === 'progressive_brackets'
+                          ? 'Progressive bands'
+                          : 'Flat rate'}
+                      </td>
+                      <td>
+                        {s.method === 'progressive_brackets' ? (
+                          <div style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+                            {(s.brackets || []).length} band
+                            {(s.brackets || []).length === 1 ? '' : 's'}
+                            <div style={{ color: 'var(--ink-muted)', marginTop: 4 }}>
+                              {(s.brackets || [])
+                                .slice()
+                                .sort(
+                                  (a: any, b: any) =>
+                                    Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0)
+                                )
+                                .map((b: any) =>
+                                  b.upper_limit == null
+                                    ? `Above · ${Number(b.rate)}%`
+                                    : `≤ ${Number(b.upper_limit).toLocaleString()} · ${Number(b.rate)}%`
+                                )
+                                .join(' → ')}
+                            </div>
+                          </div>
+                        ) : s.rate != null ? (
+                          `${Number(s.rate)}%`
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                      <td>{s.base_key || '—'}</td>
+                      <td>{s.is_active ? 'Yes' : 'No'}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => openEditStatutory(s)}
+                          >
+                            Configure
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => void toggleStatutory(s)}
+                          >
+                            {s.is_active ? 'Disable' : 'Enable'}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {!statutory.length ? (
+                    <tr>
+                      <td colSpan={6}>
+                        No statutory rules — click “Seed starter config” to create PAYE & pension.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {statutoryModalOpen ? (
+            <div
+              className="modal-backdrop"
+              role="presentation"
+              onClick={closeStatutoryModal}
+            >
+              <div
+                className="modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Configure statutory rule"
+                style={{ width: 'min(720px, 100%)' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="modal__header">
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: '1.25rem' }}>
+                      Configure · {statutoryForm.name || statutoryForm.key}
+                    </h2>
+                    <p style={{ margin: '0.25rem 0 0', color: 'var(--ink-muted)', fontSize: 13 }}>
+                      Key <code>{statutoryForm.key}</code>
+                      {statutoryForm.method === 'progressive_brackets'
+                        ? ' · Annual upper limits; tax is converted to monthly'
+                        : ' · Flat percentage of the contribution base'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    aria-label="Close"
+                    onClick={closeStatutoryModal}
+                    style={{ fontSize: '1.25rem', lineHeight: 1, padding: '0.35rem 0.65rem' }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <form onSubmit={saveStatutory}>
+                  <div className="modal__body" style={{ gap: '1.35rem' }}>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: 12
+                      }}
+                    >
+                      <div className="field">
+                        <label>Display name</label>
+                        <input
+                          value={statutoryForm.name}
+                          onChange={(e) =>
+                            setStatutoryForm({ ...statutoryForm, name: e.target.value })
+                          }
+                          required
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Base hint</label>
+                        <select
+                          value={statutoryForm.base_key}
+                          onChange={(e) =>
+                            setStatutoryForm({ ...statutoryForm, base_key: e.target.value })
+                          }
+                        >
+                          <option value="taxable">Taxable earnings</option>
+                          <option value="pensionable">Pensionable earnings</option>
+                          <option value="gross">Gross earnings</option>
+                          <option value="custom">Custom (use component elements)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <label
+                      style={{
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'center',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={statutoryForm.is_active}
+                        onChange={(e) =>
+                          setStatutoryForm({ ...statutoryForm, is_active: e.target.checked })
+                        }
+                      />
+                      Rule is active
+                    </label>
+
+                    {statutoryForm.method === 'flat_rate' ? (
+                      <div className="field" style={{ maxWidth: 200 }}>
+                        <label>Rate %</label>
+                        <input
+                          type="number"
+                          min={0}
+                          step="any"
+                          value={statutoryForm.rate}
+                          onChange={(e) =>
+                            setStatutoryForm({ ...statutoryForm, rate: e.target.value })
+                          }
+                          required
+                        />
+                      </div>
+                    ) : (
+                      <section style={{ display: 'grid', gap: 10 }}>
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            gap: 12,
+                            alignItems: 'center',
+                            flexWrap: 'wrap'
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontWeight: 700 }}>Annual tax bands</div>
+                            <div style={{ fontSize: 12.5, color: 'var(--ink-muted)' }}>
+                              Each band’s upper limit is cumulative annual taxable income. Mark
+                              one band as open-ended for income above the last limit.
+                            </div>
+                          </div>
+                          <button type="button" className="btn btn-ghost" onClick={addBracket}>
+                            Add band
+                          </button>
+                        </div>
+
+                        <div className="table-wrap">
+                          <table className="table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: '40%' }}>Annual upper limit</th>
+                                <th style={{ width: '25%' }}>Rate %</th>
+                                <th>Open-ended</th>
+                                <th />
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {statutoryForm.brackets.map((b, index) => (
+                                <tr key={index}>
+                                  <td>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="1"
+                                      disabled={b.open_ended}
+                                      value={b.open_ended ? '' : b.upper_limit}
+                                      placeholder={b.open_ended ? 'No limit' : 'e.g. 300000'}
+                                      onChange={(e) =>
+                                        updateBracket(index, { upper_limit: e.target.value })
+                                      }
+                                      style={{ width: '100%' }}
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      step="any"
+                                      value={b.rate}
+                                      onChange={(e) =>
+                                        updateBracket(index, { rate: e.target.value })
+                                      }
+                                      required
+                                      style={{ width: '100%' }}
+                                    />
+                                  </td>
+                                  <td>
+                                    <label
+                                      style={{
+                                        display: 'flex',
+                                        gap: 6,
+                                        alignItems: 'center',
+                                        cursor: 'pointer'
+                                      }}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={b.open_ended}
+                                        onChange={(e) =>
+                                          updateBracket(index, {
+                                            open_ended: e.target.checked
+                                          })
+                                        }
+                                      />
+                                      Above last
+                                    </label>
+                                  </td>
+                                  <td>
+                                    <button
+                                      type="button"
+                                      className="btn btn-ghost"
+                                      disabled={statutoryForm.brackets.length <= 1}
+                                      onClick={() => removeBracket(index)}
+                                    >
+                                      Remove
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div
+                          style={{
+                            padding: '0.85rem 1rem',
+                            border: '1px solid var(--line)',
+                            borderRadius: 10,
+                            background: 'var(--bg)',
+                            display: 'grid',
+                            gap: 8
+                          }}
+                        >
+                          <div style={{ fontWeight: 600, fontSize: 13 }}>Quick preview</div>
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: '1fr auto',
+                              gap: 12,
+                              alignItems: 'end'
+                            }}
+                          >
+                            <div className="field" style={{ margin: 0 }}>
+                              <label>Sample monthly taxable income</label>
+                              <input
+                                type="number"
+                                min={0}
+                                value={taxPreviewMonthly}
+                                onChange={(e) => setTaxPreviewMonthly(e.target.value)}
+                              />
+                            </div>
+                            <div style={{ paddingBottom: 2, textAlign: 'right' }}>
+                              <div style={{ fontSize: 12, color: 'var(--ink-muted)' }}>
+                                Est. monthly PAYE
+                              </div>
+                              <div style={{ fontSize: '1.15rem', fontWeight: 700 }}>
+                                {money(previewProgressiveTax(Number(taxPreviewMonthly || 0)))}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </section>
+                    )}
+                  </div>
+                  <div className="modal__footer">
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={closeStatutoryModal}
+                    >
+                      Cancel
+                    </button>
+                    <button type="submit" className="btn btn-primary">
+                      Save rule
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       {tab === 'reports' ? (
