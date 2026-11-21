@@ -160,6 +160,11 @@ Updated: 2026-11-18
   - Employees, attendance upsert, leave approve/reject
   - Payroll runs from active salaries; post accrual + pay disbursement
   - Client: HR + Payroll pages
+- **HR/Payroll redesign (dynamic config)** — see `docs/hr-payroll/`
+  - H0–H5 complete; H2 foothold (package/overrides API + employee pay fields)
+  - Models: SalaryComponent, PayGrade, SalaryChartEntry, package/overrides, statutory + tax brackets, ActivePayrollPeriod, PayrollItemLine
+  - Compute → approve → post (component GL) → pay; SoD; payslip + period matrix + YTD
+  - Optional H6: attendance factors, loans/advances
 - **Phase 8 — Distribution / logistics**
   - Vehicles, delivery orders (from invoice or manual lines)
   - Workflow: draft → schedule → dispatch → delivered / cancel

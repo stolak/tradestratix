@@ -12,6 +12,8 @@ PO → GRN → stock + valuation → supplier liability + GL
 
 Invoice/POS → stock out → revenue + COGS journals → commission hooks
 
-## Payroll (target)
+## Payroll
 
-Process → approve → expense/payable journals → payment → bank
+Config (components / chart / statutory) → assign employee pay → **compute** (draft) → **approve** → **post** (component GL) → **pay** (bank/cash)  
+Sales commission (optional): accrued commissions inject as earning on compute; marked paid on pay.  
+SoD: approver ≠ creator; poster ≠ approver (bypassed for admin / `payroll.*`).

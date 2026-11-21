@@ -162,6 +162,13 @@ model Business {
   attendanceRecords                 AttendanceRecord[]
   leaveRequests                     LeaveRequest[]
   payrollRuns                       PayrollRun[]
+  salaryComponents                  SalaryComponent[]
+  payGrades                         PayGrade[]
+  salaryChartEntries                SalaryChartEntry[]
+  employeePayPackageLines           EmployeePayPackageLine[]
+  employeePayOverrides              EmployeePayOverride[]
+  payrollStatutoryRules             PayrollStatutoryRule[]
+  activePayrollPeriod               ActivePayrollPeriod?
   vehicles                          Vehicle[]
   deliveryOrders                    DeliveryOrder[]
   notifications                     AppNotification[]
@@ -568,6 +575,7 @@ model Account {
   fixedAssetsCostAccount         FixedAsset[]                @relation("FixedAssetCostAccount")
   fixedAssetsAccumDepAccount     FixedAsset[]                @relation("FixedAssetAccumDepAccount")
   fixedAssetsDepExpenseAccount   FixedAsset[]                @relation("FixedAssetDepExpenseAccount")
+  salaryComponents               SalaryComponent[]           @relation("SalaryComponentAccount")
 
   @@unique([businessId, code])
   @@index([businessId])
@@ -2013,16 +2021,21 @@ model SalesCommission {
   commissionAmount  Decimal  @map("commission_amount") @db.Decimal(18, 4)
   /// accrued | paid | void
   status            String   @default("accrued")
+  /// Set when included in a payroll item and paid via payroll
+  payrollItemId     String?  @map("payroll_item_id")
+  paidAt            DateTime? @map("paid_at")
   createdAt         DateTime @default(now()) @map("created_at")
 
-  business Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  branch   Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  salesRep SalesRep     @relation(fields: [salesRepId], references: [id])
-  invoice  SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  business    Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch      Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  salesRep    SalesRep     @relation(fields: [salesRepId], references: [id])
+  invoice     SalesInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  payrollItem PayrollItem? @relation(fields: [payrollItemId], references: [id], onDelete: SetNull)
 
   @@unique([invoiceId, salesRepId])
   @@index([businessId, salesRepId])
   @@index([branchId])
+  @@index([payrollItemId])
   @@map("sales_commissions")
 }
 
@@ -3214,9 +3227,16 @@ model Employee {
   department   String?
   jobTitle     String?   @map("job_title")
   hireDate     DateTime? @map("hire_date")
+  /// Fallback basic when no chart/package primary amount
   baseSalary   Decimal   @default(0) @map("base_salary") @db.Decimal(18, 4)
   /// monthly | biweekly | weekly
   payFrequency String    @default("monthly") @map("pay_frequency")
+  payGradeId   String?   @map("pay_grade_id")
+  payStep      Int?      @map("pay_step")
+  /// permanent | contract | casual | intern
+  employmentType String  @default("permanent") @map("employment_type")
+  /// When true, sales_commission components pull accrued commissions into payroll
+  includeSalesCommission Boolean @default(true) @map("include_sales_commission")
   bankName     String?   @map("bank_name")
   bankAccount  String?   @map("bank_account")
   taxId        String?   @map("tax_id")
@@ -3226,19 +3246,23 @@ model Employee {
   createdAt    DateTime  @default(now()) @map("created_at")
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
-  business       Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  branch         Branch             @relation(fields: [branchId], references: [id], onDelete: Restrict)
-  user           User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  business       Business                @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  branch         Branch                  @relation(fields: [branchId], references: [id], onDelete: Restrict)
+  user           User                    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  payGrade       PayGrade?               @relation(fields: [payGradeId], references: [id], onDelete: SetNull)
   salesRep       SalesRep?
   attendance     AttendanceRecord[]
   leaveRequests  LeaveRequest[]
   payrollItems   PayrollItem[]
+  payPackageLines EmployeePayPackageLine[]
+  payOverrides   EmployeePayOverride[]
   vehiclesDriven Vehicle[]
   custodiedAssets FixedAsset[] @relation("AssetCustodian")
 
   @@unique([businessId, code])
   @@index([businessId, status])
   @@index([businessId, branchId])
+  @@index([payGradeId])
   @@map("employees")
 }
 
@@ -3285,25 +3309,221 @@ model LeaveRequest {
   @@map("leave_requests")
 }
 
+/// Configurable salary / deduction / employer component definition (business-scoped).
+model SalaryComponent {
+  id                   String   @id
+  businessId           String   @map("business_id")
+  code                 String
+  name                 String
+  shortName            String?  @map("short_name")
+  /// earning | deduction | employer_contribution
+  type                 String
+  /// fixed | percent_of_components | progressive_tax | statutory_rate | sales_commission
+  calculationMethod    String   @default("fixed") @map("calculation_method")
+  isTaxable            Boolean  @default(false) @map("is_taxable")
+  isPensionable        Boolean  @default(false) @map("is_pensionable")
+  isStatutory          Boolean  @default(false) @map("is_statutory")
+  /// Marks the primary basic salary component
+  isPrimary            Boolean  @default(false) @map("is_primary")
+  /// For percent_of_components / progressive_tax base: JSON array of component codes
+  functionElements     Json?    @map("function_elements")
+  functionPercentage   Decimal? @map("function_percentage") @db.Decimal(14, 4)
+  /// Links to PayrollStatutoryRule.key for statutory_rate / progressive_tax
+  statutoryKey         String?  @map("statutory_key")
+  accountId            String?  @map("account_id")
+  sortOrder            Int      @default(0) @map("sort_order")
+  isActive             Boolean  @default(true) @map("is_active")
+  createdById          String?  @map("created_by_id")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  business          Business                 @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  account           Account?                 @relation("SalaryComponentAccount", fields: [accountId], references: [id], onDelete: SetNull)
+  chartEntries      SalaryChartEntry[]
+  packageLines      EmployeePayPackageLine[]
+  overrides         EmployeePayOverride[]
+  payrollItemLines  PayrollItemLine[]
+
+  @@unique([businessId, code])
+  @@index([businessId, isActive])
+  @@index([businessId, type])
+  @@map("salary_components")
+}
+
+model PayGrade {
+  id          String   @id
+  businessId  String   @map("business_id")
+  code        String
+  name        String
+  maxStep     Int      @default(1) @map("max_step")
+  sortOrder   Int      @default(0) @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  business     Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  employees    Employee[]
+  chartEntries SalaryChartEntry[]
+
+  @@unique([businessId, code])
+  @@index([businessId, isActive])
+  @@map("pay_grades")
+}
+
+model SalaryChartEntry {
+  id             String   @id
+  businessId     String   @map("business_id")
+  payGradeId     String   @map("pay_grade_id")
+  step           Int
+  /// permanent | contract | casual | intern
+  employmentType String   @default("permanent") @map("employment_type")
+  componentId    String   @map("component_id")
+  amount         Decimal  @db.Decimal(18, 4)
+  isActive       Boolean  @default(true) @map("is_active")
+  createdById    String?  @map("created_by_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  business  Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  payGrade  PayGrade         @relation(fields: [payGradeId], references: [id], onDelete: Cascade)
+  component SalaryComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+
+  @@unique([payGradeId, step, employmentType, componentId])
+  @@index([businessId])
+  @@index([componentId])
+  @@map("salary_chart_entries")
+}
+
+/// Direct per-employee package amounts (alternative / supplement to grade chart).
+model EmployeePayPackageLine {
+  id          String   @id
+  businessId  String   @map("business_id")
+  employeeId  String   @map("employee_id")
+  componentId String   @map("component_id")
+  amount      Decimal  @db.Decimal(18, 4)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  business  Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  employee  Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  component SalaryComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, componentId])
+  @@index([businessId])
+  @@map("employee_pay_package_lines")
+}
+
+model EmployeePayOverride {
+  id               String    @id
+  businessId       String    @map("business_id")
+  employeeId       String    @map("employee_id")
+  componentId      String    @map("component_id")
+  amount           Decimal   @db.Decimal(18, 4)
+  /// Continuous overrides apply every period; one-time depletes toward targetAmount
+  isContinuous     Boolean   @default(true) @map("is_continuous")
+  targetAmount     Decimal?  @map("target_amount") @db.Decimal(18, 4)
+  balanceRemaining Decimal?  @map("balance_remaining") @db.Decimal(18, 4)
+  effectiveFrom    DateTime? @map("effective_from")
+  effectiveTo      DateTime? @map("effective_to")
+  isActive         Boolean   @default(true) @map("is_active")
+  notes            String?   @db.Text
+  createdById      String?   @map("created_by_id")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  business  Business        @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  employee  Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  component SalaryComponent @relation(fields: [componentId], references: [id], onDelete: Cascade)
+
+  @@index([businessId, employeeId])
+  @@index([componentId])
+  @@map("employee_pay_overrides")
+}
+
+model PayrollStatutoryRule {
+  id          String   @id
+  businessId  String   @map("business_id")
+  /// paye | pension_employee | pension_employer | nhf | custom
+  key         String
+  name        String
+  /// progressive_brackets | flat_rate
+  method      String
+  /// For flat_rate: percentage (e.g. 8 = 8%)
+  rate        Decimal? @db.Decimal(14, 4)
+  /// pensionable | taxable | gross | custom
+  baseKey     String?  @map("base_key")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  business Business            @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  brackets PayrollTaxBracket[]
+
+  @@unique([businessId, key])
+  @@index([businessId, isActive])
+  @@map("payroll_statutory_rules")
+}
+
+model PayrollTaxBracket {
+  id        String   @id
+  ruleId    String   @map("rule_id")
+  sortOrder Int      @default(0) @map("sort_order")
+  /// Upper bound of band (annual); null = open-ended
+  upperLimit Decimal? @map("upper_limit") @db.Decimal(18, 4)
+  rate      Decimal  @db.Decimal(14, 4)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  rule PayrollStatutoryRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId])
+  @@map("payroll_tax_brackets")
+}
+
+model ActivePayrollPeriod {
+  id         String   @id
+  businessId String   @unique @map("business_id")
+  year       Int
+  month      Int
+  updatedById String? @map("updated_by_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@map("active_payroll_periods")
+}
+
 model PayrollRun {
-  id                    String   @id
-  businessId            String   @map("business_id")
-  branchId              String?  @map("branch_id")
-  runNumber             String   @map("run_number")
-  periodStart           DateTime @map("period_start")
-  periodEnd             DateTime @map("period_end")
-  payDate               DateTime @map("pay_date")
-  /// draft | posted | void
-  status                String   @default("draft")
-  totalGross            Decimal  @default(0) @map("total_gross") @db.Decimal(18, 4)
-  totalDeductions       Decimal  @default(0) @map("total_deductions") @db.Decimal(18, 4)
-  totalNet              Decimal  @default(0) @map("total_net") @db.Decimal(18, 4)
-  journalEntryId        String?  @map("journal_entry_id")
-  paymentJournalEntryId String?  @map("payment_journal_entry_id")
-  notes                 String?  @db.Text
-  createdById           String?  @map("created_by_id")
-  createdAt             DateTime @default(now()) @map("created_at")
-  updatedAt             DateTime @updatedAt @map("updated_at")
+  id                    String    @id
+  businessId            String    @map("business_id")
+  branchId              String?   @map("branch_id")
+  runNumber             String    @map("run_number")
+  periodStart           DateTime  @map("period_start")
+  periodEnd             DateTime  @map("period_end")
+  payDate               DateTime  @map("pay_date")
+  year                  Int?
+  month                 Int?
+  /// draft | approved | posted | paid | void
+  status                String    @default("draft")
+  totalGross            Decimal   @default(0) @map("total_gross") @db.Decimal(18, 4)
+  totalDeductions       Decimal   @default(0) @map("total_deductions") @db.Decimal(18, 4)
+  totalNet              Decimal   @default(0) @map("total_net") @db.Decimal(18, 4)
+  totalCommission       Decimal   @default(0) @map("total_commission") @db.Decimal(18, 4)
+  journalEntryId        String?   @map("journal_entry_id")
+  paymentJournalEntryId String?   @map("payment_journal_entry_id")
+  approvedAt            DateTime? @map("approved_at")
+  approvedById          String?   @map("approved_by_id")
+  postedAt              DateTime? @map("posted_at")
+  postedById            String?   @map("posted_by_id")
+  notes                 String?   @db.Text
+  createdById           String?   @map("created_by_id")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
 
   business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
   branch   Branch?       @relation(fields: [branchId], references: [id], onDelete: SetNull)
@@ -3311,6 +3531,7 @@ model PayrollRun {
 
   @@unique([businessId, runNumber])
   @@index([businessId, status])
+  @@index([businessId, year, month])
   @@index([branchId])
   @@map("payroll_runs")
 }
@@ -3325,15 +3546,39 @@ model PayrollItem {
   taxAmount       Decimal @default(0) @map("tax_amount") @db.Decimal(18, 4)
   pensionEmployee Decimal @default(0) @map("pension_employee") @db.Decimal(18, 4)
   pensionEmployer Decimal @default(0) @map("pension_employer") @db.Decimal(18, 4)
+  commissionAmount Decimal @default(0) @map("commission_amount") @db.Decimal(18, 4)
   netPay          Decimal @map("net_pay") @db.Decimal(18, 4)
   notes           String? @db.Text
 
-  payrollRun PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
-  employee   Employee   @relation(fields: [employeeId], references: [id])
+  payrollRun      PayrollRun         @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  employee        Employee           @relation(fields: [employeeId], references: [id])
+  lines           PayrollItemLine[]
+  salesCommissions SalesCommission[]
 
   @@unique([payrollRunId, employeeId])
   @@index([employeeId])
   @@map("payroll_items")
+}
+
+model PayrollItemLine {
+  id                       String  @id
+  payrollItemId            String  @map("payroll_item_id")
+  componentId              String? @map("component_id")
+  componentCode            String  @map("component_code")
+  componentName            String  @map("component_name")
+  /// earning | deduction | employer_contribution
+  componentType            String  @map("component_type")
+  calculationMethod        String  @map("calculation_method")
+  amount                   Decimal @db.Decimal(18, 4)
+  isEmployerContribution   Boolean @default(false) @map("is_employer_contribution")
+  sortOrder                Int     @default(0) @map("sort_order")
+
+  payrollItem PayrollItem      @relation(fields: [payrollItemId], references: [id], onDelete: Cascade)
+  component   SalaryComponent? @relation(fields: [componentId], references: [id], onDelete: SetNull)
+
+  @@index([payrollItemId])
+  @@index([componentId])
+  @@map("payroll_item_lines")
 }
 
 // --- Phase 8: Distribution / Logistics / Delivery ----------------------------

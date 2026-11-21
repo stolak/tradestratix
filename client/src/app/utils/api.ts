@@ -1114,10 +1114,80 @@ export const api = {
     getRun: (id: string) => request<any>(`/payroll/runs/${id}`),
     createRun: (body: Record<string, unknown>) =>
       request<any>('/payroll/runs', { method: 'POST', body: JSON.stringify(body) }),
+    recomputeRun: (id: string, body: Record<string, unknown> = {}) =>
+      request<any>(`/payroll/runs/${id}/recompute`, {
+        method: 'POST',
+        body: JSON.stringify(body)
+      }),
+    previewCompute: (body: Record<string, unknown>) =>
+      request<any>('/payroll/runs/preview', { method: 'POST', body: JSON.stringify(body) }),
+    approveRun: (id: string) =>
+      request<any>(`/payroll/runs/${id}/approve`, { method: 'POST', body: '{}' }),
+    unapproveRun: (id: string) =>
+      request<any>(`/payroll/runs/${id}/unapprove`, { method: 'POST', body: '{}' }),
     postRun: (id: string) =>
       request<any>(`/payroll/runs/${id}/post`, { method: 'POST', body: '{}' }),
     payRun: (id: string, body: Record<string, unknown> = {}) =>
-      request<any>(`/payroll/runs/${id}/pay`, { method: 'POST', body: JSON.stringify(body) })
+      request<any>(`/payroll/runs/${id}/pay`, { method: 'POST', body: JSON.stringify(body) }),
+    ensureDefaults: () =>
+      request<any>('/payroll/config/ensure-defaults', { method: 'POST', body: '{}' }),
+    configSummary: () => request<any>('/payroll/config/summary'),
+    components: (activeOnly = false) =>
+      request<any[]>(`/payroll/components${activeOnly ? '?active=1' : ''}`),
+    createComponent: (body: Record<string, unknown>) =>
+      request<any>('/payroll/components', { method: 'POST', body: JSON.stringify(body) }),
+    updateComponent: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/payroll/components/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    grades: (activeOnly = false) =>
+      request<any[]>(`/payroll/grades${activeOnly ? '?active=1' : ''}`),
+    createGrade: (body: Record<string, unknown>) =>
+      request<any>('/payroll/grades', { method: 'POST', body: JSON.stringify(body) }),
+    updateGrade: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/payroll/grades/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    chart: (payGradeId?: string) =>
+      request<any[]>(
+        `/payroll/chart${payGradeId ? `?pay_grade_id=${encodeURIComponent(payGradeId)}` : ''}`
+      ),
+    upsertChart: (body: Record<string, unknown>) =>
+      request<any>('/payroll/chart', { method: 'POST', body: JSON.stringify(body) }),
+    deleteChart: (id: string) =>
+      request<any>(`/payroll/chart/${id}`, { method: 'DELETE' }),
+    statutory: () => request<any[]>('/payroll/statutory'),
+    upsertStatutory: (body: Record<string, unknown>) =>
+      request<any>('/payroll/statutory', { method: 'POST', body: JSON.stringify(body) }),
+    period: () => request<any>('/payroll/period'),
+    setPeriod: (body: Record<string, unknown>) =>
+      request<any>('/payroll/period', { method: 'PUT', body: JSON.stringify(body) }),
+    employeePackage: (employeeId: string) =>
+      request<any[]>(`/payroll/employees/${employeeId}/package`),
+    upsertPackage: (body: Record<string, unknown>) =>
+      request<any>('/payroll/package', { method: 'POST', body: JSON.stringify(body) }),
+    overrides: (employeeId?: string) =>
+      request<any[]>(
+        `/payroll/overrides${employeeId ? `?employee_id=${encodeURIComponent(employeeId)}` : ''}`
+      ),
+    createOverride: (body: Record<string, unknown>) =>
+      request<any>('/payroll/overrides', { method: 'POST', body: JSON.stringify(body) }),
+    updateOverride: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/payroll/overrides/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    periodReport: (year: number, month: number, status?: string) =>
+      request<any>(
+        `/payroll/reports/period?year=${year}&month=${month}${
+          status ? `&status=${encodeURIComponent(status)}` : ''
+        }`
+      ),
+    payslip: (opts: { payrollItemId?: string; runId?: string; employeeId?: string }) => {
+      if (opts.payrollItemId) {
+        return request<any>(`/payroll/payslips/${opts.payrollItemId}`);
+      }
+      const q = new URLSearchParams();
+      if (opts.runId) q.set('run_id', opts.runId);
+      if (opts.employeeId) q.set('employee_id', opts.employeeId);
+      return request<any>(`/payroll/reports/payslip?${q.toString()}`);
+    },
+    runPayslips: (runId: string) => request<any>(`/payroll/runs/${runId}/payslips`),
+    employeeYtd: (employeeId: string, year: number) =>
+      request<any>(`/payroll/reports/employees/${employeeId}/ytd?year=${year}`)
   },
   distribution: {
     vehicles: () => request<any[]>('/distribution/vehicles'),

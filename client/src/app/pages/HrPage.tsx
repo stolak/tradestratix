@@ -23,6 +23,8 @@ export const HrPage: React.FC = () => {
     password: '',
     is_sales_rep: false,
     commission_percent: '5',
+    include_sales_commission: true,
+    employment_type: 'permanent',
     hire_date: new Date().toISOString().slice(0, 10)
   });
   const [attForm, setAttForm] = useState({
@@ -80,7 +82,9 @@ export const HrPage: React.FC = () => {
         is_sales_rep: empForm.is_sales_rep,
         commission_percent: empForm.is_sales_rep
           ? Number(empForm.commission_percent || 0)
-          : undefined
+          : undefined,
+        include_sales_commission: empForm.include_sales_commission,
+        employment_type: empForm.employment_type
       });
       const loginHint = created.login_username
         ? ` Login: ${created.login_username}${
@@ -100,7 +104,9 @@ export const HrPage: React.FC = () => {
         username: '',
         password: '',
         is_sales_rep: false,
-        commission_percent: '5'
+        commission_percent: '5',
+        include_sales_commission: true,
+        employment_type: 'permanent'
       }));
       await load();
     } catch (err: any) {
@@ -237,7 +243,7 @@ export const HrPage: React.FC = () => {
                 />
               </div>
               <div className="field">
-                <label>Base salary</label>
+                <label>Base salary (fallback)</label>
                 <input
                   type="number"
                   min="0"
@@ -245,6 +251,18 @@ export const HrPage: React.FC = () => {
                   value={empForm.base_salary}
                   onChange={(e) => setEmpForm({ ...empForm, base_salary: e.target.value })}
                 />
+              </div>
+              <div className="field">
+                <label>Employment type</label>
+                <select
+                  value={empForm.employment_type}
+                  onChange={(e) => setEmpForm({ ...empForm, employment_type: e.target.value })}
+                >
+                  <option value="permanent">Permanent</option>
+                  <option value="contract">Contract</option>
+                  <option value="casual">Casual</option>
+                  <option value="intern">Intern</option>
+                </select>
               </div>
               <div className="field">
                 <label>Hire date</label>
@@ -308,6 +326,18 @@ export const HrPage: React.FC = () => {
                     onChange={(e) => setEmpForm({ ...empForm, is_sales_rep: e.target.checked })}
                   />{' '}
                   Also make sales rep
+                </label>
+              </div>
+              <div className="field">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={empForm.include_sales_commission}
+                    onChange={(e) =>
+                      setEmpForm({ ...empForm, include_sales_commission: e.target.checked })
+                    }
+                  />{' '}
+                  Include sales commission in payroll
                 </label>
               </div>
               {empForm.is_sales_rep ? (

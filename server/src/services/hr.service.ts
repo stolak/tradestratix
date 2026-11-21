@@ -59,6 +59,7 @@ export async function resolveEmployeeHomeBranch(
 
 const employeeInclude = {
   branch: true,
+  payGrade: { select: { id: true, code: true, name: true, maxStep: true } },
   user: {
     select: {
       id: true,
@@ -75,6 +76,14 @@ const employeeInclude = {
     select: { id: true, code: true, status: true, commissionPercent: true }
   }
 } as const;
+
+async function resolvePayGradeId(businessId: string, raw: unknown) {
+  if (raw == null || raw === '') return null;
+  const id = String(raw);
+  const grade = await prisma.payGrade.findFirst({ where: { id, businessId, isActive: true } });
+  if (!grade) throw httpError(400, 'Invalid pay_grade_id');
+  return grade.id;
+}
 
 export async function listEmployees(user: AuthUser, status?: string, opts?: BranchListOpts) {
   const scope = await branchAccess.branchScopeWhere(user, {
@@ -184,6 +193,17 @@ export async function createEmployee(user: AuthUser, body: Record<string, any>) 
             body.hire_date || body.hireDate ? new Date(body.hire_date || body.hireDate) : null,
           baseSalary: toDec(Number(body.base_salary ?? body.baseSalary ?? 0)),
           payFrequency: body.pay_frequency || body.payFrequency || 'monthly',
+          payGradeId: await resolvePayGradeId(
+            user.businessId,
+            body.pay_grade_id ?? body.payGradeId
+          ),
+          payStep:
+            body.pay_step != null || body.payStep != null
+              ? Number(body.pay_step ?? body.payStep)
+              : null,
+          employmentType: body.employment_type || body.employmentType || 'permanent',
+          includeSalesCommission:
+            body.include_sales_commission ?? body.includeSalesCommission ?? true,
           bankName: body.bank_name || body.bankName || null,
           bankAccount: body.bank_account || body.bankAccount || null,
           taxId: body.tax_id || body.taxId || null,
@@ -309,6 +329,29 @@ export async function updateEmployee(user: AuthUser, id: string, body: Record<st
   }
   if (body.base_salary !== undefined || body.baseSalary !== undefined) {
     data.baseSalary = toDec(Number(body.base_salary ?? body.baseSalary));
+  }
+  if (body.pay_grade_id !== undefined || body.payGradeId !== undefined) {
+    data.payGradeId = await resolvePayGradeId(
+      user.businessId,
+      body.pay_grade_id ?? body.payGradeId
+    );
+  }
+  if (body.pay_step !== undefined || body.payStep !== undefined) {
+    data.payStep =
+      body.pay_step != null || body.payStep != null
+        ? Number(body.pay_step ?? body.payStep)
+        : null;
+  }
+  if (body.employment_type !== undefined || body.employmentType !== undefined) {
+    data.employmentType = body.employment_type || body.employmentType || 'permanent';
+  }
+  if (
+    body.include_sales_commission !== undefined ||
+    body.includeSalesCommission !== undefined
+  ) {
+    data.includeSalesCommission = Boolean(
+      body.include_sales_commission ?? body.includeSalesCommission
+    );
   }
 
   // Home branch change — does NOT follow session switch; updates user.defaultBranchId
