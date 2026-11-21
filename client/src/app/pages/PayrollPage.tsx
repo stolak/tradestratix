@@ -64,7 +64,7 @@ export const PayrollPage: React.FC = () => {
   const [payslipItems, setPayslipItems] = useState<any[]>([]);
   const [ytd, setYtd] = useState<any>(null);
 
-  const [compForm, setCompForm] = useState({
+  const emptyCompForm = () => ({
     code: '',
     name: '',
     type: 'earning',
@@ -72,10 +72,14 @@ export const PayrollPage: React.FC = () => {
     is_taxable: false,
     is_pensionable: false,
     is_primary: false,
+    is_statutory: false,
     statutory_key: '',
-    function_elements: '',
+    function_element_codes: [] as string[],
     function_percentage: ''
   });
+  const [compForm, setCompForm] = useState(emptyCompForm);
+  const [compModalOpen, setCompModalOpen] = useState(false);
+  const [editingCompId, setEditingCompId] = useState<string | null>(null);
   const [gradeForm, setGradeForm] = useState({ code: '', name: '', max_step: '10' });
   const [chartForm, setChartForm] = useState({
     pay_grade_id: '',
@@ -273,33 +277,114 @@ export const PayrollPage: React.FC = () => {
     }
   };
 
-  const createComponent = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const parseFunctionElements = (raw: unknown): string[] => {
+    if (Array.isArray(raw)) {
+      return raw.map((x) => String(x).trim().toUpperCase()).filter(Boolean);
+    }
+    if (typeof raw === 'string' && raw.trim()) {
+      return raw
+        .split(/[,;\s]+/)
+        .map((x) => x.trim().toUpperCase())
+        .filter(Boolean);
+    }
+    return [];
+  };
+
+  const ensureStatutoryLoaded = async () => {
+    if (statutory.length) return;
     try {
-      await api.payroll.createComponent({
-        ...compForm,
-        is_taxable: compForm.is_taxable,
-        is_pensionable: compForm.is_pensionable,
-        is_primary: compForm.is_primary,
-        statutory_key: compForm.statutory_key || undefined,
-        function_elements: compForm.function_elements || undefined,
-        function_percentage: compForm.function_percentage
-          ? Number(compForm.function_percentage)
-          : undefined
-      });
-      await alertSuccess('Component created');
-      setCompForm({
-        code: '',
-        name: '',
-        type: 'earning',
-        calculation_method: 'fixed',
-        is_taxable: false,
-        is_pensionable: false,
-        is_primary: false,
-        statutory_key: '',
-        function_elements: '',
-        function_percentage: ''
-      });
+      setStatutory(await api.payroll.statutory());
+    } catch {
+      /* optional for fixed components */
+    }
+  };
+
+  const openAddComponent = () => {
+    setEditingCompId(null);
+    setCompForm(emptyCompForm());
+    void ensureStatutoryLoaded();
+    setCompModalOpen(true);
+  };
+
+  const openEditComponent = (row: any) => {
+    setEditingCompId(row.id);
+    setCompForm({
+      code: row.code || '',
+      name: row.name || '',
+      type: row.type || 'earning',
+      calculation_method: row.calculation_method || 'fixed',
+      is_taxable: Boolean(row.is_taxable),
+      is_pensionable: Boolean(row.is_pensionable),
+      is_primary: Boolean(row.is_primary),
+      is_statutory: Boolean(row.is_statutory),
+      statutory_key: row.statutory_key || '',
+      function_element_codes: parseFunctionElements(row.function_elements),
+      function_percentage:
+        row.function_percentage != null && row.function_percentage !== ''
+          ? String(row.function_percentage)
+          : ''
+    });
+    void ensureStatutoryLoaded();
+    setCompModalOpen(true);
+  };
+
+  const closeCompModal = () => {
+    setCompModalOpen(false);
+    setEditingCompId(null);
+    setCompForm(emptyCompForm());
+  };
+
+  const toggleFunctionElement = (code: string) => {
+    setCompForm((f) => {
+      const has = f.function_element_codes.includes(code);
+      return {
+        ...f,
+        function_element_codes: has
+          ? f.function_element_codes.filter((c) => c !== code)
+          : [...f.function_element_codes, code]
+      };
+    });
+  };
+
+  const saveComponent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const needsElements = ['percent_of_components', 'progressive_tax', 'statutory_rate'].includes(
+      compForm.calculation_method
+    );
+    const needsRule = ['progressive_tax', 'statutory_rate'].includes(
+      compForm.calculation_method
+    );
+    if (needsElements && !compForm.function_element_codes.length) {
+      await alertError('Component', 'Select at least one earning for the calculation base');
+      return;
+    }
+    if (needsRule && !compForm.statutory_key) {
+      await alertError('Component', 'Select a statutory rule (PAYE, pension, etc.)');
+      return;
+    }
+    const body = {
+      name: compForm.name,
+      type: compForm.type,
+      calculation_method: compForm.calculation_method,
+      is_taxable: compForm.is_taxable,
+      is_pensionable: compForm.is_pensionable,
+      is_primary: compForm.is_primary,
+      is_statutory: compForm.is_statutory,
+      statutory_key: compForm.statutory_key || null,
+      function_elements: compForm.function_element_codes,
+      function_percentage: compForm.function_percentage
+        ? Number(compForm.function_percentage)
+        : null
+    };
+    try {
+      if (editingCompId) {
+        await api.payroll.updateComponent(editingCompId, body);
+        await alertSuccess('Component updated');
+      } else {
+        await api.payroll.createComponent({ ...body, code: compForm.code });
+        await alertSuccess('Component created');
+      }
+      closeCompModal();
       await loadConfig();
     } catch (err: any) {
       await alertError('Component', err.message);
@@ -314,6 +399,12 @@ export const PayrollPage: React.FC = () => {
       await alertError('Update', err.message);
     }
   };
+
+  useEffect(() => {
+    if (!compModalOpen) return;
+    document.body.classList.add('modal-open');
+    return () => document.body.classList.remove('modal-open');
+  }, [compModalOpen]);
 
   const createGrade = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -380,6 +471,41 @@ export const PayrollPage: React.FC = () => {
   };
 
   const fixedComponents = components.filter((c) => c.calculation_method === 'fixed');
+  const earningOptions = components.filter(
+    (c) =>
+      c.type === 'earning' &&
+      c.is_active !== false &&
+      (!editingCompId || c.id !== editingCompId)
+  );
+  const showFunctionElements = [
+    'percent_of_components',
+    'progressive_tax',
+    'statutory_rate'
+  ].includes(compForm.calculation_method);
+  const showStatutoryRule = ['progressive_tax', 'statutory_rate'].includes(
+    compForm.calculation_method
+  );
+  const activeStatutoryRules = statutory.filter((s) => s.is_active !== false);
+  const selectedStatutory = activeStatutoryRules.find(
+    (s) => s.key === compForm.statutory_key
+  );
+
+  const calculationHint = (method: string) => {
+    switch (method) {
+      case 'fixed':
+        return 'Amount comes from salary chart, employee package, or override.';
+      case 'percent_of_components':
+        return 'Amount = % of the selected earning components.';
+      case 'progressive_tax':
+        return 'Uses the progressive tax brackets from the linked statutory rule (e.g. PAYE).';
+      case 'statutory_rate':
+        return 'Uses the flat % from the linked statutory rule (e.g. pension).';
+      case 'sales_commission':
+        return 'Pulls accrued unpaid sales commissions for the employee’s sales rep.';
+      default:
+        return '';
+    }
+  };
 
   return (
     <div className="page-stack">
@@ -681,117 +807,20 @@ export const PayrollPage: React.FC = () => {
 
       {tab === 'components' ? (
         <>
-          <form
-            onSubmit={createComponent}
-            className="card-surface"
-            style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              gap: 12,
+              flexWrap: 'wrap'
+            }}
           >
-            <div style={{ fontWeight: 700 }}>Add salary component</div>
-            <div className="form-grid">
-              <div className="field">
-                <label>Code</label>
-                <input
-                  value={compForm.code}
-                  onChange={(e) => setCompForm({ ...compForm, code: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Name</label>
-                <input
-                  value={compForm.name}
-                  onChange={(e) => setCompForm({ ...compForm, name: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Type</label>
-                <select
-                  value={compForm.type}
-                  onChange={(e) => setCompForm({ ...compForm, type: e.target.value })}
-                >
-                  <option value="earning">Earning</option>
-                  <option value="deduction">Deduction</option>
-                  <option value="employer_contribution">Employer contribution</option>
-                </select>
-              </div>
-              <div className="field">
-                <label>Calculation</label>
-                <select
-                  value={compForm.calculation_method}
-                  onChange={(e) =>
-                    setCompForm({ ...compForm, calculation_method: e.target.value })
-                  }
-                >
-                  <option value="fixed">Fixed</option>
-                  <option value="percent_of_components">% of components</option>
-                  <option value="progressive_tax">Progressive tax</option>
-                  <option value="statutory_rate">Statutory rate</option>
-                  <option value="sales_commission">Sales commission</option>
-                </select>
-              </div>
-              <div className="field">
-                <label>Function elements (codes)</label>
-                <input
-                  value={compForm.function_elements}
-                  onChange={(e) =>
-                    setCompForm({ ...compForm, function_elements: e.target.value })
-                  }
-                  placeholder="BASIC, HOUSING"
-                />
-              </div>
-              <div className="field">
-                <label>Function %</label>
-                <input
-                  value={compForm.function_percentage}
-                  onChange={(e) =>
-                    setCompForm({ ...compForm, function_percentage: e.target.value })
-                  }
-                />
-              </div>
-              <div className="field">
-                <label>Statutory key</label>
-                <input
-                  value={compForm.statutory_key}
-                  onChange={(e) => setCompForm({ ...compForm, statutory_key: e.target.value })}
-                  placeholder="paye / pension_employee"
-                />
-              </div>
-              <div className="field" style={{ display: 'flex', gap: 12, alignItems: 'end' }}>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={compForm.is_taxable}
-                    onChange={(e) => setCompForm({ ...compForm, is_taxable: e.target.checked })}
-                  />{' '}
-                  Taxable
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={compForm.is_pensionable}
-                    onChange={(e) =>
-                      setCompForm({ ...compForm, is_pensionable: e.target.checked })
-                    }
-                  />{' '}
-                  Pensionable
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={compForm.is_primary}
-                    onChange={(e) => setCompForm({ ...compForm, is_primary: e.target.checked })}
-                  />{' '}
-                  Primary
-                </label>
-              </div>
-              <div className="form-grid--actions">
-                <button className="btn btn-primary" type="submit">
-                  Add component
-                </button>
-              </div>
-            </div>
-          </form>
+            <div style={{ fontWeight: 700 }}>Salary components</div>
+            <button type="button" className="btn btn-primary" onClick={openAddComponent}>
+              Add component
+            </button>
+          </div>
 
           <div className="card-surface" style={{ padding: '0.5rem 0' }}>
             <div className="table-wrap">
@@ -802,6 +831,7 @@ export const PayrollPage: React.FC = () => {
                     <th>Name</th>
                     <th>Type</th>
                     <th>Method</th>
+                    <th>Elements</th>
                     <th>Flags</th>
                     <th>Active</th>
                     <th />
@@ -815,6 +845,9 @@ export const PayrollPage: React.FC = () => {
                       <td>{c.type}</td>
                       <td>{c.calculation_method}</td>
                       <td style={{ fontSize: 12 }}>
+                        {parseFunctionElements(c.function_elements).join(', ') || '—'}
+                      </td>
+                      <td style={{ fontSize: 12 }}>
                         {[
                           c.is_primary ? 'primary' : null,
                           c.is_taxable ? 'taxable' : null,
@@ -826,21 +859,29 @@ export const PayrollPage: React.FC = () => {
                       </td>
                       <td>{c.is_active ? 'Yes' : 'No'}</td>
                       <td>
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={() => void toggleComponent(c)}
-                        >
-                          {c.is_active ? 'Disable' : 'Enable'}
-                        </button>
+                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => openEditComponent(c)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost"
+                            onClick={() => void toggleComponent(c)}
+                          >
+                            {c.is_active ? 'Disable' : 'Enable'}
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
                   {!components.length ? (
                     <tr>
-                      <td colSpan={7}>
-                        No components — click “Seed starter config” to create BASIC, PAYE,
-                        pension, and sales commission.
+                      <td colSpan={8}>
+                        No components — click “Seed starter config” or Add component.
                       </td>
                     </tr>
                   ) : null}
@@ -848,6 +889,387 @@ export const PayrollPage: React.FC = () => {
               </table>
             </div>
           </div>
+
+          {compModalOpen ? (
+            <div
+              className="modal-backdrop"
+              role="presentation"
+              onClick={closeCompModal}
+            >
+              <div
+                className="modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label={editingCompId ? 'Edit salary component' : 'Add salary component'}
+                style={{ width: 'min(640px, 100%)' }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="modal__header">
+                  <div>
+                    <h2 style={{ margin: 0, fontSize: '1.25rem' }}>
+                      {editingCompId ? 'Edit salary component' : 'Add salary component'}
+                    </h2>
+                    <p style={{ margin: '0.25rem 0 0', color: 'var(--ink-muted)', fontSize: 13 }}>
+                      Define how this line is calculated on the payslip.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    aria-label="Close"
+                    onClick={closeCompModal}
+                    style={{ fontSize: '1.25rem', lineHeight: 1, padding: '0.35rem 0.65rem' }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <form onSubmit={saveComponent}>
+                  <div className="modal__body" style={{ gap: '1.5rem' }}>
+                    <section style={{ display: 'grid', gap: 12 }}>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 700,
+                          letterSpacing: '0.04em',
+                          textTransform: 'uppercase',
+                          color: 'var(--ink-muted)'
+                        }}
+                      >
+                        Identity
+                      </div>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'minmax(120px, 0.4fr) 1fr',
+                          gap: 12
+                        }}
+                      >
+                        <div className="field">
+                          <label>Code</label>
+                          <input
+                            value={compForm.code}
+                            onChange={(e) =>
+                              setCompForm({ ...compForm, code: e.target.value.toUpperCase() })
+                            }
+                            required
+                            disabled={Boolean(editingCompId)}
+                            placeholder="e.g. BASIC"
+                          />
+                        </div>
+                        <div className="field">
+                          <label>Display name</label>
+                          <input
+                            value={compForm.name}
+                            onChange={(e) => setCompForm({ ...compForm, name: e.target.value })}
+                            required
+                            placeholder="e.g. Basic salary"
+                          />
+                        </div>
+                      </div>
+                      <div className="field">
+                        <label>Payslip side</label>
+                        <select
+                          value={compForm.type}
+                          onChange={(e) => setCompForm({ ...compForm, type: e.target.value })}
+                        >
+                          <option value="earning">Earning (adds to pay)</option>
+                          <option value="deduction">Deduction (reduces net)</option>
+                          <option value="employer_contribution">
+                            Employer contribution (company cost, not net)
+                          </option>
+                        </select>
+                      </div>
+                    </section>
+
+                    <section style={{ display: 'grid', gap: 12 }}>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 700,
+                          letterSpacing: '0.04em',
+                          textTransform: 'uppercase',
+                          color: 'var(--ink-muted)'
+                        }}
+                      >
+                        Calculation
+                      </div>
+                      <div className="field">
+                        <label>How is the amount calculated?</label>
+                        <select
+                          value={compForm.calculation_method}
+                          onChange={(e) => {
+                            const method = e.target.value;
+                            const needsRule = ['progressive_tax', 'statutory_rate'].includes(
+                              method
+                            );
+                            const needsElements = [
+                              'percent_of_components',
+                              'progressive_tax',
+                              'statutory_rate'
+                            ].includes(method);
+                            setCompForm({
+                              ...compForm,
+                              calculation_method: method,
+                              is_statutory: needsRule ? true : compForm.is_statutory,
+                              statutory_key: needsRule ? compForm.statutory_key : '',
+                              function_element_codes: needsElements
+                                ? compForm.function_element_codes
+                                : [],
+                              function_percentage:
+                                method === 'percent_of_components'
+                                  ? compForm.function_percentage
+                                  : ''
+                            });
+                          }}
+                        >
+                          <option value="fixed">Fixed amount</option>
+                          <option value="percent_of_components">% of selected earnings</option>
+                          <option value="progressive_tax">Progressive tax (PAYE bands)</option>
+                          <option value="statutory_rate">Flat statutory rate</option>
+                          <option value="sales_commission">Sales commission</option>
+                        </select>
+                        <p
+                          style={{
+                            margin: '0.4rem 0 0',
+                            fontSize: 12.5,
+                            color: 'var(--ink-muted)',
+                            lineHeight: 1.45
+                          }}
+                        >
+                          {calculationHint(compForm.calculation_method)}
+                        </p>
+                      </div>
+
+                      {compForm.calculation_method === 'percent_of_components' ? (
+                        <div className="field" style={{ maxWidth: 200 }}>
+                          <label>Percentage</label>
+                          <input
+                            type="number"
+                            min={0}
+                            step="any"
+                            value={compForm.function_percentage}
+                            onChange={(e) =>
+                              setCompForm({
+                                ...compForm,
+                                function_percentage: e.target.value
+                              })
+                            }
+                            required
+                            placeholder="e.g. 10"
+                          />
+                        </div>
+                      ) : null}
+
+                      {showStatutoryRule ? (
+                        <div className="field">
+                          <label>Statutory rule</label>
+                          <select
+                            value={compForm.statutory_key}
+                            onChange={(e) =>
+                              setCompForm({
+                                ...compForm,
+                                statutory_key: e.target.value,
+                                is_statutory: Boolean(e.target.value)
+                              })
+                            }
+                            required
+                          >
+                            <option value="">Select a rule…</option>
+                            {activeStatutoryRules.map((s) => (
+                              <option key={s.id} value={s.key}>
+                                {s.name}
+                                {s.method === 'flat_rate' && s.rate != null
+                                  ? ` (${Number(s.rate)}%)`
+                                  : s.method === 'progressive_brackets'
+                                    ? ` (${s.brackets?.length || 0} bands)`
+                                    : ''}
+                              </option>
+                            ))}
+                          </select>
+                          <p
+                            style={{
+                              margin: '0.4rem 0 0',
+                              fontSize: 12.5,
+                              color: 'var(--ink-muted)',
+                              lineHeight: 1.45
+                            }}
+                          >
+                            {activeStatutoryRules.length
+                              ? 'Rules are managed under the Statutory tab (rates & tax bands).'
+                              : 'No statutory rules yet — use “Seed starter config” or open the Statutory tab.'}
+                            {selectedStatutory?.method === 'flat_rate' &&
+                            selectedStatutory.rate != null
+                              ? ` This rule applies ${Number(selectedStatutory.rate)}% to the selected earnings base.`
+                              : ''}
+                            {selectedStatutory?.method === 'progressive_brackets'
+                              ? ' This rule applies progressive annual bands, then divides by 12 for monthly PAYE.'
+                              : ''}
+                          </p>
+                        </div>
+                      ) : null}
+
+                      {showFunctionElements ? (
+                        <div className="field">
+                          <label>
+                            {compForm.calculation_method === 'progressive_tax'
+                              ? 'Taxable base (select earnings)'
+                              : compForm.calculation_method === 'statutory_rate'
+                                ? 'Contribution base (select earnings)'
+                                : 'Earnings included in the %'}
+                          </label>
+                          {!earningOptions.length ? (
+                            <p style={{ margin: 0, color: 'var(--ink-muted)', fontSize: 13 }}>
+                              Add at least one earning component first (e.g. Basic, Housing).
+                            </p>
+                          ) : (
+                            <div
+                              style={{
+                                display: 'grid',
+                                gap: 2,
+                                maxHeight: 200,
+                                overflow: 'auto',
+                                padding: '0.35rem',
+                                border: '1px solid var(--line)',
+                                borderRadius: 10,
+                                background: 'var(--bg)'
+                              }}
+                            >
+                              {earningOptions.map((c) => {
+                                const checked = compForm.function_element_codes.includes(c.code);
+                                return (
+                                  <label
+                                    key={c.id}
+                                    style={{
+                                      display: 'flex',
+                                      gap: 10,
+                                      alignItems: 'center',
+                                      cursor: 'pointer',
+                                      padding: '0.55rem 0.65rem',
+                                      borderRadius: 8,
+                                      background: checked
+                                        ? 'color-mix(in srgb, var(--brand) 10%, transparent)'
+                                        : 'transparent'
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => toggleFunctionElement(c.code)}
+                                    />
+                                    <span style={{ flex: 1 }}>
+                                      <strong>{c.code}</strong>
+                                      <span style={{ color: 'var(--ink-muted)' }}>
+                                        {' '}
+                                        — {c.name}
+                                      </span>
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
+                    </section>
+
+                    <section style={{ display: 'grid', gap: 10 }}>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 700,
+                          letterSpacing: '0.04em',
+                          textTransform: 'uppercase',
+                          color: 'var(--ink-muted)'
+                        }}
+                      >
+                        Flags
+                      </div>
+                      <div
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '1fr 1fr',
+                          gap: 8
+                        }}
+                      >
+                        {(
+                          [
+                            {
+                              key: 'is_taxable' as const,
+                              label: 'Taxable',
+                              hint: 'Included in PAYE taxable base when marked on earnings'
+                            },
+                            {
+                              key: 'is_pensionable' as const,
+                              label: 'Pensionable',
+                              hint: 'Included in pensionable base'
+                            },
+                            {
+                              key: 'is_primary' as const,
+                              label: 'Primary basic',
+                              hint: 'Main salary line; falls back to employee base salary'
+                            },
+                            {
+                              key: 'is_statutory' as const,
+                              label: 'Statutory deduction',
+                              hint: 'Government / regulatory item (tax, pension, NHF…)'
+                            }
+                          ] as const
+                        ).map((flag) => (
+                          <label
+                            key={flag.key}
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'auto 1fr',
+                              gap: '0.35rem 0.65rem',
+                              alignItems: 'start',
+                              padding: '0.65rem 0.75rem',
+                              border: '1px solid var(--line)',
+                              borderRadius: 10,
+                              cursor: 'pointer',
+                              background: compForm[flag.key]
+                                ? 'color-mix(in srgb, var(--brand) 8%, transparent)'
+                                : 'var(--bg)'
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={compForm[flag.key]}
+                              onChange={(e) =>
+                                setCompForm({ ...compForm, [flag.key]: e.target.checked })
+                              }
+                              style={{ marginTop: 2 }}
+                            />
+                            <span>
+                              <span style={{ fontWeight: 600, display: 'block' }}>
+                                {flag.label}
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: 12,
+                                  color: 'var(--ink-muted)',
+                                  lineHeight: 1.35
+                                }}
+                              >
+                                {flag.hint}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </section>
+                  </div>
+                  <div className="modal__footer">
+                    <button type="button" className="btn btn-ghost" onClick={closeCompModal}>
+                      Cancel
+                    </button>
+                    <button type="submit" className="btn btn-primary">
+                      {editingCompId ? 'Save changes' : 'Create component'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          ) : null}
         </>
       ) : null}
 
