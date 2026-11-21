@@ -73,7 +73,13 @@ export const AssetsPage: React.FC = () => {
   const [revaluations, setRevaluations] = useState<any[]>([]);
   const [disposals, setDisposals] = useState<any[]>([]);
   const [components, setComponents] = useState<any[]>([]);
-  const [cipForm, setCipForm] = useState({ name: '', cost_amount: '', funding_method: 'equity' });
+  const [cipForm, setCipForm] = useState({
+    name: '',
+    category_id: '',
+    cost_amount: '',
+    funding_method: 'equity',
+    bank_account_id: ''
+  });
   const [impForm, setImpForm] = useState({ asset_id: '', amount: '', reason: '' });
   const [revalForm, setRevalForm] = useState({ asset_id: '', new_carrying_amount: '', reason: '' });
   const [dispForm, setDispForm] = useState({
@@ -670,15 +676,36 @@ export const AssetsPage: React.FC = () => {
   const createCip = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const project = await api.assets.createCapitalProject({ name: cipForm.name });
+      if (
+        Number(cipForm.cost_amount) > 0 &&
+        cipForm.funding_method === 'bank' &&
+        !cipForm.bank_account_id
+      ) {
+        await alertError('CIP', 'Select a bank account when funding is Bank');
+        return;
+      }
+      const project = await api.assets.createCapitalProject({
+        name: cipForm.name,
+        category_id: cipForm.category_id || undefined
+      });
       if (Number(cipForm.cost_amount) > 0) {
         await api.assets.addCapitalProjectCost(project.id, {
           amount: Number(cipForm.cost_amount),
-          funding_method: cipForm.funding_method
+          funding_method: cipForm.funding_method,
+          bank_account_id:
+            cipForm.funding_method === 'bank' || cipForm.funding_method === 'cash'
+              ? cipForm.bank_account_id || undefined
+              : undefined
         });
       }
       await alertSuccess('CIP project created');
-      setCipForm({ name: '', cost_amount: '', funding_method: 'equity' });
+      setCipForm({
+        name: '',
+        category_id: '',
+        cost_amount: '',
+        funding_method: 'equity',
+        bank_account_id: ''
+      });
       await load();
     } catch (err: any) {
       await alertError('CIP failed', err.message);
@@ -2512,6 +2539,20 @@ export const AssetsPage: React.FC = () => {
                     />
                   </div>
                   <div className="field">
+                    <label>Asset category</label>
+                    <select
+                      value={cipForm.category_id}
+                      onChange={(e) => setCipForm({ ...cipForm, category_id: e.target.value })}
+                    >
+                      <option value="">Optional…</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.code} — {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="field">
                     <label>First cost</label>
                     <input
                       type="number"
@@ -2524,7 +2565,16 @@ export const AssetsPage: React.FC = () => {
                     <label>Funding</label>
                     <select
                       value={cipForm.funding_method}
-                      onChange={(e) => setCipForm({ ...cipForm, funding_method: e.target.value })}
+                      onChange={(e) =>
+                        setCipForm({
+                          ...cipForm,
+                          funding_method: e.target.value,
+                          bank_account_id:
+                            e.target.value === 'bank' || e.target.value === 'cash'
+                              ? cipForm.bank_account_id || bankAccounts[0]?.id || ''
+                              : ''
+                        })
+                      }
                     >
                       <option value="equity">Equity</option>
                       <option value="bank">Bank</option>
@@ -2532,6 +2582,30 @@ export const AssetsPage: React.FC = () => {
                       <option value="credit">Credit</option>
                     </select>
                   </div>
+                  {cipForm.funding_method === 'bank' || cipForm.funding_method === 'cash' ? (
+                    <div className="field">
+                      <label>
+                        {cipForm.funding_method === 'bank' ? 'Bank account' : 'Cash / bank account'}
+                      </label>
+                      <select
+                        value={cipForm.bank_account_id}
+                        onChange={(e) =>
+                          setCipForm({ ...cipForm, bank_account_id: e.target.value })
+                        }
+                        required={cipForm.funding_method === 'bank'}
+                      >
+                        <option value="">
+                          {cipForm.funding_method === 'cash' ? 'Default cash GL…' : 'Select…'}
+                        </option>
+                        {bankAccounts.map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.name}
+                            {b.account_number ? ` (${b.account_number})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
                   <div className="form-grid--actions">
                     <button className="btn btn-primary" type="submit">
                       Create
@@ -2545,6 +2619,7 @@ export const AssetsPage: React.FC = () => {
                     <thead>
                       <tr>
                         <th>Project</th>
+                        <th>Category</th>
                         <th>Status</th>
                         <th>Total</th>
                         <th></th>
@@ -2556,6 +2631,7 @@ export const AssetsPage: React.FC = () => {
                           <td>
                             {p.project_number} — {p.name}
                           </td>
+                          <td>{p.category?.name || '—'}</td>
                           <td>{p.status}</td>
                           <td>{Number(p.total_cost || 0).toLocaleString()}</td>
                           <td style={{ display: 'flex', gap: 6 }}>
@@ -2603,7 +2679,7 @@ export const AssetsPage: React.FC = () => {
                       ))}
                       {!capitalProjects.length ? (
                         <tr>
-                          <td colSpan={4} style={{ color: 'var(--ink-muted)' }}>
+                          <td colSpan={5} style={{ color: 'var(--ink-muted)' }}>
                             No CIP projects yet.
                           </td>
                         </tr>
