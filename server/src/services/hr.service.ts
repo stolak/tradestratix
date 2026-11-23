@@ -80,9 +80,21 @@ const employeeInclude = {
 async function resolvePayGradeId(businessId: string, raw: unknown) {
   if (raw == null || raw === '') return null;
   const id = String(raw);
-  const grade = await prisma.payGrade.findFirst({ where: { id, businessId, isActive: true } });
+  const grade = await prisma.payGrade.findFirst({ where: { id, businessId } });
   if (!grade) throw httpError(400, 'Invalid pay_grade_id');
   return grade.id;
+}
+
+function resolvePayStep(raw: unknown, maxStep?: number | null): number | null {
+  if (raw == null || raw === '') return null;
+  const step = Number(raw);
+  if (!Number.isInteger(step) || step < 1) {
+    throw httpError(400, 'pay_step must be a positive integer');
+  }
+  if (maxStep != null && step > maxStep) {
+    throw httpError(400, `pay_step cannot exceed grade max step (${maxStep})`);
+  }
+  return step;
 }
 
 export async function listEmployees(user: AuthUser, status?: string, opts?: BranchListOpts) {
@@ -147,6 +159,20 @@ export async function createEmployee(user: AuthUser, body: Record<string, any>) 
     if (!ok) throw httpError(400, `Invalid branch_id in branch access list: ${bid}`);
   }
 
+  const resolvedPayGradeId = await resolvePayGradeId(
+    user.businessId,
+    body.pay_grade_id ?? body.payGradeId
+  );
+  const gradeMax = resolvedPayGradeId
+    ? (
+        await prisma.payGrade.findFirst({
+          where: { id: resolvedPayGradeId, businessId: user.businessId },
+          select: { maxStep: true }
+        })
+      )?.maxStep
+    : null;
+  const resolvedPayStep = resolvePayStep(body.pay_step ?? body.payStep, gradeMax);
+
   try {
     const created = await prisma.$transaction(async (tx) => {
       const login = await tx.user.create({
@@ -193,14 +219,8 @@ export async function createEmployee(user: AuthUser, body: Record<string, any>) 
             body.hire_date || body.hireDate ? new Date(body.hire_date || body.hireDate) : null,
           baseSalary: toDec(Number(body.base_salary ?? body.baseSalary ?? 0)),
           payFrequency: body.pay_frequency || body.payFrequency || 'monthly',
-          payGradeId: await resolvePayGradeId(
-            user.businessId,
-            body.pay_grade_id ?? body.payGradeId
-          ),
-          payStep:
-            body.pay_step != null || body.payStep != null
-              ? Number(body.pay_step ?? body.payStep)
-              : null,
+          payGradeId: resolvedPayGradeId,
+          payStep: resolvedPayStep,
           employmentType: body.employment_type || body.employmentType || 'permanent',
           includeSalesCommission:
             body.include_sales_commission ?? body.includeSalesCommission ?? true,
@@ -330,17 +350,32 @@ export async function updateEmployee(user: AuthUser, id: string, body: Record<st
   if (body.base_salary !== undefined || body.baseSalary !== undefined) {
     data.baseSalary = toDec(Number(body.base_salary ?? body.baseSalary));
   }
+  const nextPayGradeId =
+    body.pay_grade_id !== undefined || body.payGradeId !== undefined
+      ? await resolvePayGradeId(user.businessId, body.pay_grade_id ?? body.payGradeId)
+      : existing.payGradeId;
   if (body.pay_grade_id !== undefined || body.payGradeId !== undefined) {
-    data.payGradeId = await resolvePayGradeId(
-      user.businessId,
-      body.pay_grade_id ?? body.payGradeId
-    );
+    data.payGradeId = nextPayGradeId;
   }
-  if (body.pay_step !== undefined || body.payStep !== undefined) {
-    data.payStep =
-      body.pay_step != null || body.payStep != null
-        ? Number(body.pay_step ?? body.payStep)
-        : null;
+  if (
+    body.pay_step !== undefined ||
+    body.payStep !== undefined ||
+    body.pay_grade_id !== undefined ||
+    body.payGradeId !== undefined
+  ) {
+    const gradeMax = nextPayGradeId
+      ? (
+          await prisma.payGrade.findFirst({
+            where: { id: nextPayGradeId, businessId: user.businessId },
+            select: { maxStep: true }
+          })
+        )?.maxStep
+      : null;
+    const stepRaw =
+      body.pay_step !== undefined || body.payStep !== undefined
+        ? (body.pay_step ?? body.payStep)
+        : existing.payStep;
+    data.payStep = nextPayGradeId ? resolvePayStep(stepRaw, gradeMax) : null;
   }
   if (body.employment_type !== undefined || body.employmentType !== undefined) {
     data.employmentType = body.employment_type || body.employmentType || 'permanent';
