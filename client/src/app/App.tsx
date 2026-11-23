@@ -27,6 +27,7 @@ import { PayrollPage } from './pages/PayrollPage';
 import { DistributionPage } from './pages/DistributionPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { SubscriptionsPage } from './pages/SubscriptionsPage';
+import { SetPasswordPage } from './pages/SetPasswordPage';
 import { BranchSwitcher } from './components/BranchSwitcher';
 import { getRouteFromLocation, ROUTES, setRouteInLocation } from './routes';
 
@@ -68,7 +69,10 @@ export const App: React.FC = () => {
     );
   }
 
-  if (!isAuthenticated) return <LoginPage />;
+  if (!isAuthenticated) {
+    if (route === ROUTES.SET_PASSWORD) return <SetPasswordPage />;
+    return <LoginPage />;
+  }
 
   let content: React.ReactNode;
   switch (route) {

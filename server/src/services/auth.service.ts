@@ -7,6 +7,7 @@ import { writeAudit } from './audit.service.js';
 import type { AuthUser } from '../types/express/index.js';
 import * as branchAccess from './branch-access.service.js';
 import * as mfa from './mfa.service.js';
+import { userHasPendingPasswordSetup } from './password-setup.service.js';
 
 async function toAuthUser(userId: string, preferredBranchId?: string | null): Promise<AuthUser> {
   const user = await prisma.user.findUnique({
@@ -129,6 +130,13 @@ export async function login(
   });
   if (!ok) throw httpError(401, 'Invalid username or password');
   if (user.business.status !== 'active') throw httpError(403, 'Business account is not active');
+
+  if (await userHasPendingPasswordSetup(user.id)) {
+    throw httpError(
+      403,
+      'Please set your password using the invite link sent to your email before signing in'
+    );
+  }
 
   const needsMfa = await mfa.userRequiresMfa(user.businessId, user.id, user.role);
   if (needsMfa) {

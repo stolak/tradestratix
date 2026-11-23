@@ -3,6 +3,7 @@ import * as authController from '../controllers/auth.controller.js';
 import { authenticateStrict } from '../middlewares/auth.js';
 import { loginRateLimiter } from '../middlewares/login-rate-limit.js';
 import { isDemoLoginEnabled } from '../utils/demo-login.js';
+import * as passwordSetup from '../services/password-setup.service.js';
 
 const router = Router();
 
@@ -25,6 +26,41 @@ router.post('/login', loginRateLimiter, authController.login);
  *     summary: Complete login with MFA code
  */
 router.post('/mfa/verify', loginRateLimiter, authController.verifyMfa);
+
+/**
+ * @openapi
+ * /api/v1/auth/password-setup/preview:
+ *   get:
+ *     tags: [Auth]
+ *     security: []
+ *     summary: Preview a password-setup invite token
+ */
+router.get('/password-setup/preview', async (req, res, next) => {
+  try {
+    const token = String(req.query.token || '');
+    return res.json(await passwordSetup.previewPasswordSetupToken(token));
+  } catch (err) {
+    return next(err);
+  }
+});
+
+/**
+ * @openapi
+ * /api/v1/auth/password-setup:
+ *   post:
+ *     tags: [Auth]
+ *     security: []
+ *     summary: Set password using invite token
+ */
+router.post('/password-setup', loginRateLimiter, async (req, res, next) => {
+  try {
+    const token = String(req.body?.token || '');
+    const password = String(req.body?.password || '');
+    return res.json(await passwordSetup.completePasswordSetup(token, password));
+  } catch (err) {
+    return next(err);
+  }
+});
 
 /**
  * @openapi

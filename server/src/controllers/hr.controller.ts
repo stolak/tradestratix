@@ -33,6 +33,41 @@ export async function updateEmployee(req: Request, res: Response, next: NextFunc
   }
 }
 
+export async function listDepartments(req: Request, res: Response, next: NextFunction) {
+  try {
+    const activeOnly = req.query.active === '1' || req.query.active === 'true';
+    return res.json(await hrService.listDepartments(req.user!, activeOnly));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function createDepartment(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.status(201).json(await hrService.createDepartment(req.user!, req.body || {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function updateDepartment(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(
+      await hrService.updateDepartment(req.user!, req.params.id, req.body || {})
+    );
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function resendEmployeeInvite(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await hrService.resendEmployeePasswordInvite(req.user!, req.params.id));
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function listAttendance(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(

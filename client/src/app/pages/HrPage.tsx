@@ -6,15 +6,13 @@ type Tab = 'employees' | 'attendance' | 'leave';
 
 type EmpForm = {
   full_name: string;
-  code: string;
-  department: string;
+  staff_number: string;
+  department_id: string;
   job_title: string;
   base_salary: string;
   phone: string;
   email: string;
   branch_id: string;
-  username: string;
-  password: string;
   is_sales_rep: boolean;
   commission_percent: string;
   include_sales_commission: boolean;
@@ -27,15 +25,13 @@ type EmpForm = {
 
 const emptyEmpForm = (): EmpForm => ({
   full_name: '',
-  code: '',
-  department: '',
+  staff_number: '',
+  department_id: '',
   job_title: '',
   base_salary: '',
   phone: '',
   email: '',
   branch_id: '',
-  username: '',
-  password: '',
   is_sales_rep: false,
   commission_percent: '5',
   include_sales_commission: true,
@@ -49,15 +45,13 @@ const emptyEmpForm = (): EmpForm => ({
 function employeeToForm(r: any): EmpForm {
   return {
     full_name: r.full_name || '',
-    code: r.code || '',
-    department: r.department || '',
+    staff_number: r.code || r.staff_number || '',
+    department_id: r.department_id || r.department_ref?.id || '',
     job_title: r.job_title || '',
     base_salary: r.base_salary != null ? String(r.base_salary) : '',
     phone: r.phone || '',
     email: r.email || '',
     branch_id: r.branch_id || r.branch?.id || '',
-    username: r.user?.username || '',
-    password: '',
     is_sales_rep: Boolean(r.sales_rep),
     commission_percent:
       r.sales_rep?.commission_percent != null ? String(r.sales_rep.commission_percent) : '5',
@@ -75,11 +69,13 @@ export const HrPage: React.FC = () => {
   const [employees, setEmployees] = useState<any[]>([]);
   const [branches, setBranches] = useState<any[]>([]);
   const [grades, setGrades] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [attendance, setAttendance] = useState<any[]>([]);
   const [leave, setLeave] = useState<any[]>([]);
   const [empModalOpen, setEmpModalOpen] = useState(false);
   const [editingEmpId, setEditingEmpId] = useState<string | null>(null);
   const [empSaving, setEmpSaving] = useState(false);
+  const [newDepartmentName, setNewDepartmentName] = useState('');
   const [empForm, setEmpForm] = useState<EmpForm>(emptyEmpForm);
   const [attForm, setAttForm] = useState({
     employee_id: '',
@@ -108,18 +104,20 @@ export const HrPage: React.FC = () => {
 
   const load = async () => {
     try {
-      const [e, a, l, b, g] = await Promise.all([
+      const [e, a, l, b, g, d] = await Promise.all([
         api.hr.employees(),
         api.hr.attendance(),
         api.hr.leave(),
         api.branches.list(),
-        api.payroll.grades(false).catch(() => [])
+        api.payroll.grades(false).catch(() => []),
+        api.hr.departments(false).catch(() => [])
       ]);
       setEmployees(e);
       setAttendance(a);
       setLeave(l);
       setBranches(b);
       setGrades(Array.isArray(g) ? g : []);
+      setDepartments(Array.isArray(d) ? d : []);
       setAttForm((f) => ({ ...f, employee_id: f.employee_id || e[0]?.id || '' }));
       setLeaveForm((f) => ({ ...f, employee_id: f.employee_id || e[0]?.id || '' }));
     } catch (err: any) {
@@ -169,12 +167,12 @@ export const HrPage: React.FC = () => {
   const buildPayload = () => {
     const payload: Record<string, unknown> = {
       full_name: empForm.full_name,
-      code: empForm.code || undefined,
-      department: empForm.department || undefined,
+      staff_number: empForm.staff_number,
+      department_id: empForm.department_id || null,
       job_title: empForm.job_title || undefined,
       base_salary: Number(empForm.base_salary || 0),
       phone: empForm.phone || undefined,
-      email: empForm.email || undefined,
+      email: empForm.email,
       hire_date: empForm.hire_date || undefined,
       branch_id: empForm.branch_id || undefined,
       is_sales_rep: empForm.is_sales_rep,
@@ -186,12 +184,7 @@ export const HrPage: React.FC = () => {
       pay_grade_id: empForm.pay_grade_id || null,
       pay_step: empForm.pay_grade_id && empForm.pay_step !== '' ? Number(empForm.pay_step) : null
     };
-    if (!editingEmpId) {
-      payload.username = empForm.username || undefined;
-      payload.password = empForm.password || undefined;
-    } else {
-      payload.status = empForm.status;
-    }
+    if (editingEmpId) payload.status = empForm.status;
     return payload;
   };
 
@@ -205,12 +198,14 @@ export const HrPage: React.FC = () => {
         await alertSuccess('Employee updated');
       } else {
         const created = await api.hr.createEmployee(payload);
-        const loginHint = created.login_username
-          ? ` Login: ${created.login_username}${
-              created.temporary_password ? ` / ${created.temporary_password}` : ''
-            }`
-          : '';
-        await alertSuccess(`Employee created.${loginHint}`);
+        const mailNote = created.invite_email_sent
+          ? ' Password setup link emailed.'
+          : created.invite_link
+            ? ` Invite link: ${created.invite_link}`
+            : '';
+        await alertSuccess(
+          `Employee created. Username (staff number): ${created.login_username || empForm.staff_number}.${mailNote}`
+        );
       }
       setEmpSaving(false);
       closeEmpModal(true);
@@ -219,6 +214,35 @@ export const HrPage: React.FC = () => {
       await alertError(editingEmpId ? 'Update failed' : 'Create failed', err.message);
     } finally {
       setEmpSaving(false);
+    }
+  };
+
+  const addDepartmentQuick = async () => {
+    const name = newDepartmentName.trim();
+    if (!name) return;
+    try {
+      const created = await api.hr.createDepartment({ name });
+      setNewDepartmentName('');
+      await load();
+      setEmpForm((f) => ({ ...f, department_id: created.id }));
+      await alertSuccess('Department added');
+    } catch (err: any) {
+      await alertError('Department', err.message);
+    }
+  };
+
+  const resendInvite = async () => {
+    if (!editingEmpId) return;
+    try {
+      const res = await api.hr.resendInvite(editingEmpId);
+      const note = res.invite_email_sent
+        ? 'Invite email resent.'
+        : res.invite_link
+          ? `Invite link: ${res.invite_link}`
+          : 'Invite created.';
+      await alertSuccess(note);
+    } catch (err: any) {
+      await alertError('Resend invite failed', err.message);
     }
   };
 
@@ -324,9 +348,9 @@ export const HrPage: React.FC = () => {
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Code</th>
+                  <th>Staff no.</th>
+                  <th>Department</th>
                   <th>Branch</th>
-                  <th>Login</th>
                   <th>Title</th>
                   <th>Grade</th>
                   <th>Step</th>
@@ -341,8 +365,8 @@ export const HrPage: React.FC = () => {
                   <tr key={r.id}>
                     <td>{r.full_name}</td>
                     <td>{r.code || '—'}</td>
+                    <td>{r.department_ref?.name || r.department || '—'}</td>
                     <td>{r.branch?.code || '—'}</td>
-                    <td>{r.user?.username || '—'}</td>
                     <td>{r.job_title || '—'}</td>
                     <td>{r.pay_grade?.code || '—'}</td>
                     <td>{r.pay_step != null ? r.pay_step : '—'}</td>
@@ -393,7 +417,8 @@ export const HrPage: React.FC = () => {
                   {editingEmpId ? 'Edit employee' : 'Add employee'}
                 </h2>
                 <p style={{ margin: '0.25rem 0 0', color: 'var(--ink-muted)', fontSize: 13 }}>
-                  Grade level and step are optional; used when payroll charts are configured.
+                  Staff number is unique and becomes the login username. A password setup link is
+                  emailed to the staff member.
                 </p>
               </div>
               <button
@@ -418,18 +443,53 @@ export const HrPage: React.FC = () => {
                     />
                   </div>
                   <div className="field">
-                    <label>Code</label>
+                    <label>Staff number</label>
                     <input
-                      value={empForm.code}
-                      onChange={(e) => setEmpForm({ ...empForm, code: e.target.value })}
+                      value={empForm.staff_number}
+                      onChange={(e) =>
+                        setEmpForm({
+                          ...empForm,
+                          staff_number: e.target.value.replace(/\s/g, '')
+                        })
+                      }
+                      required
+                      placeholder="Unique staff ID / username"
                     />
                   </div>
                   <div className="field">
-                    <label>Department</label>
-                    <input
-                      value={empForm.department}
-                      onChange={(e) => setEmpForm({ ...empForm, department: e.target.value })}
-                    />
+                    <label>Department (optional)</label>
+                    <select
+                      value={empForm.department_id}
+                      onChange={(e) =>
+                        setEmpForm({ ...empForm, department_id: e.target.value })
+                      }
+                    >
+                      <option value="">None</option>
+                      {departments
+                        .filter(
+                          (d) =>
+                            d.is_active !== false || d.id === empForm.department_id
+                        )
+                        .map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.code ? `${d.code} — ${d.name}` : d.name}
+                          </option>
+                        ))}
+                    </select>
+                    <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                      <input
+                        value={newDepartmentName}
+                        onChange={(e) => setNewDepartmentName(e.target.value)}
+                        placeholder="New department name"
+                      />
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => void addDepartmentQuick()}
+                      >
+                        Add
+                      </button>
+                    </div>
                   </div>
                   <div className="field">
                     <label>Job title</label>
@@ -524,7 +584,11 @@ export const HrPage: React.FC = () => {
                       type="email"
                       value={empForm.email}
                       onChange={(e) => setEmpForm({ ...empForm, email: e.target.value })}
+                      required
                     />
+                    <div style={{ color: 'var(--ink-muted)', fontSize: '0.82rem', marginTop: 4 }}>
+                      Required — used to send the password setup link.
+                    </div>
                   </div>
                   <div className="field">
                     <label>Home branch</label>
@@ -540,6 +604,14 @@ export const HrPage: React.FC = () => {
                       ))}
                     </select>
                   </div>
+                  <div className="field">
+                    <label>Login username</label>
+                    <input
+                      value={empForm.staff_number || '—'}
+                      disabled
+                      title="Same as staff number"
+                    />
+                  </div>
                   {editingEmpId ? (
                     <div className="field">
                       <label>Status</label>
@@ -553,32 +625,6 @@ export const HrPage: React.FC = () => {
                       </select>
                     </div>
                   ) : null}
-                  {!editingEmpId ? (
-                    <>
-                      <div className="field">
-                        <label>Login username</label>
-                        <input
-                          value={empForm.username}
-                          onChange={(e) => setEmpForm({ ...empForm, username: e.target.value })}
-                          placeholder="Auto from name if blank"
-                        />
-                      </div>
-                      <div className="field">
-                        <label>Login password</label>
-                        <input
-                          type="text"
-                          value={empForm.password}
-                          onChange={(e) => setEmpForm({ ...empForm, password: e.target.value })}
-                          placeholder="Temporary password if blank"
-                        />
-                      </div>
-                    </>
-                  ) : (
-                    <div className="field">
-                      <label>Login username</label>
-                      <input value={empForm.username || '—'} disabled />
-                    </div>
-                  )}
                   <div className="field">
                     <label>
                       <input
@@ -628,6 +674,16 @@ export const HrPage: React.FC = () => {
                 </div>
               </div>
               <div className="modal__footer">
+                {editingEmpId ? (
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => void resendInvite()}
+                    disabled={empSaving}
+                  >
+                    Resend password link
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   className="btn btn-ghost"

@@ -26,14 +26,16 @@ export const ROUTES = {
   USERS: 'users',
   ROLES: 'roles',
   SETTINGS: 'settings',
-  AUDIT: 'audit'
+  AUDIT: 'audit',
+  SET_PASSWORD: 'set-password'
 } as const;
 
 export type RouteName = (typeof ROUTES)[keyof typeof ROUTES];
 
 export function getRouteFromLocation(): string | null {
   const hash = window.location.hash.replace(/^#\/?/, '');
-  return hash || null;
+  if (!hash) return null;
+  return hash.split('?')[0] || null;
 }
 
 export function setRouteInLocation(route: string) {

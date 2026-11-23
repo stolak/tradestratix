@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { prisma } from '../utils/prisma.js';
 import { httpError, requireString, serialize, shortId, toDec } from '../utils/helpers.js';
@@ -6,6 +7,7 @@ import { writeAudit } from './audit.service.js';
 import * as branchAccess from './branch-access.service.js';
 import { promoteEmployeeToSalesRep } from './sales-rep.service.js';
 import { assignBranchWarehousesToUser } from './warehouse.service.js';
+import { issuePasswordSetupInvite } from './password-setup.service.js';
 
 type BranchListOpts = {
   branchId?: string | null;
@@ -18,17 +20,24 @@ function dateOnly(value: string | Date) {
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
 }
 
-function slugUsername(fullName: string) {
-  const base = fullName
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '.')
-    .replace(/^\.+|\.+$/g, '')
-    .slice(0, 24);
-  return base || 'employee';
+function normalizeStaffNumber(raw: unknown): string {
+  const value = String(raw ?? '').trim();
+  if (!value) throw httpError(400, 'staff_number is required');
+  if (value.length < 2) throw httpError(400, 'staff_number is too short');
+  if (/\s/.test(value)) throw httpError(400, 'staff_number cannot contain spaces');
+  return value;
 }
 
-function tempPassword() {
-  return `Tsx${Math.random().toString(36).slice(2, 8)}!${Date.now().toString().slice(-3)}`;
+async function resolveDepartment(
+  businessId: string,
+  rawId: unknown
+): Promise<{ id: string; name: string } | null> {
+  if (rawId == null || rawId === '') return null;
+  const row = await prisma.department.findFirst({
+    where: { id: String(rawId), businessId, isActive: true }
+  });
+  if (!row) throw httpError(400, 'Invalid department_id');
+  return { id: row.id, name: row.name };
 }
 
 /** Home branch for HR: selected branch, else HQ (code HQ / Head Office fallback). */
@@ -59,6 +68,7 @@ export async function resolveEmployeeHomeBranch(
 
 const employeeInclude = {
   branch: true,
+  departmentRef: { select: { id: true, code: true, name: true, isActive: true } },
   payGrade: { select: { id: true, code: true, name: true, maxStep: true } },
   user: {
     select: {
@@ -112,12 +122,20 @@ export async function listEmployees(user: AuthUser, status?: string, opts?: Bran
 
 export async function createEmployee(user: AuthUser, body: Record<string, any>) {
   const fullName = requireString(body.full_name || body.fullName, 'full_name');
+  const staffNumber = normalizeStaffNumber(
+    body.staff_number ?? body.staffNumber ?? body.code
+  );
+  const email = requireString(body.email, 'email').toLowerCase();
   const isSalesRep = Boolean(
     body.is_sales_rep ?? body.isSalesRep ?? body.make_sales_rep ?? body.makeSalesRep
   );
   const branchId = await resolveEmployeeHomeBranch(
     user.businessId,
     body.branch_id || body.branchId || null
+  );
+  const department = await resolveDepartment(
+    user.businessId,
+    body.department_id ?? body.departmentId
   );
 
   const roleCode = requireString(
@@ -132,20 +150,19 @@ export async function createEmployee(user: AuthUser, body: Record<string, any>) 
   });
   if (!roleRow) throw httpError(400, `Invalid role: ${roleCode}`);
 
-  let username = String(body.username || '')
-    .trim()
-    .toLowerCase();
-  if (!username) {
-    username = slugUsername(fullName);
-    const clash = await prisma.user.findFirst({
-      where: { businessId: user.businessId, username }
-    });
-    if (clash) username = `${username}.${Date.now().toString(36).slice(-4)}`;
-  }
+  // Staff number is the login username.
+  const username = staffNumber;
+  const userClash = await prisma.user.findFirst({
+    where: { businessId: user.businessId, username }
+  });
+  if (userClash) throw httpError(409, 'Staff number is already used as a username');
+  const codeClash = await prisma.employee.findFirst({
+    where: { businessId: user.businessId, code: staffNumber }
+  });
+  if (codeClash) throw httpError(409, 'Staff number already exists');
 
-  const password = body.password ? String(body.password) : tempPassword();
-  if (password.length < 6) throw httpError(400, 'password must be at least 6 characters');
-  const passwordHash = await bcrypt.hash(password, 10);
+  // Placeholder hash until the staff sets a password via invite link.
+  const passwordHash = await bcrypt.hash(crypto.randomBytes(24).toString('hex'), 10);
 
   // Extra branches the login may access (multi-branch). Home branch always included.
   const extraBranchIds = Array.isArray(body.branch_ids || body.branchIds)
@@ -183,9 +200,9 @@ export async function createEmployee(user: AuthUser, body: Record<string, any>) 
           passwordHash,
           fullName,
           role: roleCode,
-          email: body.email || null,
+          email,
           phone: body.phone || null,
-          department: body.department || null,
+          department: department?.name || null,
           defaultBranchId: branchId,
           createdById: user.id,
           userRoles: { create: [{ roleId: roleRow.id }] },
@@ -206,11 +223,12 @@ export async function createEmployee(user: AuthUser, body: Record<string, any>) 
           businessId: user.businessId,
           branchId,
           userId: login.id,
-          code: body.code ? String(body.code).trim() : null,
+          code: staffNumber,
           fullName,
-          email: body.email || null,
+          email,
           phone: body.phone || null,
-          department: body.department || null,
+          department: department?.name || null,
+          departmentId: department?.id || null,
           jobTitle:
             body.job_title ||
             body.jobTitle ||
@@ -275,13 +293,25 @@ export async function createEmployee(user: AuthUser, body: Record<string, any>) 
       });
     }
 
+    const business = await prisma.business.findUnique({
+      where: { id: user.businessId },
+      select: { name: true }
+    });
+    const invite = await issuePasswordSetupInvite({
+      userId: created.login.id,
+      email,
+      fullName,
+      username,
+      businessName: business?.name
+    });
+
     await writeAudit({
       user,
       action: 'create',
       module: 'hr',
       entityType: 'Employee',
       entityId: created.emp.id,
-      summary: `Created employee ${fullName} (user ${username})${isSalesRep ? ' as sales rep' : ''}`
+      summary: `Created employee ${fullName} (staff ${username})${isSalesRep ? ' as sales rep' : ''}`
     });
 
     const fresh = await prisma.employee.findUnique({
@@ -291,8 +321,11 @@ export async function createEmployee(user: AuthUser, body: Record<string, any>) 
 
     return serialize({
       ...fresh,
-      temporary_password: body.password ? undefined : password,
       login_username: username,
+      staff_number: staffNumber,
+      invite_link: invite.invite_link,
+      invite_email_sent: invite.email_sent,
+      invite_email_error: invite.email_error,
       sales_rep: salesRep
         ? {
             id: salesRep.id,
@@ -304,8 +337,8 @@ export async function createEmployee(user: AuthUser, body: Record<string, any>) 
   } catch (err: any) {
     if (err?.code === 'P2002') {
       const target = String(err?.meta?.target || '');
-      if (target.includes('username')) throw httpError(409, 'Username already exists');
-      if (target.includes('code')) throw httpError(409, 'Employee code already exists');
+      if (target.includes('username')) throw httpError(409, 'Staff number is already used as a username');
+      if (target.includes('code')) throw httpError(409, 'Staff number already exists');
       throw httpError(409, 'Duplicate employee or user record');
     }
     throw err;
@@ -323,10 +356,8 @@ export async function updateEmployee(user: AuthUser, id: string, body: Record<st
   const map: Record<string, string> = {
     full_name: 'fullName',
     fullName: 'fullName',
-    code: 'code',
     email: 'email',
     phone: 'phone',
-    department: 'department',
     job_title: 'jobTitle',
     jobTitle: 'jobTitle',
     pay_frequency: 'payFrequency',
@@ -343,6 +374,27 @@ export async function updateEmployee(user: AuthUser, id: string, body: Record<st
   };
   for (const [k, field] of Object.entries(map)) {
     if (body[k] !== undefined) data[field] = body[k];
+  }
+
+  let nextStaffNumber: string | undefined;
+  if (
+    body.staff_number !== undefined ||
+    body.staffNumber !== undefined ||
+    body.code !== undefined
+  ) {
+    nextStaffNumber = normalizeStaffNumber(
+      body.staff_number ?? body.staffNumber ?? body.code
+    );
+    data.code = nextStaffNumber;
+  }
+
+  if (body.department_id !== undefined || body.departmentId !== undefined) {
+    const department = await resolveDepartment(
+      user.businessId,
+      body.department_id ?? body.departmentId
+    );
+    data.departmentId = department?.id || null;
+    data.department = department?.name || null;
   }
   if (body.hire_date !== undefined || body.hireDate !== undefined) {
     data.hireDate = body.hire_date || body.hireDate ? new Date(body.hire_date || body.hireDate) : null;
@@ -415,6 +467,7 @@ export async function updateEmployee(user: AuthUser, id: string, body: Record<st
         if (data.phone !== undefined) userPatch.phone = data.phone;
         if (data.email !== undefined) userPatch.email = data.email;
         if (data.department !== undefined) userPatch.department = data.department;
+        if (nextStaffNumber) userPatch.username = nextStaffNumber;
         if (data.status !== undefined) {
           userPatch.status = data.status === 'inactive' ? 'inactive' : 'active';
         }
@@ -650,4 +703,119 @@ export async function approveLeave(
     summary: `${decision} leave for ${leave.employee.fullName}`
   });
   return serialize(updated);
+}
+
+export async function listDepartments(user: AuthUser, activeOnly = false) {
+  const rows = await prisma.department.findMany({
+    where: {
+      businessId: user.businessId,
+      ...(activeOnly ? { isActive: true } : {})
+    },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }]
+  });
+  return serialize(rows);
+}
+
+export async function createDepartment(user: AuthUser, body: Record<string, any>) {
+  const name = requireString(body.name, 'name');
+  const code = body.code != null && String(body.code).trim() ? String(body.code).trim() : null;
+  try {
+    const row = await prisma.department.create({
+      data: {
+        id: shortId('dep'),
+        businessId: user.businessId,
+        name,
+        code,
+        isActive: body.is_active === false || body.isActive === false ? false : true,
+        sortOrder: Number(body.sort_order ?? body.sortOrder ?? 0) || 0
+      }
+    });
+    await writeAudit({
+      user,
+      action: 'create',
+      module: 'hr',
+      entityType: 'Department',
+      entityId: row.id,
+      summary: `Created department ${name}`
+    });
+    return serialize(row);
+  } catch (err: any) {
+    if (err?.code === 'P2002') throw httpError(409, 'Department name or code already exists');
+    throw err;
+  }
+}
+
+export async function updateDepartment(user: AuthUser, id: string, body: Record<string, any>) {
+  const existing = await prisma.department.findFirst({
+    where: { id, businessId: user.businessId }
+  });
+  if (!existing) throw httpError(404, 'Department not found');
+
+  const data: Record<string, unknown> = {};
+  if (body.name !== undefined) data.name = requireString(body.name, 'name');
+  if (body.code !== undefined) {
+    data.code = body.code != null && String(body.code).trim() ? String(body.code).trim() : null;
+  }
+  if (body.is_active !== undefined || body.isActive !== undefined) {
+    data.isActive = Boolean(body.is_active ?? body.isActive);
+  }
+  if (body.sort_order !== undefined || body.sortOrder !== undefined) {
+    data.sortOrder = Number(body.sort_order ?? body.sortOrder ?? 0) || 0;
+  }
+
+  try {
+    const row = await prisma.department.update({ where: { id }, data: data as any });
+    if (data.name && data.name !== existing.name) {
+      await prisma.employee.updateMany({
+        where: { businessId: user.businessId, departmentId: id },
+        data: { department: String(data.name) }
+      });
+    }
+    await writeAudit({
+      user,
+      action: 'update',
+      module: 'hr',
+      entityType: 'Department',
+      entityId: id,
+      summary: `Updated department ${row.name}`
+    });
+    return serialize(row);
+  } catch (err: any) {
+    if (err?.code === 'P2002') throw httpError(409, 'Department name or code already exists');
+    throw err;
+  }
+}
+
+export async function resendEmployeePasswordInvite(user: AuthUser, employeeId: string) {
+  const emp = await prisma.employee.findFirst({
+    where: { id: employeeId, businessId: user.businessId },
+    include: { user: true, business: { select: { name: true } } }
+  });
+  if (!emp) throw httpError(404, 'Employee not found');
+  if (!emp.user?.email) throw httpError(400, 'Employee has no email address');
+
+  const invite = await issuePasswordSetupInvite({
+    userId: emp.userId,
+    email: emp.user.email,
+    fullName: emp.fullName,
+    username: emp.user.username,
+    businessName: emp.business?.name
+  });
+
+  await writeAudit({
+    user,
+    action: 'invite',
+    module: 'hr',
+    entityType: 'Employee',
+    entityId: emp.id,
+    summary: `Resent password setup invite to ${emp.user.email}`
+  });
+
+  return serialize({
+    id: emp.id,
+    login_username: emp.user.username,
+    invite_link: invite.invite_link,
+    invite_email_sent: invite.email_sent,
+    invite_email_error: invite.email_error
+  });
 }

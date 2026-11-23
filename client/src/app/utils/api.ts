@@ -73,6 +73,18 @@ export const api = {
         method: 'POST',
         body: JSON.stringify({ mfa_token: mfaToken, code })
       }),
+    previewPasswordSetup: (token: string) =>
+      request<{
+        username: string;
+        full_name: string;
+        email?: string | null;
+        business_name?: string | null;
+      }>(`/auth/password-setup/preview?token=${encodeURIComponent(token)}`),
+    completePasswordSetup: (token: string, password: string) =>
+      request<{ ok: boolean; username: string }>('/auth/password-setup', {
+        method: 'POST',
+        body: JSON.stringify({ token, password })
+      }),
     me: () => request<any>('/auth/me'),
     demoUsers: () =>
       request<{
@@ -1110,12 +1122,20 @@ export const api = {
     vsActual: (id: string) => request<any>(`/budgets/${id}/vs-actual`)
   },
   hr: {
+    departments: (activeOnly = false) =>
+      request<any[]>(`/hr/departments${activeOnly ? '?active=1' : ''}`),
+    createDepartment: (body: Record<string, unknown>) =>
+      request<any>('/hr/departments', { method: 'POST', body: JSON.stringify(body) }),
+    updateDepartment: (id: string, body: Record<string, unknown>) =>
+      request<any>(`/hr/departments/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     employees: (status?: string) =>
       request<any[]>(`/hr/employees${status ? `?status=${encodeURIComponent(status)}` : ''}`),
     createEmployee: (body: Record<string, unknown>) =>
       request<any>('/hr/employees', { method: 'POST', body: JSON.stringify(body) }),
     updateEmployee: (id: string, body: Record<string, unknown>) =>
       request<any>(`/hr/employees/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    resendInvite: (id: string) =>
+      request<any>(`/hr/employees/${id}/resend-invite`, { method: 'POST', body: '{}' }),
     attendance: (employeeId?: string) =>
       request<any[]>(
         `/hr/attendance${employeeId ? `?employee_id=${encodeURIComponent(employeeId)}` : ''}`

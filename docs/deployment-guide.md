@@ -12,6 +12,8 @@ Copy `server/.env` with:
 - `ENABLE_DEMO_LOGIN=false` (keep off in production; `/auth/demo-users` is blocked unless explicitly `true`; when true, MFA uses fixed demo code `000000`)
 - `LOGIN_RATE_LIMIT_MAX=30` (optional; login attempts per 15 minutes per IP)
 - `TRUST_PROXY=true` (set when the API sits behind nginx/CDN so rate limits use the real client IP)
+- `APP_URL=https://app.example.com` (client origin used in staff password-setup invite links)
+- `MAIL_HOST` / `MAIL_PORT` / `MAIL_USERNAME` / `MAIL_PASSWORD` / `MAIL_FROM_ADDRESS` / `MAIL_ENCRYPTION` (SMTP for staff invites)
 
 ### MFA
 

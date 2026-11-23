@@ -1298,6 +1298,31 @@ async function main() {
     },
     update: {}
   });
+
+  const seedDepartments = [
+    { code: 'HR', name: 'Human Resources', sortOrder: 1 },
+    { code: 'FIN', name: 'Finance', sortOrder: 2 },
+    { code: 'SAL', name: 'Sales', sortOrder: 3 },
+    { code: 'OPS', name: 'Operations', sortOrder: 4 },
+    { code: 'WH', name: 'Warehouse', sortOrder: 5 }
+  ];
+  for (const dep of seedDepartments) {
+    const existingDep = await prisma.department.findFirst({
+      where: { businessId: business.id, name: dep.name }
+    });
+    if (!existingDep) {
+      await prisma.department.create({
+        data: {
+          id: id('dep'),
+          businessId: business.id,
+          code: dep.code,
+          name: dep.name,
+          sortOrder: dep.sortOrder,
+          isActive: true
+        }
+      });
+    }
+  }
   await prisma.businessSubscription.create({
     data: {
       id: id('sub'),

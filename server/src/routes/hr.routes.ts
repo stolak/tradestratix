@@ -6,9 +6,22 @@ const router = Router();
 
 router.use(authenticate);
 
+router.get('/departments', requirePermission('hr.view'), hrController.listDepartments);
+router.post('/departments', requirePermission('hr.create', 'hr.edit'), hrController.createDepartment);
+router.patch(
+  '/departments/:id',
+  requirePermission('hr.edit'),
+  hrController.updateDepartment
+);
+
 router.get('/employees', requirePermission('hr.view'), hrController.listEmployees);
 router.post('/employees', requirePermission('hr.create'), hrController.createEmployee);
 router.patch('/employees/:id', requirePermission('hr.edit'), hrController.updateEmployee);
+router.post(
+  '/employees/:id/resend-invite',
+  requirePermission('hr.create', 'hr.edit'),
+  hrController.resendEmployeeInvite
+);
 
 router.get('/attendance', requirePermission('hr.view'), hrController.listAttendance);
 router.post('/attendance', requirePermission('hr.create'), hrController.upsertAttendance);
