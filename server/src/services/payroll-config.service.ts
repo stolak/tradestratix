@@ -550,7 +550,7 @@ export async function updatePayGrade(user: AuthUser, id: string, body: Record<st
 
 export async function listChartEntries(
   user: AuthUser,
-  opts?: { payGradeId?: string; employmentType?: string }
+  opts?: { payGradeId?: string; employmentType?: string; step?: number }
 ) {
   const rows = await prisma.salaryChartEntry.findMany({
     where: {
@@ -558,33 +558,42 @@ export async function listChartEntries(
       ...(opts?.payGradeId ? { payGradeId: opts.payGradeId } : {}),
       ...(opts?.employmentType
         ? { employmentType: normalizeEmploymentType(opts.employmentType) }
-        : {})
+        : {}),
+      ...(opts?.step != null && Number.isFinite(opts.step) ? { step: opts.step } : {})
     },
     include: {
-      payGrade: { select: { id: true, code: true, name: true } },
-      component: { select: { id: true, code: true, name: true, type: true } }
+      payGrade: { select: { id: true, code: true, name: true, maxStep: true } },
+      component: {
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          type: true,
+          calculationMethod: true
+        }
+      }
     },
     orderBy: [{ payGradeId: 'asc' }, { step: 'asc' }, { employmentType: 'asc' }]
   });
   return serialize(rows);
 }
 
-export async function upsertChartEntry(user: AuthUser, body: Record<string, any>) {
-  const payGradeId = requireString(body.pay_grade_id || body.payGradeId, 'pay_grade_id');
-  const componentId = requireString(body.component_id || body.componentId, 'component_id');
-  const step = Math.max(1, Number(body.step ?? 1));
-  const employmentType = normalizeEmploymentType(body.employment_type || body.employmentType);
-  const amount = roundMoney(Number(body.amount ?? 0));
+async function upsertOneChartLine(
+  user: AuthUser,
+  input: {
+    payGradeId: string;
+    step: number;
+    employmentType: string;
+    componentId: string;
+    amount: number;
+    isActive?: boolean;
+  }
+) {
+  const amount = roundMoney(Number(input.amount ?? 0));
   if (amount < 0) throw httpError(400, 'amount cannot be negative');
 
-  const grade = await prisma.payGrade.findFirst({
-    where: { id: payGradeId, businessId: user.businessId }
-  });
-  if (!grade) throw httpError(400, 'Invalid pay_grade_id');
-  if (step > grade.maxStep) throw httpError(400, `step cannot exceed grade max_step (${grade.maxStep})`);
-
   const component = await prisma.salaryComponent.findFirst({
-    where: { id: componentId, businessId: user.businessId }
+    where: { id: input.componentId, businessId: user.businessId }
   });
   if (!component) throw httpError(400, 'Invalid component_id');
   if (component.calculationMethod !== 'fixed') {
@@ -592,46 +601,113 @@ export async function upsertChartEntry(user: AuthUser, body: Record<string, any>
   }
 
   const existing = await prisma.salaryChartEntry.findFirst({
-    where: { payGradeId, step, employmentType, componentId }
+    where: {
+      payGradeId: input.payGradeId,
+      step: input.step,
+      employmentType: input.employmentType,
+      componentId: input.componentId
+    }
   });
 
-  const row = existing
-    ? await prisma.salaryChartEntry.update({
-        where: { id: existing.id },
-        data: {
-          amount: toDec(amount),
-          isActive: body.is_active ?? body.isActive ?? true
-        },
-        include: {
-          payGrade: { select: { id: true, code: true, name: true } },
-          component: { select: { id: true, code: true, name: true, type: true } }
-        }
-      })
-    : await prisma.salaryChartEntry.create({
-        data: {
-          id: shortId('sce'),
-          businessId: user.businessId,
+  if (existing) {
+    return prisma.salaryChartEntry.update({
+      where: { id: existing.id },
+      data: {
+        amount: toDec(amount),
+        isActive: input.isActive ?? true
+      },
+      include: {
+        payGrade: { select: { id: true, code: true, name: true } },
+        component: { select: { id: true, code: true, name: true, type: true } }
+      }
+    });
+  }
+
+  return prisma.salaryChartEntry.create({
+    data: {
+      id: shortId('sce'),
+      businessId: user.businessId,
+      payGradeId: input.payGradeId,
+      step: input.step,
+      employmentType: input.employmentType,
+      componentId: input.componentId,
+      amount: toDec(amount),
+      isActive: input.isActive ?? true,
+      createdById: user.id
+    },
+    include: {
+      payGrade: { select: { id: true, code: true, name: true } },
+      component: { select: { id: true, code: true, name: true, type: true } }
+    }
+  });
+}
+
+export async function upsertChartEntry(user: AuthUser, body: Record<string, any>) {
+  const payGradeId = requireString(body.pay_grade_id || body.payGradeId, 'pay_grade_id');
+  const step = Math.max(1, Number(body.step ?? 1));
+  const employmentType = normalizeEmploymentType(body.employment_type || body.employmentType);
+
+  const grade = await prisma.payGrade.findFirst({
+    where: { id: payGradeId, businessId: user.businessId }
+  });
+  if (!grade) throw httpError(400, 'Invalid pay_grade_id');
+  if (step > grade.maxStep) {
+    throw httpError(400, `step cannot exceed grade max_step (${grade.maxStep})`);
+  }
+
+  const linesRaw = body.components ?? body.lines;
+  if (Array.isArray(linesRaw)) {
+    const saved = [];
+    for (const line of linesRaw) {
+      const componentId = requireString(line.component_id || line.componentId, 'component_id');
+      const amount = Number(line.amount ?? 0);
+      // Skip empty optional lines (no existing row to clear unless amount explicitly sent as 0 with id)
+      if (!Number.isFinite(amount)) continue;
+      saved.push(
+        await upsertOneChartLine(user, {
           payGradeId,
           step,
           employmentType,
           componentId,
-          amount: toDec(amount),
-          isActive: body.is_active ?? body.isActive ?? true,
-          createdById: user.id
-        },
-        include: {
-          payGrade: { select: { id: true, code: true, name: true } },
-          component: { select: { id: true, code: true, name: true, type: true } }
-        }
-      });
+          amount,
+          isActive: line.is_active ?? line.isActive
+        })
+      );
+    }
+    await writeAudit({
+      user,
+      action: 'update',
+      module: 'payroll',
+      entityType: 'SalaryChartEntry',
+      entityId: payGradeId,
+      summary: `payroll.chart.bulk (${employmentType} / step ${step}, ${saved.length} lines)`
+    });
+    return serialize({
+      pay_grade_id: payGradeId,
+      step,
+      employment_type: employmentType,
+      entries: saved
+    });
+  }
+
+  const componentId = requireString(body.component_id || body.componentId, 'component_id');
+  const amount = Number(body.amount ?? 0);
+  const row = await upsertOneChartLine(user, {
+    payGradeId,
+    step,
+    employmentType,
+    componentId,
+    amount,
+    isActive: body.is_active ?? body.isActive
+  });
 
   await writeAudit({
     user,
-    action: existing ? 'update' : 'create',
+    action: 'update',
     module: 'payroll',
     entityType: 'SalaryChartEntry',
     entityId: row.id,
-    summary: existing ? 'payroll.chart.update' : 'payroll.chart.create'
+    summary: 'payroll.chart.upsert'
   });
 
   return serialize(row);
@@ -872,10 +948,15 @@ export async function createEmployeeOverride(user: AuthUser, body: Record<string
   const employeeId = requireString(body.employee_id || body.employeeId, 'employee_id');
   const componentId = requireString(body.component_id || body.componentId, 'component_id');
   const amount = roundMoney(Number(body.amount ?? 0));
-  const isContinuous = body.is_continuous ?? body.isContinuous ?? true;
-  const targetAmount =
+  const isContinuous = Boolean(body.is_continuous ?? body.isContinuous ?? true);
+  const rawTarget =
     body.target_amount != null || body.targetAmount != null
-      ? roundMoney(Number(body.target_amount ?? body.targetAmount))
+      ? Number(body.target_amount ?? body.targetAmount)
+      : null;
+  // Target 0 / empty → one-shot (same as school null/0 target)
+  const targetAmount =
+    rawTarget != null && Number.isFinite(rawTarget) && rawTarget > 0
+      ? roundMoney(rawTarget)
       : null;
 
   await assertEmployee(user.businessId, employeeId);
@@ -891,8 +972,9 @@ export async function createEmployeeOverride(user: AuthUser, body: Record<string
       employeeId,
       componentId,
       amount: toDec(amount),
-      isContinuous: Boolean(isContinuous),
+      isContinuous,
       targetAmount: targetAmount != null ? toDec(targetAmount) : null,
+      // Continuous: no balance. One-shot: null until posted. Target: remaining = target.
       balanceRemaining: !isContinuous && targetAmount != null ? toDec(targetAmount) : null,
       effectiveFrom: body.effective_from || body.effectiveFrom
         ? new Date(body.effective_from || body.effectiveFrom)
@@ -927,22 +1009,96 @@ export async function updateEmployeeOverride(user: AuthUser, id: string, body: R
   });
   if (!existing) throw httpError(404, 'Override not found');
 
+  const data: Record<string, unknown> = {};
+  if (body.amount != null) data.amount = toDec(roundMoney(Number(body.amount)));
+  if (body.is_active !== undefined || body.isActive !== undefined) {
+    data.isActive = Boolean(body.is_active ?? body.isActive);
+  }
+  if (body.status != null) {
+    const status = String(body.status).toLowerCase();
+    if (status === 'inactive') data.isActive = false;
+    if (status === 'active') data.isActive = true;
+  }
+  if (body.is_continuous !== undefined || body.isContinuous !== undefined) {
+    data.isContinuous = Boolean(body.is_continuous ?? body.isContinuous);
+  }
+  if (body.target_amount !== undefined || body.targetAmount !== undefined) {
+    const raw = body.target_amount ?? body.targetAmount;
+    if (raw == null || raw === '') {
+      data.targetAmount = null;
+    } else {
+      const n = roundMoney(Number(raw));
+      data.targetAmount = n > 0 ? toDec(n) : null;
+    }
+  }
+  if (body.notes !== undefined) data.notes = body.notes || null;
+  if (body.effective_from !== undefined || body.effectiveFrom !== undefined) {
+    const raw = body.effective_from ?? body.effectiveFrom;
+    data.effectiveFrom = raw ? new Date(raw) : null;
+  }
+  if (body.effective_to !== undefined || body.effectiveTo !== undefined) {
+    const raw = body.effective_to ?? body.effectiveTo;
+    data.effectiveTo = raw ? new Date(raw) : null;
+  }
+
+  const nextContinuous =
+    data.isContinuous !== undefined ? Boolean(data.isContinuous) : existing.isContinuous;
+  const nextTarget =
+    data.targetAmount !== undefined
+      ? (data.targetAmount as ReturnType<typeof toDec> | null)
+      : existing.targetAmount;
+  const targetChanged =
+    data.targetAmount !== undefined &&
+    (nextTarget == null
+      ? existing.targetAmount != null
+      : existing.targetAmount == null ||
+        Number(nextTarget) !== Number(existing.targetAmount));
+  const flippedToOneOff =
+    data.isContinuous !== undefined && existing.isContinuous && !nextContinuous;
+
+  if (nextContinuous) {
+    data.balanceRemaining = null;
+  } else if (flippedToOneOff || targetChanged) {
+    // Seed remaining only when entering one-off mode or target changes — do not wipe progress otherwise
+    data.balanceRemaining = nextTarget != null ? nextTarget : null;
+  }
+
   const row = await prisma.employeePayOverride.update({
     where: { id },
-    data: {
-      ...(body.amount != null ? { amount: toDec(roundMoney(Number(body.amount))) } : {}),
-      ...(body.is_active !== undefined || body.isActive !== undefined
-        ? { isActive: Boolean(body.is_active ?? body.isActive) }
-        : {}),
-      ...(body.notes !== undefined ? { notes: body.notes || null } : {})
-    },
+    data: data as any,
     include: {
       employee: { select: { id: true, fullName: true, code: true } },
       component: { select: { id: true, code: true, name: true, type: true } }
     }
   });
 
+  await writeAudit({
+    user,
+    action: 'update',
+    module: 'payroll',
+    entityType: 'EmployeePayOverride',
+    entityId: row.id,
+    summary: 'payroll.override.update'
+  });
+
   return serialize(row);
+}
+
+export async function deleteEmployeeOverride(user: AuthUser, id: string) {
+  const existing = await prisma.employeePayOverride.findFirst({
+    where: { id, businessId: user.businessId }
+  });
+  if (!existing) throw httpError(404, 'Override not found');
+  await prisma.employeePayOverride.delete({ where: { id } });
+  await writeAudit({
+    user,
+    action: 'delete',
+    module: 'payroll',
+    entityType: 'EmployeePayOverride',
+    entityId: id,
+    summary: 'payroll.override.delete'
+  });
+  return { ok: true };
 }
 
 async function assertEmployee(businessId: string, employeeId: string) {

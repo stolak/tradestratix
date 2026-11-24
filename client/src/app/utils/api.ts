@@ -1155,8 +1155,10 @@ export const api = {
   payroll: {
     runs: () => request<any[]>('/payroll/runs'),
     getRun: (id: string) => request<any>(`/payroll/runs/${id}`),
-    createRun: (body: Record<string, unknown>) =>
+    createRun: (body: Record<string, unknown> = {}) =>
       request<any>('/payroll/runs', { method: 'POST', body: JSON.stringify(body) }),
+    compute: (body: Record<string, unknown> = {}) =>
+      request<any>('/payroll/compute', { method: 'POST', body: JSON.stringify(body) }),
     recomputeRun: (id: string, body: Record<string, unknown> = {}) =>
       request<any>(`/payroll/runs/${id}/recompute`, {
         method: 'POST',
@@ -1187,10 +1189,18 @@ export const api = {
       request<any>('/payroll/grades', { method: 'POST', body: JSON.stringify(body) }),
     updateGrade: (id: string, body: Record<string, unknown>) =>
       request<any>(`/payroll/grades/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-    chart: (payGradeId?: string) =>
-      request<any[]>(
-        `/payroll/chart${payGradeId ? `?pay_grade_id=${encodeURIComponent(payGradeId)}` : ''}`
-      ),
+    chart: (opts?: {
+      payGradeId?: string;
+      employmentType?: string;
+      step?: number | string;
+    }) => {
+      const q = new URLSearchParams();
+      if (opts?.payGradeId) q.set('pay_grade_id', opts.payGradeId);
+      if (opts?.employmentType) q.set('employment_type', opts.employmentType);
+      if (opts?.step != null && opts.step !== '') q.set('step', String(opts.step));
+      const qs = q.toString();
+      return request<any[]>(`/payroll/chart${qs ? `?${qs}` : ''}`);
+    },
     upsertChart: (body: Record<string, unknown>) =>
       request<any>('/payroll/chart', { method: 'POST', body: JSON.stringify(body) }),
     deleteChart: (id: string) =>
@@ -1213,6 +1223,8 @@ export const api = {
       request<any>('/payroll/overrides', { method: 'POST', body: JSON.stringify(body) }),
     updateOverride: (id: string, body: Record<string, unknown>) =>
       request<any>(`/payroll/overrides/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    deleteOverride: (id: string) =>
+      request<any>(`/payroll/overrides/${id}`, { method: 'DELETE' }),
     periodReport: (year: number, month: number, status?: string) =>
       request<any>(
         `/payroll/reports/period?year=${year}&month=${month}${

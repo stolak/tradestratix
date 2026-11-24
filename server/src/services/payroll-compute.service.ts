@@ -33,9 +33,49 @@ export type OverrideAmount = {
   componentId: string;
   amount: number;
   isContinuous: boolean;
+  /** Total ceiling for one-off target mode; null/0 = single-shot */
+  targetAmount: number | null;
+  /** Remaining toward target (legacy / UI); ledger is source of truth at compute */
   balanceRemaining: number | null;
   overrideId: string;
+  /** Any application in another period (one-shot gate) */
+  hasPriorApplication?: boolean;
+  /** Σ application amounts in other periods (target mode) */
+  appliedTotal?: number;
 };
+
+/**
+ * School-app parity: continuous / one-off / target.
+ * Uses the per-period application ledger (other periods), not post-time balance alone.
+ *
+ * - Continuous → full amount every period
+ * - One-off, target null/0 → full amount once (skip if any prior application exists)
+ * - One-off, target > 0 → min(amount, target − Σ prior applications)
+ */
+export function resolveOverridePayable(
+  override: OverrideAmount,
+  opts?: { hasPriorApplication?: boolean; appliedTotal?: number }
+): number | null {
+  const amount = roundMoney(Number(override.amount) || 0);
+  if (amount <= 0) return null;
+
+  if (override.isContinuous) return amount;
+
+  const targetRaw = override.targetAmount;
+  const target =
+    targetRaw != null && Number(targetRaw) > 0 ? roundMoney(Number(targetRaw)) : null;
+
+  if (target == null) {
+    // Single-shot: any prior-period application → skip (school hasPriorProcessOverride)
+    if (opts?.hasPriorApplication) return null;
+    return amount;
+  }
+
+  const applied = roundMoney(Math.max(0, Number(opts?.appliedTotal ?? 0)));
+  const remaining = roundMoney(target - applied);
+  if (remaining <= 0) return null;
+  return roundMoney(Math.min(amount, remaining));
+}
 
 export type ComputedLine = {
   componentId: string;
@@ -162,7 +202,8 @@ export function computeEmployeePay(input: {
   components: ComponentRow[];
   chartByComponentId: Map<string, number>;
   packageByComponentId: Map<string, number>;
-  overridesByComponentId: Map<string, OverrideAmount>;
+  /** One or more active overrides per component (amounts summed when several apply). */
+  overridesByComponentId: Map<string, OverrideAmount[]>;
   statutoryByKey: Map<string, StatutoryRuleRow>;
   commissionAmount: number;
   commissionIds: string[];
@@ -174,21 +215,33 @@ export function computeEmployeePay(input: {
   const componentsByCode = new Map(components.map((c) => [c.code, c]));
   const amountsByCode = new Map<string, number>();
   const overrideConsumptions: { overrideId: string; amount: number }[] = [];
+  const consumedOverrideIds = new Set<string>();
+
+  const applyOverrides = (comp: ComponentRow): number | null => {
+    const list = input.overridesByComponentId.get(comp.id);
+    if (!list?.length) return null;
+    let sum = 0;
+    let any = false;
+    for (const override of list) {
+      const payable = resolveOverridePayable(override, {
+        hasPriorApplication: Boolean(override.hasPriorApplication),
+        appliedTotal: override.appliedTotal
+      });
+      if (payable == null || payable <= 0) continue;
+      any = true;
+      sum = roundMoney(sum + payable);
+      // Ledger every payable (continuous + one-off), like school process overrides
+      if (!consumedOverrideIds.has(override.overrideId)) {
+        consumedOverrideIds.add(override.overrideId);
+        overrideConsumptions.push({ overrideId: override.overrideId, amount: payable });
+      }
+    }
+    return any ? sum : null;
+  };
 
   const resolveFixed = (comp: ComponentRow): number => {
-    const override = input.overridesByComponentId.get(comp.id);
-    if (override) {
-      let amt = roundMoney(override.amount);
-      if (!override.isContinuous) {
-        const bal =
-          override.balanceRemaining != null ? Number(override.balanceRemaining) : amt;
-        amt = roundMoney(Math.min(amt, Math.max(0, bal)));
-        if (amt > 0) {
-          overrideConsumptions.push({ overrideId: override.overrideId, amount: amt });
-        }
-      }
-      return amt;
-    }
+    const overridden = applyOverrides(comp);
+    if (overridden != null) return overridden;
     if (input.packageByComponentId.has(comp.id)) {
       return roundMoney(Number(input.packageByComponentId.get(comp.id)));
     }
@@ -204,9 +257,9 @@ export function computeEmployeePay(input: {
     if (comp.calculationMethod === 'fixed') {
       amountsByCode.set(comp.code, resolveFixed(comp));
     } else if (comp.calculationMethod === 'sales_commission') {
-      const override = input.overridesByComponentId.get(comp.id);
-      if (override) {
-        amountsByCode.set(comp.code, resolveFixed(comp));
+      const overridden = applyOverrides(comp);
+      if (overridden != null) {
+        amountsByCode.set(comp.code, overridden);
       } else if (input.includeSalesCommission) {
         amountsByCode.set(comp.code, roundMoney(input.commissionAmount));
       } else {
@@ -223,11 +276,10 @@ export function computeEmployeePay(input: {
   for (let pass = 0; pass < dependent.length + 2; pass++) {
     let changed = false;
     for (const comp of dependent) {
-      const override = input.overridesByComponentId.get(comp.id);
-      if (override) {
-        const amt = resolveFixed(comp);
-        if (amountsByCode.get(comp.code) !== amt) {
-          amountsByCode.set(comp.code, amt);
+      const overridden = applyOverrides(comp);
+      if (overridden != null) {
+        if (amountsByCode.get(comp.code) !== overridden) {
+          amountsByCode.set(comp.code, overridden);
           changed = true;
         }
         continue;
@@ -342,11 +394,16 @@ export async function computeEmployeesForPeriod(opts: {
   }[];
   periodStart: Date;
   periodEnd: Date;
+  year?: number;
+  month?: number;
   /** When true, only commissions created within the period; else all accrued unpaid */
   commissionPeriodOnly?: boolean;
 }): Promise<ComputedEmployeePay[]> {
   const { businessId, employees, periodStart, periodEnd } = opts;
   if (!employees.length) return [];
+
+  const year = opts.year ?? periodEnd.getFullYear();
+  const month = opts.month ?? periodEnd.getMonth() + 1;
 
   const [componentsRaw, statutoryRaw, chartRows, packageRows, overrideRows] = await Promise.all([
     prisma.salaryComponent.findMany({
@@ -438,23 +495,53 @@ export async function computeEmployeesForPeriod(opts: {
     m.set(row.componentId, Number(row.amount));
   }
 
-  const overrideByEmp = new Map<string, Map<string, OverrideAmount>>();
-  const now = new Date();
+  // Prior-period application ledger (current year/month must already be cleared by caller)
+  const overrideIds = overrideRows.map((r) => r.id);
+  const priorApps =
+    overrideIds.length > 0
+      ? await prisma.employeePayOverrideApplication.findMany({
+          where: {
+            businessId,
+            overrideId: { in: overrideIds },
+            isActive: true,
+            NOT: { AND: [{ year }, { month }] }
+          },
+          select: { overrideId: true, amount: true }
+        })
+      : [];
+  const hasPriorApplication = new Set<string>();
+  const appliedTotalByOverride = new Map<string, number>();
+  for (const app of priorApps) {
+    hasPriorApplication.add(app.overrideId);
+    appliedTotalByOverride.set(
+      app.overrideId,
+      roundMoney((appliedTotalByOverride.get(app.overrideId) || 0) + Number(app.amount))
+    );
+  }
+
+  // Multiple active overrides for the same component are summed (school parity).
+  const overrideByEmp = new Map<string, Map<string, OverrideAmount[]>>();
   for (const row of overrideRows) {
-    if (row.effectiveFrom && row.effectiveFrom > now) continue;
-    if (row.effectiveTo && row.effectiveTo < now) continue;
-    let m = overrideByEmp.get(row.employeeId);
-    if (!m) {
-      m = new Map();
-      overrideByEmp.set(row.employeeId, m);
+    // Effective window vs pay period (not wall-clock)
+    if (row.effectiveFrom && row.effectiveFrom > periodEnd) continue;
+    if (row.effectiveTo && row.effectiveTo < periodStart) continue;
+    let byComp = overrideByEmp.get(row.employeeId);
+    if (!byComp) {
+      byComp = new Map();
+      overrideByEmp.set(row.employeeId, byComp);
     }
-    m.set(row.componentId, {
+    const list = byComp.get(row.componentId) || [];
+    list.push({
       componentId: row.componentId,
       amount: Number(row.amount),
       isContinuous: row.isContinuous,
+      targetAmount: row.targetAmount != null ? Number(row.targetAmount) : null,
       balanceRemaining: row.balanceRemaining != null ? Number(row.balanceRemaining) : null,
-      overrideId: row.id
+      overrideId: row.id,
+      hasPriorApplication: hasPriorApplication.has(row.id),
+      appliedTotal: appliedTotalByOverride.get(row.id) || 0
     });
+    byComp.set(row.componentId, list);
   }
 
   const salesRepIds = employees.map((e) => e.salesRepId).filter((id): id is string => Boolean(id));

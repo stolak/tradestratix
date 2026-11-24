@@ -30,10 +30,58 @@ async function nextRunNumber(businessId: string) {
   return nextDocNumber(prisma.payrollRun, businessId, 'runNumber', 'PAY', 5);
 }
 
-function periodYearMonth(start: Date, end: Date, body: Record<string, any>) {
-  const year = body.year != null ? Number(body.year) : end.getFullYear();
-  const month = body.month != null ? Number(body.month) : end.getMonth() + 1;
-  return { year, month };
+/** Calendar month bounds (local) for an active payroll year/month. */
+function calendarMonthBounds(year: number, month: number) {
+  const periodStart = new Date(year, month - 1, 1, 0, 0, 0, 0);
+  const periodEnd = new Date(year, month, 0, 23, 59, 59, 999);
+  const payDate = new Date(year, month, 0, 12, 0, 0, 0);
+  return { periodStart, periodEnd, payDate };
+}
+
+async function resolveActiveYearMonth(user: AuthUser) {
+  let period = await prisma.activePayrollPeriod.findUnique({
+    where: { businessId: user.businessId }
+  });
+  if (!period) {
+    const now = new Date();
+    period = await prisma.activePayrollPeriod.create({
+      data: {
+        id: shortId('app'),
+        businessId: user.businessId,
+        year: now.getFullYear(),
+        month: now.getMonth() + 1,
+        updatedById: user.id
+      }
+    });
+  }
+  return { year: period.year, month: period.month };
+}
+
+/** Approved must be unapproved before recompute; posted/paid stay locked. */
+const LOCKED_RUN_STATUSES = new Set(['approved', 'posted', 'paid']);
+
+async function assertPeriodUnlocked(businessId: string, year: number, month: number) {
+  const locked = await prisma.payrollRun.findMany({
+    where: {
+      businessId,
+      year,
+      month,
+      status: { in: [...LOCKED_RUN_STATUSES] }
+    },
+    select: { status: true },
+    take: 5
+  });
+  if (!locked.length) return;
+  if (locked.some((r) => r.status === 'approved')) {
+    throw httpError(
+      400,
+      `Cannot recompute payroll for ${month}/${year}: run is approved. Unapprove it first.`
+    );
+  }
+  throw httpError(
+    400,
+    `Cannot recompute payroll for ${month}/${year}: period contains posted or paid records`
+  );
 }
 
 function payrollBypassSod(user: AuthUser) {
@@ -239,48 +287,67 @@ async function buildPayrollPostLines(
   return lines;
 }
 
-async function depleteOneTimeOverridesForRun(
-  businessId: string,
-  runId: string
-) {
-  const lines = await prisma.payrollItemLine.findMany({
-    where: {
-      payrollItem: { payrollRunId: runId },
-      amount: { gt: 0 },
-      calculationMethod: 'fixed'
-    },
-    select: {
-      componentId: true,
-      amount: true,
-      payrollItem: { select: { employeeId: true } }
-    }
+/**
+ * After post: sync one-off balances from the application ledger (already written at compute).
+ * Do not subtract line amounts again — that would double-deplete target remaining.
+ */
+async function depleteOneTimeOverridesForRun(businessId: string, runId: string) {
+  const run = await prisma.payrollRun.findFirst({
+    where: { id: runId, businessId },
+    select: { year: true, month: true }
   });
+  if (!run?.year || !run?.month) return;
 
-  for (const line of lines) {
-    if (!line.componentId) continue;
-    const override = await prisma.employeePayOverride.findFirst({
-      where: {
-        businessId,
-        employeeId: line.payrollItem.employeeId,
-        componentId: line.componentId,
-        isActive: true,
-        isContinuous: false
+  const periodApps = await prisma.employeePayOverrideApplication.findMany({
+    where: {
+      businessId,
+      year: run.year,
+      month: run.month,
+      isActive: true
+    },
+    select: { overrideId: true }
+  });
+  const overrideIds = [...new Set(periodApps.map((a) => a.overrideId))];
+  if (!overrideIds.length) return;
+
+  const overrides = await prisma.employeePayOverride.findMany({
+    where: { id: { in: overrideIds }, businessId, isContinuous: false },
+    select: { id: true, targetAmount: true }
+  });
+  if (!overrides.length) return;
+
+  const sums = await prisma.employeePayOverrideApplication.groupBy({
+    by: ['overrideId'],
+    where: { overrideId: { in: overrides.map((o) => o.id) }, isActive: true },
+    _sum: { amount: true }
+  });
+  const appliedMap = new Map(
+    sums.map((s) => [s.overrideId, roundMoney(Number(s._sum.amount ?? 0))])
+  );
+
+  for (const ov of overrides) {
+    const applied = appliedMap.get(ov.id) || 0;
+    const target =
+      ov.targetAmount != null && Number(ov.targetAmount) > 0
+        ? roundMoney(Number(ov.targetAmount))
+        : null;
+    if (target == null) {
+      if (applied > 0) {
+        await prisma.employeePayOverride.update({
+          where: { id: ov.id },
+          data: { balanceRemaining: toDec(0), isActive: false }
+        });
       }
-    });
-    if (!override) continue;
-    const used = roundMoney(Number(line.amount));
-    const bal =
-      override.balanceRemaining != null
-        ? Number(override.balanceRemaining)
-        : Number(override.targetAmount ?? override.amount);
-    const next = roundMoney(Math.max(0, bal - used));
-    await prisma.employeePayOverride.update({
-      where: { id: override.id },
-      data: {
-        balanceRemaining: toDec(next),
-        ...(next <= 0 ? { isActive: false } : {})
-      }
-    });
+    } else {
+      const remaining = roundMoney(Math.max(0, target - applied));
+      await prisma.employeePayOverride.update({
+        where: { id: ov.id },
+        data: {
+          balanceRemaining: toDec(remaining),
+          ...(remaining <= 0 ? { isActive: false } : {})
+        }
+      });
+    }
   }
 }
 
@@ -335,7 +402,8 @@ async function buildComputedItems(
   employees: Awaited<ReturnType<typeof loadEmployeesForRun>>,
   periodStart: Date,
   periodEnd: Date,
-  body: Record<string, any>
+  body: Record<string, any>,
+  yearMonth?: { year: number; month: number }
 ) {
   const componentCount = await prisma.salaryComponent.count({
     where: { businessId: user.businessId, isActive: true }
@@ -343,6 +411,9 @@ async function buildComputedItems(
   if (!componentCount) {
     await ensurePayrollDefaults(user);
   }
+
+  const year = yearMonth?.year ?? periodEnd.getFullYear();
+  const month = yearMonth?.month ?? periodEnd.getMonth() + 1;
 
   const computed = await computeEmployeesForPeriod({
     businessId: user.businessId,
@@ -357,6 +428,8 @@ async function buildComputedItems(
     })),
     periodStart,
     periodEnd,
+    year,
+    month,
     commissionPeriodOnly: Boolean(
       body.commission_period_only ?? body.commissionPeriodOnly ?? false
     )
@@ -380,18 +453,26 @@ function totalsFromComputed(
   return { totalGross, totalDeductions, totalNet, totalCommission };
 }
 
-export async function createRun(user: AuthUser, body: Record<string, any>) {
-  const periodStartRaw = body.period_start || body.periodStart;
-  const periodEndRaw = body.period_end || body.periodEnd;
-  if (!periodStartRaw || !periodEndRaw) {
-    throw httpError(400, 'period_start and period_end are required');
+/**
+ * Compute payroll for a year/month: wipe unposted runs for that period, create one new draft.
+ * Blocks if any posted/paid run exists for the period.
+ */
+async function computeForYearMonth(
+  user: AuthUser,
+  year: number,
+  month: number,
+  body: Record<string, any>
+) {
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+    throw httpError(400, 'Invalid payroll year');
+  }
+  if (!Number.isInteger(month) || month < 1 || month > 12) {
+    throw httpError(400, 'Invalid payroll month');
   }
 
-  const periodStart = new Date(periodStartRaw);
-  const periodEnd = new Date(periodEndRaw);
-  const payDate = body.pay_date || body.payDate ? new Date(body.pay_date || body.payDate) : periodEnd;
-  const { year, month } = periodYearMonth(periodStart, periodEnd, body);
+  await assertPeriodUnlocked(user.businessId, year, month);
 
+  const { periodStart, periodEnd, payDate } = calendarMonthBounds(year, month);
   const branchId = await branchAccess.resolveWriteBranchId(
     user,
     body.branch_id || body.branchId || user.activeBranchId
@@ -400,172 +481,240 @@ export async function createRun(user: AuthUser, body: Record<string, any>) {
   const employees = await loadEmployeesForRun(user, branchId, body);
   if (!employees.length) throw httpError(400, 'No active employees to payroll');
 
-  const computed = await buildComputedItems(user, employees, periodStart, periodEnd, body);
+  // School parity: clear this period's override applications before resolve so recompute
+  // does not double-count, while prior periods still gate one-off / target remaining.
+  await prisma.employeePayOverrideApplication.deleteMany({
+    where: { businessId: user.businessId, year, month }
+  });
+
+  const computed = await buildComputedItems(user, employees, periodStart, periodEnd, body, {
+    year,
+    month
+  });
   if (!computed.length) throw httpError(400, 'No payroll items could be computed');
 
   const { totalGross, totalDeductions, totalNet, totalCommission } = totalsFromComputed(computed);
-  const runNumber = body.run_number || body.runNumber || (await nextRunNumber(user.businessId));
+  const runNumber = await nextRunNumber(user.businessId);
 
-  const created = await prisma.$transaction(async (tx) => {
-    const run = await tx.payrollRun.create({
-      data: {
-        id: shortId('pay'),
-        businessId: user.businessId,
-        branchId,
-        runNumber,
-        periodStart,
-        periodEnd,
-        payDate,
-        year,
-        month,
-        status: 'draft',
-        totalGross: toDec(totalGross),
-        totalDeductions: toDec(totalDeductions),
-        totalNet: toDec(totalNet),
-        totalCommission: toDec(totalCommission),
-        notes: body.notes || null,
-        createdById: user.id,
-        items: {
-          create: computed.map((i) => ({
-            id: shortId('pyi'),
-            employeeId: i.employeeId,
-            basicSalary: toDec(i.basicSalary),
-            allowances: toDec(i.allowances),
-            deductions: toDec(i.deductions),
-            taxAmount: toDec(i.taxAmount),
-            pensionEmployee: toDec(i.pensionEmployee),
-            pensionEmployer: toDec(i.pensionEmployer),
-            commissionAmount: toDec(i.commissionAmount),
-            netPay: toDec(i.netPay),
-            lines: {
-              create: i.lines.map((l) => ({
-                id: shortId('pyl'),
-                componentId: l.componentId,
-                componentCode: l.componentCode,
-                componentName: l.componentName,
-                componentType: l.componentType,
-                calculationMethod: l.calculationMethod,
-                amount: toDec(l.amount),
-                isEmployerContribution: l.isEmployerContribution,
-                sortOrder: l.sortOrder
-              }))
-            }
-          }))
+  const applicationRows = computed.flatMap((item) =>
+    (item.overrideConsumptions || []).map((c) => ({
+      id: shortId('eoa'),
+      businessId: user.businessId,
+      overrideId: c.overrideId,
+      amount: toDec(c.amount),
+      year,
+      month,
+      isActive: true
+    }))
+  );
+
+  const { run, replacedCount } = await prisma.$transaction(
+    async (tx) => {
+      const existing = await tx.payrollRun.findMany({
+        where: { businessId: user.businessId, year, month },
+        select: { id: true, status: true }
+      });
+      if (existing.some((r) => LOCKED_RUN_STATUSES.has(r.status))) {
+        const hasApproved = existing.some((r) => r.status === 'approved');
+        throw httpError(
+          400,
+          hasApproved
+            ? `Cannot recompute payroll for ${month}/${year}: run is approved. Unapprove it first.`
+            : `Cannot recompute payroll for ${month}/${year}: period contains posted or paid records`
+        );
+      }
+
+      const ids = existing.map((r) => r.id);
+      if (ids.length) {
+        await tx.payrollItemLine.deleteMany({
+          where: { payrollItem: { payrollRunId: { in: ids } } }
+        });
+        await tx.payrollItem.deleteMany({ where: { payrollRunId: { in: ids } } });
+        await tx.payrollRun.deleteMany({ where: { id: { in: ids } } });
+      }
+
+      // Re-clear in-tx in case of race; applications for this period only
+      await tx.employeePayOverrideApplication.deleteMany({
+        where: { businessId: user.businessId, year, month }
+      });
+      if (applicationRows.length) {
+        await tx.employeePayOverrideApplication.createMany({ data: applicationRows });
+      }
+
+      // Sync balanceRemaining for one-off overrides from full ledger (UI); keep Active like school
+      const oneOffs = await tx.employeePayOverride.findMany({
+        where: {
+          businessId: user.businessId,
+          isContinuous: false,
+          employeeId: { in: employees.map((e) => e.id) }
+        },
+        select: { id: true, targetAmount: true }
+      });
+      if (oneOffs.length) {
+        const sums = await tx.employeePayOverrideApplication.groupBy({
+          by: ['overrideId'],
+          where: {
+            overrideId: { in: oneOffs.map((o) => o.id) },
+            isActive: true
+          },
+          _sum: { amount: true }
+        });
+        const appliedMap = new Map(
+          sums.map((s) => [s.overrideId, roundMoney(Number(s._sum.amount ?? 0))])
+        );
+        for (const ov of oneOffs) {
+          const applied = appliedMap.get(ov.id) || 0;
+          const target =
+            ov.targetAmount != null && Number(ov.targetAmount) > 0
+              ? roundMoney(Number(ov.targetAmount))
+              : null;
+          if (target == null) {
+            await tx.employeePayOverride.update({
+              where: { id: ov.id },
+              data: { balanceRemaining: applied > 0 ? toDec(0) : null }
+            });
+          } else {
+            await tx.employeePayOverride.update({
+              where: { id: ov.id },
+              data: { balanceRemaining: toDec(roundMoney(Math.max(0, target - applied))) }
+            });
+          }
         }
-      },
-      include: runInclude
-    });
+      }
 
-    return run;
-  });
+      const created = await tx.payrollRun.create({
+        data: {
+          id: shortId('pay'),
+          businessId: user.businessId,
+          branchId,
+          runNumber,
+          periodStart,
+          periodEnd,
+          payDate,
+          year,
+          month,
+          status: 'draft',
+          totalGross: toDec(totalGross),
+          totalDeductions: toDec(totalDeductions),
+          totalNet: toDec(totalNet),
+          totalCommission: toDec(totalCommission),
+          notes: body.notes || null,
+          createdById: user.id,
+          items: {
+            create: computed.map((i) => ({
+              id: shortId('pyi'),
+              employeeId: i.employeeId,
+              basicSalary: toDec(i.basicSalary),
+              allowances: toDec(i.allowances),
+              deductions: toDec(i.deductions),
+              taxAmount: toDec(i.taxAmount),
+              pensionEmployee: toDec(i.pensionEmployee),
+              pensionEmployer: toDec(i.pensionEmployer),
+              commissionAmount: toDec(i.commissionAmount),
+              netPay: toDec(i.netPay),
+              lines: {
+                create: i.lines.map((l) => ({
+                  id: shortId('pyl'),
+                  componentId: l.componentId,
+                  componentCode: l.componentCode,
+                  componentName: l.componentName,
+                  componentType: l.componentType,
+                  calculationMethod: l.calculationMethod,
+                  amount: toDec(l.amount),
+                  isEmployerContribution: l.isEmployerContribution,
+                  sortOrder: l.sortOrder
+                }))
+              }
+            }))
+          }
+        },
+        include: runInclude
+      });
+
+      return { run: created, replacedCount: ids.length };
+    },
+    { maxWait: 10_000, timeout: 120_000 }
+  );
 
   // One-time override balance depletion is deferred to post (avoids double-consume on recompute).
 
   await writeAudit({
     user,
-    action: 'create',
+    action: replacedCount > 0 ? 'update' : 'create',
     module: 'payroll',
     entityType: 'PayrollRun',
-    entityId: created.id,
-    summary: `Computed payroll run ${runNumber} (${computed.length} employees)`
-  });
-  return serialize(created);
-}
-
-/** Recompute a draft run from current config / commissions / overrides. */
-export async function recomputeRun(user: AuthUser, id: string, body: Record<string, any> = {}) {
-  const run = await prisma.payrollRun.findFirst({
-    where: { id, businessId: user.businessId },
-    include: { items: true }
-  });
-  if (!run) throw httpError(404, 'Payroll run not found');
-  if (run.status !== 'draft') throw httpError(400, 'Only draft payroll runs can be recomputed');
-
-  const employeeIds = run.items.map((i) => i.employeeId);
-  const employees = await prisma.employee.findMany({
-    where: { businessId: user.businessId, id: { in: employeeIds }, status: 'active' },
-    include: { salesRep: { select: { id: true } } }
-  });
-  if (!employees.length) throw httpError(400, 'No active employees left on this run');
-
-  const computed = await buildComputedItems(
-    user,
-    employees,
-    run.periodStart,
-    run.periodEnd,
-    body
-  );
-  const { totalGross, totalDeductions, totalNet, totalCommission } = totalsFromComputed(computed);
-
-  const updated = await prisma.$transaction(async (tx) => {
-    await tx.payrollItemLine.deleteMany({
-      where: { payrollItem: { payrollRunId: id } }
-    });
-    await tx.payrollItem.deleteMany({ where: { payrollRunId: id } });
-
-    await tx.payrollRun.update({
-      where: { id },
-      data: {
-        totalGross: toDec(totalGross),
-        totalDeductions: toDec(totalDeductions),
-        totalNet: toDec(totalNet),
-        totalCommission: toDec(totalCommission),
-        items: {
-          create: computed.map((i) => ({
-            id: shortId('pyi'),
-            employeeId: i.employeeId,
-            basicSalary: toDec(i.basicSalary),
-            allowances: toDec(i.allowances),
-            deductions: toDec(i.deductions),
-            taxAmount: toDec(i.taxAmount),
-            pensionEmployee: toDec(i.pensionEmployee),
-            pensionEmployer: toDec(i.pensionEmployer),
-            commissionAmount: toDec(i.commissionAmount),
-            netPay: toDec(i.netPay),
-            lines: {
-              create: i.lines.map((l) => ({
-                id: shortId('pyl'),
-                componentId: l.componentId,
-                componentCode: l.componentCode,
-                componentName: l.componentName,
-                componentType: l.componentType,
-                calculationMethod: l.calculationMethod,
-                amount: toDec(l.amount),
-                isEmployerContribution: l.isEmployerContribution,
-                sortOrder: l.sortOrder
-              }))
-            }
-          }))
-        }
-      }
-    });
-
-    return tx.payrollRun.findFirst({ where: { id }, include: runInclude });
+    entityId: run.id,
+    summary:
+      replacedCount > 0
+        ? `Recomputed payroll for ${month}/${year} (replaced ${replacedCount} run(s), ${computed.length} employees)`
+        : `Computed payroll for ${month}/${year} (${computed.length} employees)`
   });
 
-  await writeAudit({
-    user,
-    action: 'update',
-    module: 'payroll',
-    entityType: 'PayrollRun',
-    entityId: id,
-    summary: `Recomputed payroll run ${run.runNumber}`
+  return serialize({
+    year,
+    month,
+    employee_count: computed.length,
+    replaced_count: replacedCount,
+    message:
+      replacedCount > 0
+        ? `Replaced ${replacedCount} existing run(s) and computed ${computed.length} employees for ${month}/${year}`
+        : `Computed payroll for ${month}/${year} (${computed.length} employees)`,
+    run
   });
-
-  return serialize(updated);
 }
 
 /**
- * Preview compute without saving (for UI).
+ * Compute (or replace) payroll for the business active period only.
+ * Free period dates are ignored — always uses ActivePayrollPeriod.
+ */
+export async function computeActivePeriodRun(user: AuthUser, body: Record<string, any> = {}) {
+  const { year, month } = await resolveActiveYearMonth(user);
+  return computeForYearMonth(user, year, month, body);
+}
+
+/** @deprecated Prefer computeActivePeriodRun — create always uses the active period. */
+export async function createRun(user: AuthUser, body: Record<string, any>) {
+  return computeActivePeriodRun(user, body);
+}
+
+/**
+ * Recompute only from draft. Approved runs must be unapproved first; posted/paid stay locked.
+ */
+export async function recomputeRun(user: AuthUser, id: string, body: Record<string, any> = {}) {
+  const run = await prisma.payrollRun.findFirst({
+    where: { id, businessId: user.businessId }
+  });
+  if (!run) throw httpError(404, 'Payroll run not found');
+  if (run.status === 'approved') {
+    throw httpError(400, 'Cannot recompute an approved run. Unapprove it first.');
+  }
+  if (run.status === 'posted' || run.status === 'paid') {
+    throw httpError(400, 'Cannot recompute a posted or paid payroll run');
+  }
+  if (run.status !== 'draft') {
+    throw httpError(400, `Only draft payroll runs can be recomputed (status=${run.status})`);
+  }
+
+  const year = run.year ?? run.periodEnd.getFullYear();
+  const month = run.month ?? run.periodEnd.getMonth() + 1;
+  return computeForYearMonth(user, year, month, body);
+}
+
+/**
+ * Preview compute without saving (for UI). Uses active period when dates omitted.
  */
 export async function previewCompute(user: AuthUser, body: Record<string, any>) {
+  let periodStart: Date;
+  let periodEnd: Date;
   const periodStartRaw = body.period_start || body.periodStart;
   const periodEndRaw = body.period_end || body.periodEnd;
-  if (!periodStartRaw || !periodEndRaw) {
-    throw httpError(400, 'period_start and period_end are required');
+  if (periodStartRaw && periodEndRaw) {
+    periodStart = new Date(periodStartRaw);
+    periodEnd = new Date(periodEndRaw);
+  } else {
+    const { year, month } = await resolveActiveYearMonth(user);
+    ({ periodStart, periodEnd } = calendarMonthBounds(year, month));
   }
-  const periodStart = new Date(periodStartRaw);
-  const periodEnd = new Date(periodEndRaw);
   const branchId = await branchAccess.resolveWriteBranchId(
     user,
     body.branch_id || body.branchId || user.activeBranchId
@@ -695,11 +844,15 @@ export async function postRun(user: AuthUser, id: string) {
     run.items.reduce((s, i) => s + Number(i.commissionAmount || 0), 0)
   );
 
+  // Journal date = day of posting (not period end / payDate), so future periods can post today
+  const postedAt = new Date();
+
   const result = await prisma.$transaction(async (tx) => {
     const journal = await createJournal(
       user,
       {
-        entry_date: run.payDate,
+        entry_date: postedAt,
+        transaction_date: postedAt,
         memo: `Payroll ${run.runNumber}`,
         source_type: 'payroll',
         source_id: run.id,
@@ -715,8 +868,9 @@ export async function postRun(user: AuthUser, id: string) {
       where: { id },
       data: {
         status: 'posted',
-        postedAt: new Date(),
+        postedAt,
         postedById: user.id,
+        payDate: postedAt,
         journalEntryId: (journal as any).id,
         totalGross: toDec(gross),
         totalDeductions: toDec(roundMoney(tax + pensionEmployee)),
@@ -775,11 +929,14 @@ export async function payRun(user: AuthUser, id: string, body: Record<string, an
   const amount = roundMoney(Number(run.totalNet));
   if (amount <= 0) throw httpError(400, 'Nothing to pay');
 
+  const paymentDate = body.pay_date || body.payDate ? new Date(body.pay_date || body.payDate) : new Date();
+
   const result = await prisma.$transaction(async (tx) => {
     const journal = await createJournal(
       user,
       {
-        entry_date: body.pay_date || body.payDate || run.payDate,
+        entry_date: paymentDate,
+        transaction_date: paymentDate,
         memo: `Payroll payment ${run.runNumber}`,
         source_type: 'payroll_payment',
         source_id: run.id,

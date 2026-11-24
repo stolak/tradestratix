@@ -69,11 +69,13 @@ export async function updateGrade(req: Request, res: Response, next: NextFunctio
 
 export async function listChart(req: Request, res: Response, next: NextFunction) {
   try {
+    const stepRaw = typeof req.query.step === 'string' ? Number(req.query.step) : undefined;
     return res.json(
       await cfg.listChartEntries(req.user!, {
         payGradeId: typeof req.query.pay_grade_id === 'string' ? req.query.pay_grade_id : undefined,
         employmentType:
-          typeof req.query.employment_type === 'string' ? req.query.employment_type : undefined
+          typeof req.query.employment_type === 'string' ? req.query.employment_type : undefined,
+        step: stepRaw != null && Number.isFinite(stepRaw) ? stepRaw : undefined
       })
     );
   } catch (err) {
@@ -166,6 +168,14 @@ export async function createOverride(req: Request, res: Response, next: NextFunc
 export async function updateOverride(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(await cfg.updateEmployeeOverride(req.user!, req.params.id, req.body || {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+export async function deleteOverride(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res.json(await cfg.deleteEmployeeOverride(req.user!, req.params.id));
   } catch (err) {
     return next(err);
   }

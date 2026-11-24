@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../utils/api';
-import { alertError, alertSuccess } from '../utils/alerts';
+import { alertError, alertSuccess, confirmAction } from '../utils/alerts';
+import { SalaryChartSetupSection } from '../components/payroll/SalaryChartSetupSection';
+import { StaffSalaryOverrideTab } from '../components/payroll/StaffSalaryOverrideTab';
 
 type Tab =
   | 'runs'
@@ -9,17 +11,28 @@ type Tab =
   | 'components'
   | 'grades'
   | 'chart'
+  | 'overrides'
   | 'statutory'
   | 'period';
 
-function monthBounds(d = new Date()) {
-  const start = new Date(d.getFullYear(), d.getMonth(), 1);
-  const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
-  return {
-    period_start: start.toISOString().slice(0, 10),
-    period_end: end.toISOString().slice(0, 10),
-    pay_date: end.toISOString().slice(0, 10)
-  };
+const MONTH_LABELS = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December'
+];
+
+function periodLabel(year: number, month: number) {
+  const name = MONTH_LABELS[month - 1] || `Month ${month}`;
+  return `${name} ${year}`;
 }
 
 const TABS: { id: Tab; label: string }[] = [
@@ -29,6 +42,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'components', label: 'Components' },
   { id: 'grades', label: 'Pay grades' },
   { id: 'chart', label: 'Salary chart' },
+  { id: 'overrides', label: 'Staff overrides' },
   { id: 'statutory', label: 'Statutory' },
   { id: 'period', label: 'Active period' }
 ];
@@ -46,13 +60,12 @@ export const PayrollPage: React.FC = () => {
   const [banks, setBanks] = useState<any[]>([]);
   const [components, setComponents] = useState<any[]>([]);
   const [grades, setGrades] = useState<any[]>([]);
-  const [chart, setChart] = useState<any[]>([]);
   const [statutory, setStatutory] = useState<any[]>([]);
   const [period, setPeriod] = useState<any>(null);
-  const [form, setForm] = useState(monthBounds());
   const [payMethod, setPayMethod] = useState('bank');
   const [bankAccountId, setBankAccountId] = useState('');
   const [commissionPeriodOnly, setCommissionPeriodOnly] = useState(false);
+  const [computing, setComputing] = useState(false);
   const [selectedRun, setSelectedRun] = useState<any>(null);
   const [periodReport, setPeriodReport] = useState<any>(null);
   const [reportForm, setReportForm] = useState({
@@ -92,13 +105,6 @@ export const PayrollPage: React.FC = () => {
   });
   const [taxPreviewMonthly, setTaxPreviewMonthly] = useState('500000');
   const [gradeForm, setGradeForm] = useState({ code: '', name: '', max_step: '10' });
-  const [chartForm, setChartForm] = useState({
-    pay_grade_id: '',
-    step: '1',
-    employment_type: 'permanent',
-    component_id: '',
-    amount: ''
-  });
   const [periodForm, setPeriodForm] = useState({
     year: String(new Date().getFullYear()),
     month: String(new Date().getMonth() + 1)
@@ -112,28 +118,17 @@ export const PayrollPage: React.FC = () => {
   };
 
   const loadConfig = async () => {
-    const [c, g, ch, st, p] = await Promise.all([
+    const [c, g, st, p] = await Promise.all([
       api.payroll.components(),
       api.payroll.grades(),
-      api.payroll.chart(),
       api.payroll.statutory(),
       api.payroll.period()
     ]);
     setComponents(c);
     setGrades(g);
-    setChart(ch);
     setStatutory(st);
     setPeriod(p);
     setPeriodForm({ year: String(p.year), month: String(p.month) });
-    setChartForm((f) => ({
-      ...f,
-      pay_grade_id: f.pay_grade_id || g[0]?.id || '',
-      component_id:
-        f.component_id ||
-        c.find((x: any) => x.calculation_method === 'fixed')?.id ||
-        c[0]?.id ||
-        ''
-    }));
   };
 
   const loadReport = async () => {
@@ -153,10 +148,17 @@ export const PayrollPage: React.FC = () => {
     setPayslipItems(data.items || []);
   };
 
+  const loadPeriodOnly = async () => {
+    const p = await api.payroll.period();
+    setPeriod(p);
+    setPeriodForm({ year: String(p.year), month: String(p.month) });
+  };
+
   const load = async () => {
     try {
-      if (tab === 'runs') await loadRuns();
-      else if (tab === 'reports') {
+      if (tab === 'runs') {
+        await Promise.all([loadRuns(), loadPeriodOnly()]);
+      } else if (tab === 'reports') {
         await loadRuns();
         await loadReport();
       } else if (tab === 'payslip') {
@@ -167,6 +169,24 @@ export const PayrollPage: React.FC = () => {
       await alertError('Payroll', err.message);
     }
   };
+
+  const periodDirty =
+    !period ||
+    Number(periodForm.year) !== Number(period.year) ||
+    Number(periodForm.month) !== Number(period.month);
+
+  const existingDraftForActivePeriod = runs.filter(
+    (r) =>
+      Number(r.year) === Number(period?.year) &&
+      Number(r.month) === Number(period?.month) &&
+      r.status === 'draft'
+  );
+  const approvedForActivePeriod = runs.some(
+    (r) =>
+      Number(r.year) === Number(period?.year) &&
+      Number(r.month) === Number(period?.month) &&
+      r.status === 'approved'
+  );
 
   useEffect(() => {
     void load();
@@ -201,20 +221,69 @@ export const PayrollPage: React.FC = () => {
     }
   };
 
-  const createRun = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const saveActivePeriodFromRuns = async () => {
     try {
-      const run = await api.payroll.createRun({
-        period_start: form.period_start,
-        period_end: form.period_end,
-        pay_date: form.pay_date,
+      const p = await api.payroll.setPeriod({
+        year: Number(periodForm.year),
+        month: Number(periodForm.month)
+      });
+      setPeriod(p);
+      setPeriodForm({ year: String(p.year), month: String(p.month) });
+      await alertSuccess('Active period updated');
+    } catch (err: any) {
+      await alertError('Set period failed', err.message);
+    }
+  };
+
+  const computeActivePeriod = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (periodDirty) {
+      await alertError(
+        'Save the active period first',
+        'Computation always uses the period saved on the server. Click Set period, then Compute.'
+      );
+      return;
+    }
+    if (!period) {
+      await alertError('Active period', 'No active payroll period is set');
+      return;
+    }
+    const label = periodLabel(Number(period.year), Number(period.month));
+    if (approvedForActivePeriod) {
+      await alertError(
+        'Unapprove first',
+        `${label} has an approved run. Unapprove it before computing or recomputing.`
+      );
+      return;
+    }
+    if (existingDraftForActivePeriod.length) {
+      const ok = await confirmAction(
+        'Replace existing payroll?',
+        `A draft run already exists for ${label}. It will be removed and replaced with a new computation.`
+      );
+      if (!ok) return;
+    } else {
+      const ok = await confirmAction(
+        `Compute payroll for ${label}?`,
+        'Uses salary components, chart/package/overrides, statutory rules, and commissions for the active period.'
+      );
+      if (!ok) return;
+    }
+    setComputing(true);
+    try {
+      const result = await api.payroll.compute({
         commission_period_only: commissionPeriodOnly
       });
-      await alertSuccess('Payroll run computed');
-      setSelectedRun(run);
+      await alertSuccess(
+        'Payroll computed',
+        result.message || `${result.employee_count || 0} employees`
+      );
+      setSelectedRun(result.run || result);
       await loadRuns();
     } catch (err: any) {
-      await alertError('Create failed', err.message);
+      await alertError('Compute failed', err.message);
+    } finally {
+      setComputing(false);
     }
   };
 
@@ -228,12 +297,26 @@ export const PayrollPage: React.FC = () => {
   };
 
   const recompute = async (id: string) => {
+    const target = runs.find((r) => r.id === id);
+    const label =
+      target?.year && target?.month
+        ? periodLabel(Number(target.year), Number(target.month))
+        : 'this period';
+    if (target?.status === 'approved') {
+      await alertError('Unapprove first', 'Unapprove this run before recomputing.');
+      return;
+    }
+    const ok = await confirmAction(
+      'Recompute and replace?',
+      `The draft payroll for ${label} will be removed and a new run created.`
+    );
+    if (!ok) return;
     try {
-      const run = await api.payroll.recomputeRun(id, {
+      const result = await api.payroll.recomputeRun(id, {
         commission_period_only: commissionPeriodOnly
       });
-      await alertSuccess('Run recomputed');
-      setSelectedRun(run);
+      await alertSuccess('Run recomputed', result.message);
+      setSelectedRun(result.run || result);
       await loadRuns();
     } catch (err: any) {
       await alertError('Recompute failed', err.message);
@@ -430,23 +513,6 @@ export const PayrollPage: React.FC = () => {
       await loadConfig();
     } catch (err: any) {
       await alertError('Grade', err.message);
-    }
-  };
-
-  const saveChart = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      await api.payroll.upsertChart({
-        pay_grade_id: chartForm.pay_grade_id,
-        step: Number(chartForm.step),
-        employment_type: chartForm.employment_type,
-        component_id: chartForm.component_id,
-        amount: Number(chartForm.amount || 0)
-      });
-      await alertSuccess('Chart entry saved');
-      await loadConfig();
-    } catch (err: any) {
-      await alertError('Chart', err.message);
     }
   };
 
@@ -652,7 +718,6 @@ export const PayrollPage: React.FC = () => {
     }
   };
 
-  const fixedComponents = components.filter((c) => c.calculation_method === 'fixed');
   const earningOptions = components.filter(
     (c) =>
       c.type === 'earning' &&
@@ -729,40 +794,72 @@ export const PayrollPage: React.FC = () => {
 
       {tab === 'runs' ? (
         <>
+          <div className="card-surface" style={{ padding: '1.25rem', display: 'grid', gap: 12 }}>
+            <div>
+              <div style={{ fontWeight: 700 }}>Active payroll period</div>
+              <p style={{ margin: '0.35rem 0 0', color: 'var(--ink-muted)', fontSize: 13 }}>
+                Payroll computation always runs for this year and month. Only one active period is
+                allowed. Draft runs can be replaced on recompute; approved runs must be unapproved
+                first. Posted/paid periods stay locked.
+              </p>
+            </div>
+            {period ? (
+              <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-muted)' }}>
+                Current active period:{' '}
+                <strong style={{ color: 'var(--ink)' }}>
+                  {periodLabel(Number(period.year), Number(period.month))}
+                </strong>
+              </p>
+            ) : null}
+            <div className="form-grid">
+              <div className="field">
+                <label>Year</label>
+                <input
+                  type="number"
+                  min={2000}
+                  max={2100}
+                  value={periodForm.year}
+                  onChange={(e) => setPeriodForm({ ...periodForm, year: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="field">
+                <label>Month</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={periodForm.month}
+                  onChange={(e) => setPeriodForm({ ...periodForm, month: e.target.value })}
+                  required
+                />
+              </div>
+              <div className="form-grid--actions">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => void saveActivePeriodFromRuns()}
+                  disabled={!periodDirty}
+                >
+                  Set period
+                </button>
+              </div>
+            </div>
+            {periodDirty ? (
+              <p style={{ margin: 0, fontSize: 13, color: '#b45309' }}>
+                You have unsaved period changes. Save the active period before computing, or
+                computation will be blocked until you do.
+              </p>
+            ) : null}
+          </div>
+
           <form
-            onSubmit={createRun}
+            onSubmit={computeActivePeriod}
             className="card-surface"
             style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
           >
-            <div style={{ fontWeight: 700 }}>New payroll run</div>
+            <div style={{ fontWeight: 700 }}>Compute payroll</div>
             <div className="form-grid">
-              <div className="field">
-                <label>Period start</label>
-                <input
-                  type="date"
-                  value={form.period_start}
-                  onChange={(e) => setForm({ ...form, period_start: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Period end</label>
-                <input
-                  type="date"
-                  value={form.period_end}
-                  onChange={(e) => setForm({ ...form, period_end: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Pay date</label>
-                <input
-                  type="date"
-                  value={form.pay_date}
-                  onChange={(e) => setForm({ ...form, pay_date: e.target.value })}
-                  required
-                />
-              </div>
               <div className="field" style={{ display: 'flex', alignItems: 'end' }}>
                 <label>
                   <input
@@ -774,14 +871,15 @@ export const PayrollPage: React.FC = () => {
                 </label>
               </div>
               <div className="form-grid--actions">
-                <button className="btn btn-primary" type="submit">
-                  Compute run
+                <button className="btn btn-primary" type="submit" disabled={computing || periodDirty}>
+                  {computing ? 'Computing…' : 'Compute run'}
                 </button>
               </div>
             </div>
             <p style={{ margin: 0, fontSize: 13, color: 'var(--ink-muted)' }}>
               Uses salary components, chart/package/overrides, statutory rules, and accrued sales
-              commissions (when enabled on the employee).
+              commissions (when enabled on the employee). Dates are taken from the active period
+              (1st–last day of the month).
             </p>
           </form>
 
@@ -1529,117 +1627,19 @@ export const PayrollPage: React.FC = () => {
       ) : null}
 
       {tab === 'chart' ? (
+        <SalaryChartSetupSection
+          grades={grades}
+          components={components}
+          onSaved={loadConfig}
+        />
+      ) : null}
+
+      {tab === 'overrides' ? (
         <>
-          <form
-            onSubmit={saveChart}
-            className="card-surface"
-            style={{ padding: '1.25rem', display: 'grid', gap: 12 }}
-          >
-            <div style={{ fontWeight: 700 }}>Upsert chart amount (fixed components only)</div>
-            <div className="form-grid">
-              <div className="field">
-                <label>Grade</label>
-                <select
-                  value={chartForm.pay_grade_id}
-                  onChange={(e) => setChartForm({ ...chartForm, pay_grade_id: e.target.value })}
-                  required
-                >
-                  <option value="">Select…</option>
-                  {grades.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.code} — {g.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Step</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={chartForm.step}
-                  onChange={(e) => setChartForm({ ...chartForm, step: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Employment type</label>
-                <select
-                  value={chartForm.employment_type}
-                  onChange={(e) =>
-                    setChartForm({ ...chartForm, employment_type: e.target.value })
-                  }
-                >
-                  <option value="permanent">Permanent</option>
-                  <option value="contract">Contract</option>
-                  <option value="casual">Casual</option>
-                  <option value="intern">Intern</option>
-                </select>
-              </div>
-              <div className="field">
-                <label>Component</label>
-                <select
-                  value={chartForm.component_id}
-                  onChange={(e) => setChartForm({ ...chartForm, component_id: e.target.value })}
-                  required
-                >
-                  <option value="">Select…</option>
-                  {fixedComponents.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.code} — {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label>Amount</label>
-                <input
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={chartForm.amount}
-                  onChange={(e) => setChartForm({ ...chartForm, amount: e.target.value })}
-                  required
-                />
-              </div>
-              <div className="form-grid--actions">
-                <button className="btn btn-primary" type="submit">
-                  Save chart entry
-                </button>
-              </div>
-            </div>
-          </form>
-          <div className="card-surface" style={{ padding: '0.5rem 0' }}>
-            <div className="table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Grade</th>
-                    <th>Step</th>
-                    <th>Type</th>
-                    <th>Component</th>
-                    <th>Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {chart.map((row) => (
-                    <tr key={row.id}>
-                      <td>{row.pay_grade?.code || row.payGrade?.code}</td>
-                      <td>{row.step}</td>
-                      <td>{row.employment_type}</td>
-                      <td>{row.component?.code}</td>
-                      <td>{Number(row.amount).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                  {!chart.length ? (
-                    <tr>
-                      <td colSpan={5}>No chart entries yet</td>
-                    </tr>
-                  ) : null}
-                </tbody>
-              </table>
-            </div>
-          </div>
+          <p style={{ margin: '0 0 1rem', color: 'var(--ink-muted)', fontSize: 13, maxWidth: 720 }}>
+            Override salary component amounts for a specific staff member.
+          </p>
+          <StaffSalaryOverrideTab />
         </>
       ) : null}
 
@@ -2306,9 +2306,12 @@ export const PayrollPage: React.FC = () => {
           style={{ padding: '1.25rem', display: 'grid', gap: 12, maxWidth: 480 }}
         >
           <div style={{ fontWeight: 700 }}>Active payroll period</div>
+          <p style={{ margin: 0, color: 'var(--ink-muted)', fontSize: 13 }}>
+            Only one active period per business. Runs → Compute always uses this year/month.
+          </p>
           {period ? (
             <p style={{ margin: 0, color: 'var(--ink-muted)' }}>
-              Current: {period.month}/{period.year}
+              Current: {periodLabel(Number(period.year), Number(period.month))}
             </p>
           ) : null}
           <div className="form-grid">

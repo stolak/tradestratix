@@ -33,6 +33,16 @@ export async function createRun(req: Request, res: Response, next: NextFunction)
   }
 }
 
+export async function computeActivePeriod(req: Request, res: Response, next: NextFunction) {
+  try {
+    return res
+      .status(201)
+      .json(await payrollService.computeActivePeriodRun(req.user!, req.body || {}));
+  } catch (err) {
+    return next(err);
+  }
+}
+
 export async function recomputeRun(req: Request, res: Response, next: NextFunction) {
   try {
     return res.json(

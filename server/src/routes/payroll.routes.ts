@@ -52,6 +52,11 @@ router.patch(
   requirePermission('payroll.edit'),
   configController.updateOverride
 );
+router.delete(
+  '/overrides/:id',
+  requirePermission('payroll.edit'),
+  configController.deleteOverride
+);
 
 // Reports (H5) — static paths before :id
 router.get('/reports/period', requirePermission('payroll.view'), reportController.periodReport);
@@ -70,6 +75,11 @@ router.get(
 // Runs (static paths before :id)
 router.get('/runs', requirePermission('payroll.view'), payrollController.listRuns);
 router.post('/runs', requirePermission('payroll.create'), payrollController.createRun);
+router.post(
+  '/compute',
+  requirePermission('payroll.create'),
+  payrollController.computeActivePeriod
+);
 router.post(
   '/runs/preview',
   requirePermission('payroll.view'),
